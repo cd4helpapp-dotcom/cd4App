@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Native builds
+!android/
+android/build/
+android/.gradle/
+android/app/build/
+android/app/.gradle/
+ios/
+
+# Environment
+.env*
+.npmrc
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+*.err
+
+# Build
+*.apk
+*.aab
+*.ipa
+*.tgz
+
+# Secrets
+google-services.json
+android/app/google-services.json
+GoogleService-Info.plist
+
+# Keystore files (NEVER commit!)
+*.keystore
+*.jks
+*.pem
+*.key
+*.p12
+keystore.properties
+@nitesh2kaushik__reveda.jks
+
+# Local/generated caches
+.npm-cache/
+scratch/
+supabase/.temp/
+
+# Local planning docs
+AI_AGENT_INTEGRATION_PLAN.md
+AI_SYSTEMS_DEEP_DIVE.md
+AI_POINT1_POINT2_IMPLEMENTATION_STATUS.md
+supabase/functions/chat-ai/documentation.md
+supabase/seed/india_dummy_doctors.json

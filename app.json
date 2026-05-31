@@ -1,0 +1,112 @@
+{
+  "expo": {
+    "name": "CD4",
+    "slug": "cd4",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/images/cd4_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cd4.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSSpeechRecognitionUsageDescription": "CD4 uses speech recognition to convert your voice into text for AI guidance.",
+        "NSMicrophoneUsageDescription": "CD4 uses your microphone for voice symptom input."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.cd4.app",
+      "googleServicesFile": "./google-services.json",
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "CD4 uses your microphone for voice symptom input.",
+          "speechRecognitionPermission": "CD4 uses speech recognition to convert your voice into text for AI guidance."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "CD4 uses your location to show nearby doctors and better local health services."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "CD4 adds booked consultations to your device calendar with reminders.",
+          "remindersPermission": "CD4 uses reminders to alert you before your consultation."
+        }
+      ],
+      "expo-web-browser",
+      "@react-native-community/datetimepicker",
+      "expo-notifications",
+      "expo-image-picker",
+      "expo-document-picker",
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "buildArchs": [
+              "armeabi-v7a",
+              "arm64-v8a"
+            ]
+          }
+        }
+      ]
+    ],
+    "scheme": [
+      "cd4",
+      "com.cd4.app"
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "abd33322-02c5-4b08-abf2-705108d9d9c7"
+      }
+    },
+    "owner": "cd4ai"
+  }
+}

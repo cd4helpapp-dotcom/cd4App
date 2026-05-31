@@ -1,0 +1,53 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "node": "20.18.0",
+      "env": {
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "902668215449-rlceg5t7j52gde53jajbe2l6obdnfjvr.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "902668215449-odm61vl468r4lrad17diclp63tvnum4s.apps.googleusercontent.com",
+        "EXPO_PUBLIC_RAZORPAY_KEY_ID": "rzp_test_S4wRCfFc9MXQ8w",
+        "EXPO_PUBLIC_AGORA_APP_ID": "1726b727a8db4ccb9223fb6042714844",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://prcpnwectrptrpblmezy.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_4n1CyNZta7Xjzun0Ni_ALQ_nwXv5w8Y",
+        "EXPO_PUBLIC_ADMIN_EMAILS": "navinchandra665@gmail.com,nitesh2kaushik@gmail.com,prem31703@gmail.com"
+      }
+    },
+    "preview-aab": {
+      "extends": "preview",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "android": {
+        "buildType": "apk"
+      },
+      "node": "20.18.0",
+      "env": {
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "902668215449-rlceg5t7j52gde53jajbe2l6obdnfjvr.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "902668215449-odm61vl468r4lrad17diclp63tvnum4s.apps.googleusercontent.com",
+        "EXPO_PUBLIC_AGORA_APP_ID": "1726b727a8db4ccb9223fb6042714844",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://prcpnwectrptrpblmezy.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_4n1CyNZta7Xjzun0Ni_ALQ_nwXv5w8Y",
+        "EXPO_PUBLIC_ADMIN_EMAILS": "navinchandra665@gmail.com,nitesh2kaushik@gmail.com,prem31703@gmail.com"
+      },
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
