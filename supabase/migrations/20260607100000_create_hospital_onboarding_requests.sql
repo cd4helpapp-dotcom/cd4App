@@ -1,6 +1,13 @@
 -- Hospital onboarding intake for public CD4 web form.
 -- Submissions are written by a Supabase Edge Function with service role access.
 
+INSERT INTO public.roles (name, slug, description)
+VALUES ('Hospital', 'hospital', 'Hospital partner account')
+ON CONFLICT (slug) DO UPDATE SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description,
+  updated_at = NOW();
+
 CREATE TABLE IF NOT EXISTS public.hospital_onboarding_requests (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   status TEXT NOT NULL DEFAULT 'new'
@@ -35,6 +42,11 @@ CREATE TABLE IF NOT EXISTS public.hospital_onboarding_requests (
   whatsapp_number TEXT,
   official_email TEXT NOT NULL,
   backup_contact TEXT,
+
+  hospital_admin_user_id UUID,
+  hospital_login_email TEXT NOT NULL,
+  app_account_status TEXT NOT NULL DEFAULT 'created_pending_review'
+    CHECK (app_account_status IN ('created_pending_review', 'active', 'disabled')),
 
   specialities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
   facilities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
@@ -72,6 +84,9 @@ CREATE INDEX IF NOT EXISTS hospital_onboarding_requests_created_at_idx
 
 CREATE INDEX IF NOT EXISTS hospital_onboarding_requests_registration_number_idx
   ON public.hospital_onboarding_requests (registration_number);
+
+CREATE UNIQUE INDEX IF NOT EXISTS hospital_onboarding_requests_login_email_unique_idx
+  ON public.hospital_onboarding_requests (LOWER(hospital_login_email));
 
 ALTER TABLE public.hospital_onboarding_requests ENABLE ROW LEVEL SECURITY;
 

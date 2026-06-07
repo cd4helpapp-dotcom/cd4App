@@ -69,6 +69,19 @@ const asDateOrNull = (formData: FormData, key: string): string | null => {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 };
 
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
+
+const getOpdTimings = (formData: FormData): string => {
+  const existing = asText(formData, "opd_timings", 240);
+  if (existing) return existing;
+
+  const days = asText(formData, "opd_days", 80);
+  const start = asText(formData, "opd_start_time", 20);
+  const end = asText(formData, "opd_end_time", 20);
+  if (!days || !start || !end) return "";
+  return `${days}, ${start} - ${end}`;
+};
+
 const normalizeFileName = (value: string): string =>
   (value || "document")
     .replace(/[^a-zA-Z0-9._-]+/g, "_")
@@ -155,18 +168,38 @@ Deno.serve(async (req: Request) => {
       "designation",
       "mobile_number",
       "official_email",
+      "hospital_login_email",
+      "hospital_login_password",
+      "hospital_login_password_confirm",
       "appointment_mode",
-      "opd_timings",
     ];
 
     const missingFields = requiredFields.filter((field) => !asText(formData, field, 200));
+    const opdTimings = getOpdTimings(formData);
+    if (!opdTimings) {
+      missingFields.push("opd_timings");
+    }
     if (missingFields.length > 0) {
       return jsonResponse({ success: false, message: "missing_required_fields", missingFields }, 400);
     }
 
-    const officialEmail = asText(formData, "official_email", 254).toLowerCase();
+    const officialEmail = normalizeEmail(asText(formData, "official_email", 254));
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(officialEmail)) {
       return jsonResponse({ success: false, message: "invalid_email" }, 400);
+    }
+
+    const hospitalLoginEmail = normalizeEmail(asText(formData, "hospital_login_email", 254));
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(hospitalLoginEmail)) {
+      return jsonResponse({ success: false, message: "invalid_login_email" }, 400);
+    }
+
+    const hospitalLoginPassword = asText(formData, "hospital_login_password", 200);
+    const hospitalLoginPasswordConfirm = asText(formData, "hospital_login_password_confirm", 200);
+    if (hospitalLoginPassword.length < 8) {
+      return jsonResponse({ success: false, message: "password_too_short" }, 400);
+    }
+    if (hospitalLoginPassword !== hospitalLoginPasswordConfirm) {
+      return jsonResponse({ success: false, message: "password_mismatch" }, 400);
     }
 
     const pinCode = asText(formData, "pin_code", 16).replace(/[^\d]/g, "");
@@ -197,9 +230,50 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: false, message: "registration_certificate_required" }, 400);
     }
 
+    const { data: existingProfile, error: existingProfileError } = await serviceClient
+      .from("profiles")
+      .select("id")
+      .eq("email", hospitalLoginEmail)
+      .maybeSingle();
+
+    if (existingProfileError) {
+      return jsonResponse({ success: false, message: `login_email_check_failed:${existingProfileError.message}` }, 500);
+    }
+
+    if (existingProfile?.id) {
+      return jsonResponse({ success: false, message: "login_email_already_registered" }, 409);
+    }
+
+    const registeredName = asText(formData, "registered_name", 240);
+    const contactName = asText(formData, "authorized_person_name", 180);
+    const mobileNumber = asText(formData, "mobile_number", 40);
+    const { data: hospitalAuthData, error: hospitalAuthError } = await serviceClient.auth.admin.createUser({
+      email: hospitalLoginEmail,
+      password: hospitalLoginPassword,
+      email_confirm: false,
+      user_metadata: {
+        role: "hospital",
+        first_name: registeredName,
+        last_name: "Hospital",
+        phone: mobileNumber,
+        hospital_name: registeredName,
+        authorized_person_name: contactName,
+        onboarding_request_id: requestId,
+      },
+    });
+
+    if (hospitalAuthError || !hospitalAuthData?.user?.id) {
+      return jsonResponse({
+        success: false,
+        message: `hospital_account_create_failed:${hospitalAuthError?.message || "missing_user_id"}`,
+      }, 400);
+    }
+
+    const hospitalAdminUserId = hospitalAuthData.user.id;
+
     const row = {
       id: requestId,
-      registered_name: asText(formData, "registered_name", 240),
+      registered_name: registeredName,
       display_name: asText(formData, "display_name", 240) || null,
       facility_type: asText(formData, "facility_type", 120),
       ownership_type: asText(formData, "ownership_type", 120) || null,
@@ -219,16 +293,19 @@ Deno.serve(async (req: Request) => {
       pin_code: pinCode,
       google_maps_link: asText(formData, "google_maps_link", 500) || null,
       service_area: asText(formData, "service_area", 500) || null,
-      authorized_person_name: asText(formData, "authorized_person_name", 180),
+      authorized_person_name: contactName,
       designation: asText(formData, "designation", 160),
-      mobile_number: asText(formData, "mobile_number", 40),
+      mobile_number: mobileNumber,
       whatsapp_number: asText(formData, "whatsapp_number", 40) || null,
       official_email: officialEmail,
       backup_contact: asText(formData, "backup_contact", 40) || null,
+      hospital_admin_user_id: hospitalAdminUserId,
+      hospital_login_email: hospitalLoginEmail,
+      app_account_status: "created_pending_review",
       specialities,
       facilities,
       appointment_mode: asText(formData, "appointment_mode", 120),
-      opd_timings: asText(formData, "opd_timings", 240),
+      opd_timings: opdTimings,
       initial_doctor_count: asInteger(formData, "initial_doctor_count"),
       consultation_fee_range: asText(formData, "consultation_fee_range", 160) || null,
       first_doctors_departments: asLongText(formData, "first_doctors_departments", 2500) || null,
@@ -250,6 +327,7 @@ Deno.serve(async (req: Request) => {
 
     const { error } = await serviceClient.from("hospital_onboarding_requests").insert(row);
     if (error) {
+      await serviceClient.auth.admin.deleteUser(hospitalAdminUserId).catch(() => null);
       return jsonResponse({ success: false, message: `insert_failed:${error.message}` }, 500);
     }
 
