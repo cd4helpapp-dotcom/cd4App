@@ -29,3 +29,8 @@ entrypoint = "./functions/health-reminders/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/security-ops-monitor/index.ts"
+
+[functions.submit-hospital-onboarding]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/submit-hospital-onboarding/index.ts"
