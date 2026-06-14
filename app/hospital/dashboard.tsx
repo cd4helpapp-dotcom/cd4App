@@ -21,6 +21,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Colors from '../../constants/Colors';
 import { useAuthContext } from '../../context/AuthContext';
 import { useHospitalDoctors, useHospitalPatients, useHospitalProfile, useHospitalStats, useHospitalVoiceIntakes, useCreateHospitalVoiceIntake, useLinkHospitalDoctor, useLinkHospitalPatient } from '../../hooks/useHospital';
+import { supabase } from '../../src/lib/supabase';
 
 type SpeechRecognitionModule = {
     addListener?: (eventName: 'result' | 'error' | 'end', listener: (event: any) => void) => { remove?: () => void };
@@ -56,6 +57,8 @@ const formatStatus = (value?: string) =>
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
         .join(' ');
 
+// Dynamic Voice Triage uses the hospital-voice-intake AI endpoint.
+
 export default function HospitalDashboard() {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
@@ -70,6 +73,9 @@ export default function HospitalDashboard() {
     const patientsQuery = useHospitalPatients();
     const voiceQuery = useHospitalVoiceIntakes();
     const createVoiceIntake = useCreateHospitalVoiceIntake();
+
+    const doctors = doctorsQuery.data || [];
+    const patients = patientsQuery.data || [];
 
     const isLoading = profileQuery.isLoading || statsQuery.isLoading;
     const isRefreshing =
@@ -90,6 +96,57 @@ export default function HospitalDashboard() {
     const [isListening, setIsListening] = React.useState(false);
     const [voiceStatus, setVoiceStatus] = React.useState('Tap mic to capture symptoms, visit context, and patient concerns.');
 
+    const activeDoctor = React.useMemo(() => {
+        return doctors.find((d) => d.doctorId === selectedDoctorId);
+    }, [doctors, selectedDoctorId]);
+
+    const activePatient = React.useMemo(() => {
+        return patients.find((p) => p.patientId === selectedPatientId);
+    }, [patients, selectedPatientId]);
+
+    const greetingText = React.useMemo(() => {
+        const docName = activeDoctor ? activeDoctor.name : '';
+        const docSpec = activeDoctor ? activeDoctor.specialization || activeDoctor.department : '';
+        const patName = activePatient ? activePatient.patientName : '';
+
+        let msg = 'Hello!';
+        if (patName) {
+            msg += ` I will help record the history for patient ${patName}.`;
+        } else {
+            msg += ' I will help record the patient history.';
+        }
+        if (docName) {
+            msg += ` This will prepare details for ${docName}${docSpec ? ` (${docSpec})` : ''}.`;
+        }
+        msg += ' What are the chief complaints or symptoms? (मुख्य लक्षण क्या हैं?)';
+        return msg;
+    }, [activeDoctor, activePatient]);
+
+    const INITIAL_CHAT = React.useMemo(() => [
+        {
+            role: 'assistant' as const,
+            content: greetingText,
+        },
+    ], [greetingText]);
+
+    // Triage Assistant State
+    const [isTriageActive, setIsTriageActive] = React.useState(true);
+    const [triageStep, setTriageStep] = React.useState(0); // 0: Welcome, 1: Chatting, 2: Review/Save
+    const [chatHistory, setChatHistory] = React.useState<Array<{ role: 'user' | 'assistant'; content: string }>>(INITIAL_CHAT);
+    const [activeUserInput, setActiveUserInput] = React.useState('');
+    const [isChatLoading, setIsChatLoading] = React.useState(false);
+
+    const triageStepRef = React.useRef(0);
+    const isTriageActiveRef = React.useRef(true);
+
+    React.useEffect(() => {
+        triageStepRef.current = triageStep;
+    }, [triageStep]);
+
+    React.useEffect(() => {
+        isTriageActiveRef.current = isTriageActive;
+    }, [isTriageActive]);
+
     // Inline additions state
     const [isAddingDocInline, setIsAddingDocInline] = React.useState(false);
     const [inlineDocIdentifier, setInlineDocIdentifier] = React.useState('');
@@ -103,8 +160,6 @@ export default function HospitalDashboard() {
     const [patientSearch, setPatientSearch] = React.useState('');
     const [doctorSearch, setDoctorSearch] = React.useState('');
 
-    const doctors = doctorsQuery.data || [];
-    const patients = patientsQuery.data || [];
     const recentDoctors = (doctorsQuery.data || []).slice(0, 3);
     const recentVoice = (voiceQuery.data || []).slice(0, 3);
 
@@ -191,21 +246,44 @@ export default function HospitalDashboard() {
         const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
             const nextTranscript = extractTranscript(event);
             if (!nextTranscript) return;
-            setTranscript((current) => {
-                if (!current.trim()) return nextTranscript;
-                if (current.toLowerCase().includes(nextTranscript.toLowerCase())) return current;
-                return `${current.trim()} ${nextTranscript}`;
-            });
+
+            const activeStep = triageStepRef.current;
+            const activeTriage = isTriageActiveRef.current;
+
+            if (activeTriage && activeStep === 1) {
+                setActiveUserInput((current) => {
+                    if (!current.trim()) return nextTranscript;
+                    if (current.toLowerCase().includes(nextTranscript.toLowerCase())) return current;
+                    return `${current.trim()} ${nextTranscript}`;
+                });
+            } else {
+                setTranscript((current) => {
+                    if (!current.trim()) return nextTranscript;
+                    if (current.toLowerCase().includes(nextTranscript.toLowerCase())) return current;
+                    return `${current.trim()} ${nextTranscript}`;
+                });
+            }
         });
 
         const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
             setIsListening(false);
-            setVoiceStatus('Voice capture stopped. Review the transcript before generating the doctor summary.');
+            const activeStep = triageStepRef.current;
+            const activeTriage = isTriageActiveRef.current;
+            if (activeTriage && activeStep === 1) {
+                setVoiceStatus('Voice capture stopped. Review your response or type/edit before sending.');
+            } else {
+                setVoiceStatus('Voice capture stopped. Review the transcript before generating the doctor summary.');
+            }
         });
 
         const errorSub = ExpoSpeechRecognitionModule.addListener('error', (event: any) => {
             setIsListening(false);
-            setVoiceStatus('Voice capture failed. You can type the symptoms manually.');
+            const activeTriage = isTriageActiveRef.current;
+            if (activeTriage) {
+                setVoiceStatus('Voice capture failed. You can type your response manually.');
+            } else {
+                setVoiceStatus('Voice capture failed. You can type the symptoms manually.');
+            }
             if (__DEV__) console.warn('[HospitalVoice] recognition error:', event?.message || event);
         });
 
@@ -221,8 +299,96 @@ export default function HospitalDashboard() {
         if (!isVoiceModalVisible) {
             setPatientSearch('');
             setDoctorSearch('');
+            setTriageStep(0);
+            setChatHistory(INITIAL_CHAT);
+            setActiveUserInput('');
+            setIsTriageActive(true);
         }
-    }, [isVoiceModalVisible]);
+    }, [isVoiceModalVisible, INITIAL_CHAT]);
+
+    const handleStepTransition = (nextStep: number) => {
+        if (isListening) {
+            ExpoSpeechRecognitionModule?.stop?.();
+            setIsListening(false);
+        }
+        setTriageStep(nextStep);
+        if (nextStep === 0) {
+            setChatHistory(INITIAL_CHAT);
+            setActiveUserInput('');
+        } else if (nextStep === 1) {
+            setChatHistory(INITIAL_CHAT);
+            setActiveUserInput('');
+            setVoiceStatus('Tap mic to describe chief complaints.');
+        } else if (nextStep === 2) {
+            setVoiceStatus('Please review the compiled patient history below.');
+            const compiled = chatHistory
+                .map((msg) => `${msg.role === 'assistant' ? '[AI Assistant]' : '[User]'}: ${msg.content}`)
+                .join('\n\n');
+            setTranscript(compiled);
+        }
+    };
+
+    const handleSendResponse = async () => {
+        const cleanInput = activeUserInput.trim();
+        if (!cleanInput) return;
+
+        if (isListening) {
+            ExpoSpeechRecognitionModule?.stop?.();
+            setIsListening(false);
+        }
+
+        const userTurn = { role: 'user' as const, content: cleanInput };
+        const updatedHistory = [...chatHistory, userTurn];
+        setChatHistory(updatedHistory);
+        setActiveUserInput('');
+        setIsChatLoading(true);
+        setVoiceStatus('AI is typing question...');
+
+        try {
+            const { data, error } = await supabase.functions.invoke('hospital-voice-intake', {
+                body: {
+                    isChat: true,
+                    history: updatedHistory,
+                    patientId: selectedPatientId || null,
+                    doctorId: selectedDoctorId || null,
+                },
+            });
+
+            if (error) throw error;
+            if (!data?.success) {
+                throw new Error(data?.message || 'Chat turn failed.');
+            }
+
+            const aiReply = String(data.reply || '').trim();
+
+            if (aiReply.includes('THANK_YOU_INTAKE_COMPLETE')) {
+                const cleanReply = aiReply.replace('THANK_YOU_INTAKE_COMPLETE', '').trim();
+                const aiTurn = { role: 'assistant' as const, content: cleanReply || 'Intake is complete! Please review below.' };
+                const finalHistory = [...updatedHistory, aiTurn];
+                setChatHistory(finalHistory);
+
+                const compiled = finalHistory
+                    .map((msg) => `${msg.role === 'assistant' ? '[AI Assistant]' : '[User]'}: ${msg.content}`)
+                    .join('\n\n');
+                setTranscript(compiled);
+                setTriageStep(2);
+                setVoiceStatus('Clinical history capture complete. Please review the compilation below.');
+            } else {
+                const aiTurn = { role: 'assistant' as const, content: aiReply };
+                setChatHistory([...updatedHistory, aiTurn]);
+                setVoiceStatus('Tap mic to respond to the AI.');
+            }
+        } catch (err: any) {
+            Toast.show({
+                type: 'error',
+                text1: 'Chat error',
+                text2: err?.message || 'Could not get AI question.',
+            });
+            setVoiceStatus('Error connecting to AI. You can edit the history manually.');
+        } finally {
+            setIsChatLoading(false);
+        }
+    };
 
     const handleMicPress = async () => {
         if (isListening) {
@@ -257,7 +423,13 @@ export default function HospitalDashboard() {
             }
 
             setIsListening(true);
-            setVoiceStatus('Listening... capture symptoms, duration, severity, and visit context.');
+            const activeStep = triageStepRef.current;
+            const activeTriage = isTriageActiveRef.current;
+            if (activeTriage && activeStep === 1) {
+                setVoiceStatus('Listening... respond to the AI question.');
+            } else {
+                setVoiceStatus('Listening... capture symptoms, duration, severity, and visit context.');
+            }
             ExpoSpeechRecognitionModule.start?.({
                 lang: 'en-IN',
                 interimResults: true,
@@ -490,7 +662,20 @@ export default function HospitalDashboard() {
                                 style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
                             />
 
-                            <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Patient</Text>
+                            <View style={styles.selectorLabelRow}>
+                                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Patient</Text>
+                                <TextInput
+                                    value={patientSearch}
+                                    onChangeText={setPatientSearch}
+                                    placeholder="Search patient..."
+                                    placeholderTextColor={theme.textSecondary}
+                                    autoCapitalize="none"
+                                    style={[
+                                        styles.miniSearchInput,
+                                        { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }
+                                    ]}
+                                />
+                            </View>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
                                 <TouchableOpacity
                                     style={[
@@ -510,7 +695,7 @@ export default function HospitalDashboard() {
                                 >
                                     <Text style={[styles.chipText, { color: theme.tint }]}>+ Add Patient</Text>
                                 </TouchableOpacity>
-                                {patients.map((patient) => {
+                                {filteredPatients.map((patient) => {
                                     const selected = selectedPatientId === patient.patientId;
                                     return (
                                         <TouchableOpacity
@@ -565,7 +750,20 @@ export default function HospitalDashboard() {
                                 </View>
                             )}
 
-                            <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Doctor</Text>
+                            <View style={styles.selectorLabelRow}>
+                                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Doctor</Text>
+                                <TextInput
+                                    value={doctorSearch}
+                                    onChangeText={setDoctorSearch}
+                                    placeholder="Search doctor..."
+                                    placeholderTextColor={theme.textSecondary}
+                                    autoCapitalize="none"
+                                    style={[
+                                        styles.miniSearchInput,
+                                        { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }
+                                    ]}
+                                />
+                            </View>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
                                 <TouchableOpacity
                                     style={[
@@ -585,7 +783,7 @@ export default function HospitalDashboard() {
                                 >
                                     <Text style={[styles.chipText, { color: theme.tint }]}>+ Add Doctor</Text>
                                 </TouchableOpacity>
-                                {doctors.map((doctor) => {
+                                {filteredDoctors.map((doctor) => {
                                     const selected = selectedDoctorId === doctor.doctorId;
                                     return (
                                         <TouchableOpacity
@@ -639,41 +837,214 @@ export default function HospitalDashboard() {
                                 </View>
                             )}
 
-                            <View style={[styles.voiceStatusBox, { backgroundColor: theme.successLight }]}>
-                                <Mic size={15} color={theme.tint} />
-                                <Text style={[styles.voiceStatusBoxText, { color: theme.text }]}>{voiceStatus}</Text>
-                            </View>
-
-                            <TextInput
-                                value={transcript}
-                                onChangeText={setTranscript}
-                                placeholder="Voice transcript or typed symptoms"
-                                placeholderTextColor={theme.textSecondary}
-                                multiline
-                                textAlignVertical="top"
-                                style={[
-                                    styles.transcriptTextArea,
-                                    { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background },
-                                ]}
-                            />
-
-                            <View style={styles.modalActionRow}>
+                            <View style={[styles.modeToggleRow, { backgroundColor: isDarkTheme ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)' }]}>
                                 <TouchableOpacity
-                                    style={[styles.voiceActionBtn, { backgroundColor: isListening ? theme.error : theme.tint }]}
-                                    onPress={handleMicPress}
+                                    style={[styles.modeToggleBtn, isTriageActive && { backgroundColor: theme.tint }]}
+                                    onPress={() => {
+                                        setIsTriageActive(true);
+                                        setTriageStep(0);
+                                    }}
                                 >
-                                    {isListening ? <MicOff size={16} color={theme.buttonText} /> : <Mic size={16} color={theme.buttonText} />}
-                                    <Text style={[styles.voiceActionBtnText, { color: theme.buttonText }]}>{isListening ? 'Stop' : 'Start Voice'}</Text>
+                                    <Text style={[styles.modeToggleText, { color: isTriageActive ? theme.buttonText : theme.textSecondary }]}>
+                                        Voice Triage Q&A
+                                    </Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={[styles.saveActionBtn, { borderColor: theme.tint }, createVoiceIntake.isPending && styles.disabledButton]}
-                                    onPress={handleSaveIntake}
-                                    disabled={createVoiceIntake.isPending}
+                                    style={[styles.modeToggleBtn, !isTriageActive && { backgroundColor: theme.tint }]}
+                                    onPress={() => {
+                                        setIsTriageActive(false);
+                                    }}
                                 >
-                                    {createVoiceIntake.isPending ? <ActivityIndicator color={theme.tint} /> : <Sparkles size={16} color={theme.tint} />}
-                                    <Text style={[styles.saveActionBtnText, { color: theme.tint }]}>Generate AI Summary</Text>
+                                    <Text style={[styles.modeToggleText, { color: !isTriageActive ? theme.buttonText : theme.textSecondary }]}>
+                                        Manual / Continuous
+                                    </Text>
                                 </TouchableOpacity>
                             </View>
+
+                            {isTriageActive ? (
+                                <>
+                                    {triageStep === 0 && (
+                                        <View style={[styles.triageCard, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
+                                            <Text style={[styles.triageCardTitle, { color: theme.text }]}>Patient History Assistant</Text>
+                                            <Text style={[styles.triageCardDesc, { color: theme.textSecondary }]}>
+                                                This conversational AI will dynamically interview the patient or staff step-by-step to record complete clinical history (symptoms, duration, past history, medications, vitals) before generating the final report.
+                                            </Text>
+                                            <TouchableOpacity
+                                                style={[styles.triageStartBtn, { backgroundColor: theme.tint }]}
+                                                onPress={() => handleStepTransition(1)}
+                                            >
+                                                <Text style={[styles.triageStartBtnText, { color: theme.buttonText }]}>Start Dynamic Triage</Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    )}
+
+                                    {triageStep === 1 && (
+                                        <>
+                                            <ScrollView
+                                                style={[styles.chatBubbleContainer, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                                                contentContainerStyle={{ gap: 8, paddingVertical: 10 }}
+                                                nestedScrollEnabled
+                                            >
+                                                {chatHistory.map((msg, index) => {
+                                                    const isAi = msg.role === 'assistant';
+                                                    return (
+                                                        <View
+                                                            key={index}
+                                                            style={[
+                                                                styles.chatBubble,
+                                                                isAi
+                                                                    ? [styles.chatBubbleAi, { backgroundColor: theme.successLight, alignSelf: 'flex-start' }]
+                                                                    : [styles.chatBubbleUser, { backgroundColor: theme.tint, alignSelf: 'flex-end' }],
+                                                            ]}
+                                                        >
+                                                            {isAi && <Sparkles size={12} color={theme.tint} style={{ marginRight: 6, marginTop: 2 }} />}
+                                                            <Text
+                                                                style={[
+                                                                    styles.chatBubbleText,
+                                                                    { color: isAi ? theme.text : theme.buttonText },
+                                                                ]}
+                                                            >
+                                                                {msg.content}
+                                                            </Text>
+                                                        </View>
+                                                    );
+                                                })}
+                                                {isChatLoading && (
+                                                    <View style={[styles.chatBubble, styles.chatBubbleAi, { backgroundColor: theme.successLight, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center' }]}>
+                                                        <ActivityIndicator size="small" color={theme.tint} style={{ marginRight: 6 }} />
+                                                        <Text style={[styles.chatBubbleText, { color: theme.textSecondary }]}>AI is thinking...</Text>
+                                                    </View>
+                                                )}
+                                            </ScrollView>
+
+                                            <View style={[styles.voiceStatusBox, { backgroundColor: theme.successLight }]}>
+                                                <Mic size={15} color={theme.tint} />
+                                                <Text style={[styles.voiceStatusBoxText, { color: theme.text }]}>{voiceStatus}</Text>
+                                            </View>
+
+                                            <TextInput
+                                                value={activeUserInput}
+                                                onChangeText={setActiveUserInput}
+                                                placeholder="Type or speak response..."
+                                                placeholderTextColor={theme.textSecondary}
+                                                multiline
+                                                textAlignVertical="top"
+                                                style={[
+                                                    styles.transcriptTextArea,
+                                                    { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background, minHeight: 80 },
+                                                ]}
+                                            />
+
+                                            <View style={styles.triageActionRow}>
+                                                <TouchableOpacity
+                                                    style={[styles.triageBackBtn, { borderColor: theme.borderColor }]}
+                                                    onPress={() => handleStepTransition(0)}
+                                                >
+                                                    <Text style={[styles.triageBackBtnText, { color: theme.textSecondary }]}>Back</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    style={[styles.voiceActionBtnCompact, { backgroundColor: isListening ? theme.error : theme.tint }]}
+                                                    onPress={handleMicPress}
+                                                >
+                                                    {isListening ? <MicOff size={16} color={theme.buttonText} /> : <Mic size={16} color={theme.buttonText} />}
+                                                    <Text style={{ color: theme.buttonText, fontWeight: '900', fontSize: 13 }}>
+                                                        {isListening ? 'Stop' : 'Record'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    style={[styles.triageNextBtn, { backgroundColor: theme.tint }, (isChatLoading || !activeUserInput.trim()) && styles.disabledButton]}
+                                                    onPress={handleSendResponse}
+                                                    disabled={isChatLoading || !activeUserInput.trim()}
+                                                >
+                                                    <Text style={[styles.triageNextBtnText, { color: theme.buttonText }]}>Send</Text>
+                                                </TouchableOpacity>
+                                            </View>
+
+                                            <TouchableOpacity
+                                                onPress={() => handleStepTransition(2)}
+                                                style={{ alignSelf: 'center', marginTop: 4, marginBottom: 10 }}
+                                            >
+                                                <Text style={{ color: theme.tint, fontSize: 12, fontWeight: '800' }}>
+                                                    Skip to Review & Compile
+                                                </Text>
+                                            </TouchableOpacity>
+                                        </>
+                                    )}
+
+                                    {triageStep === 2 && (
+                                        <>
+                                            <Text style={[styles.reviewHeader, { color: theme.text }]}>Review Compiled History</Text>
+                                            <Text style={[styles.reviewSub, { color: theme.textSecondary }]}>
+                                                Review and make final edits to the compiled history before saving:
+                                            </Text>
+                                            <TextInput
+                                                value={transcript}
+                                                onChangeText={setTranscript}
+                                                multiline
+                                                textAlignVertical="top"
+                                                style={[
+                                                    styles.transcriptTextArea,
+                                                    { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background, minHeight: 200 },
+                                                ]}
+                                            />
+                                            <View style={styles.triageActionRow}>
+                                                <TouchableOpacity
+                                                    style={[styles.triageBackBtn, { borderColor: theme.borderColor, flex: 0.8 }]}
+                                                    onPress={() => setTriageStep(1)}
+                                                >
+                                                    <Text style={[styles.triageBackBtnText, { color: theme.textSecondary }]}>Resume Chat</Text>
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    style={[styles.saveActionBtn, { borderColor: theme.tint, flex: 1.2, height: 48, borderRadius: 15 }, createVoiceIntake.isPending && styles.disabledButton]}
+                                                    onPress={handleSaveIntake}
+                                                    disabled={createVoiceIntake.isPending}
+                                                >
+                                                    {createVoiceIntake.isPending ? <ActivityIndicator color={theme.tint} /> : <Sparkles size={16} color={theme.tint} />}
+                                                    <Text style={[styles.saveActionBtnText, { color: theme.tint }]}>Generate AI PDF</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                        </>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <View style={[styles.voiceStatusBox, { backgroundColor: theme.successLight }]}>
+                                        <Mic size={15} color={theme.tint} />
+                                        <Text style={[styles.voiceStatusBoxText, { color: theme.text }]}>{voiceStatus}</Text>
+                                    </View>
+
+                                    <TextInput
+                                        value={transcript}
+                                        onChangeText={setTranscript}
+                                        placeholder="Voice transcript or typed symptoms"
+                                        placeholderTextColor={theme.textSecondary}
+                                        multiline
+                                        textAlignVertical="top"
+                                        style={[
+                                            styles.transcriptTextArea,
+                                            { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background },
+                                        ]}
+                                    />
+
+                                    <View style={styles.modalActionRow}>
+                                        <TouchableOpacity
+                                            style={[styles.voiceActionBtn, { backgroundColor: isListening ? theme.error : theme.tint }]}
+                                            onPress={handleMicPress}
+                                        >
+                                            {isListening ? <MicOff size={16} color={theme.buttonText} /> : <Mic size={16} color={theme.buttonText} />}
+                                            <Text style={[styles.voiceActionBtnText, { color: theme.buttonText }]}>{isListening ? 'Stop' : 'Start Voice'}</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.saveActionBtn, { borderColor: theme.tint }, createVoiceIntake.isPending && styles.disabledButton]}
+                                            onPress={handleSaveIntake}
+                                            disabled={createVoiceIntake.isPending}
+                                        >
+                                            {createVoiceIntake.isPending ? <ActivityIndicator color={theme.tint} /> : <Sparkles size={16} color={theme.tint} />}
+                                            <Text style={[styles.saveActionBtnText, { color: theme.tint }]}>Generate AI Summary</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </>
+                            )}
                         </ScrollView>
                     </Pressable>
                 </Pressable>
@@ -859,4 +1230,183 @@ const styles = StyleSheet.create({
         fontWeight: '900',
     },
     disabledButton: { opacity: 0.72 },
+    selectorLabelRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 14,
+        marginBottom: -4,
+    },
+    miniSearchInput: {
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        fontSize: 12,
+        fontWeight: '600',
+        width: 150,
+        height: 30,
+    },
+    modeToggleRow: {
+        flexDirection: 'row',
+        borderRadius: 12,
+        padding: 4,
+        marginVertical: 10,
+    },
+    modeToggleBtn: {
+        flex: 1,
+        paddingVertical: 8,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    modeToggleText: {
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    triageCard: {
+        borderRadius: 18,
+        borderWidth: 1,
+        padding: 16,
+        marginVertical: 8,
+        gap: 12,
+    },
+    triageCardTitle: {
+        fontSize: 16,
+        fontWeight: '900',
+    },
+    triageCardDesc: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: '600',
+    },
+    triageStepList: {
+        gap: 6,
+        paddingLeft: 4,
+    },
+    triageStepItem: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    triageStartBtn: {
+        borderRadius: 12,
+        paddingVertical: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 6,
+    },
+    triageStartBtnText: {
+        fontSize: 13,
+        fontWeight: '900',
+    },
+    progressBar: {
+        flexDirection: 'row',
+        gap: 6,
+        marginTop: 14,
+        marginBottom: 8,
+    },
+    progressSegment: {
+        flex: 1,
+        height: 5,
+        borderRadius: 999,
+    },
+    progressText: {
+        fontSize: 11,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 8,
+    },
+    assistantBubble: {
+        flexDirection: 'row',
+        gap: 10,
+        borderRadius: 16,
+        borderWidth: 1,
+        padding: 12,
+        marginBottom: 10,
+        alignItems: 'flex-start',
+    },
+    assistantText: {
+        flex: 1,
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: '700',
+    },
+    triageActionRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 12,
+        marginBottom: 10,
+    },
+    triageBackBtn: {
+        flex: 1,
+        height: 48,
+        borderRadius: 15,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    triageBackBtnText: {
+        fontSize: 14,
+        fontWeight: '900',
+    },
+    triageNextBtn: {
+        flex: 1,
+        height: 48,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    triageNextBtnText: {
+        fontSize: 14,
+        fontWeight: '900',
+    },
+    voiceActionBtnCompact: {
+        flex: 1,
+        height: 48,
+        borderRadius: 15,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+    },
+    reviewHeader: {
+        fontSize: 15,
+        fontWeight: '900',
+        marginTop: 14,
+    },
+    reviewSub: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '600',
+        marginBottom: 10,
+    },
+    chatBubbleContainer: {
+        maxHeight: 220,
+        borderWidth: 1,
+        borderRadius: 14,
+        padding: 8,
+        marginVertical: 10,
+    },
+    chatBubble: {
+        maxWidth: '85%',
+        borderRadius: 16,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        flexDirection: 'row',
+        marginVertical: 4,
+    },
+    chatBubbleAi: {
+        borderBottomLeftRadius: 4,
+        alignSelf: 'flex-start',
+    },
+    chatBubbleUser: {
+        borderBottomRightRadius: 4,
+        alignSelf: 'flex-end',
+    },
+    chatBubbleText: {
+        fontSize: 13,
+        fontWeight: '700',
+        lineHeight: 18,
+    },
 });

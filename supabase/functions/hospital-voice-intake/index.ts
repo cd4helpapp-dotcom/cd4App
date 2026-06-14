@@ -294,8 +294,8 @@ const buildPrompt = (args: {
   title: string;
   language: string;
   hospitalName: string;
-  doctorLinked: boolean;
-  patientLinked: boolean;
+  doctorDetails: { name: string; department: string; specialization: string } | null;
+  patientDetails: { name: string } | null;
 }) => `You are a hospital voice-intake assistant for CD4.
 
 Create a concise doctor-ready handoff from a hospital staff transcript.
@@ -313,8 +313,8 @@ Context:
 Hospital: ${args.hospitalName || "CD4 partner hospital"}
 Intake title: ${args.title}
 Language: ${args.language}
-Linked patient: ${args.patientLinked ? "yes" : "no"}
-Linked doctor: ${args.doctorLinked ? "yes" : "no"}
+${args.patientDetails ? `Patient Name: ${args.patientDetails.name}` : "Linked patient: no"}
+${args.doctorDetails ? `Target Doctor: ${args.doctorDetails.name}\nSpecialization: ${args.doctorDetails.specialization}\nDepartment: ${args.doctorDetails.department}` : "Linked doctor: no"}
 
 JSON format:
 {
@@ -372,6 +372,42 @@ const invokeOpenAI = async (args: { apiKey: string; prompt: string }) => {
   throw new Error(lastError?.message || "Hospital intake AI unavailable.");
 };
 
+const invokeOpenAIChat = async (args: { apiKey: string; messages: any[] }) => {
+  const models = getOpenAIModelCandidates();
+  let lastError: any = null;
+
+  for (const model of models) {
+    try {
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${args.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.3,
+          messages: args.messages,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error?.message || `OpenAI chat failed (${response.status})`);
+      }
+
+      const content = data?.choices?.[0]?.message?.content;
+      const reply = typeof content === "string" ? content.trim() : "";
+      if (!reply) throw new Error("OpenAI returned empty chat output.");
+      return { reply, model };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(lastError?.message || "Hospital chat AI unavailable.");
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -411,15 +447,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const title = asText(body?.title, 180) || "Hospital voice intake";
-    const language = asText(body?.language, 80) || "Hindi / English";
-    const transcript = asText(body?.transcript, MAX_TRANSCRIPT_LENGTH);
-    const patientId = asUuidOrNull(body?.patientId);
-    const doctorId = asUuidOrNull(body?.doctorId);
-
-    if (!transcript || transcript.length < 8) {
-      throw new Error("Transcript is required before creating a hospital voice intake.");
-    }
+    const isChat = Boolean(body?.isChat);
 
     const { data: onboardingRow, error: onboardingError } = await serviceClient
       .from("hospital_onboarding_requests")
@@ -434,28 +462,163 @@ Deno.serve(async (req: Request) => {
       throw new Error("Hospital onboarding record not found for this account.");
     }
 
+    const hospitalName = onboardingRow.display_name || onboardingRow.registered_name || "CD4 Partner Hospital";
+
+    // Resolve doctor and patient details
+    const patientId = asUuidOrNull(body?.patientId);
+    const doctorId = asUuidOrNull(body?.doctorId);
+
+    let doctorDetails: any = null;
+    let patientDetails: any = null;
+
     if (doctorId) {
       const { data: doctorLink, error: doctorError } = await serviceClient
         .from("hospital_doctors")
-        .select("id")
+        .select(`
+          id,
+          department,
+          doctor:doctors (
+            specialization,
+            profiles (first_name, last_name)
+          )
+        `)
         .eq("hospital_admin_user_id", user.id)
         .eq("doctor_id", doctorId)
         .eq("status", "active")
         .maybeSingle();
+
       if (doctorError) throw doctorError;
-      if (!doctorLink?.id) throw new Error("Selected doctor is not linked to this hospital.");
+      if (!doctorLink?.id) {
+        throw new Error("Selected doctor is not linked to this hospital.");
+      }
+
+      const doc = doctorLink.doctor || {};
+      const docProfile = Array.isArray(doc.profiles) ? doc.profiles[0] : doc.profiles;
+      const firstName = docProfile?.first_name || "";
+      const lastName = docProfile?.last_name || "";
+      const docName = `Dr. ${firstName} ${lastName}`.trim();
+
+      doctorDetails = {
+        name: docName || "Doctor",
+        department: doctorLink.department || "",
+        specialization: doc.specialization || "",
+      };
     }
 
     if (patientId) {
       const { data: patientLink, error: patientError } = await serviceClient
         .from("hospital_patients")
-        .select("id")
+        .select(`
+          id,
+          patient:profiles!hospital_patients_patient_id_fkey (
+            first_name,
+            last_name
+          )
+        `)
         .eq("hospital_admin_user_id", user.id)
         .eq("patient_id", patientId)
         .eq("status", "active")
         .maybeSingle();
+
       if (patientError) throw patientError;
-      if (!patientLink?.id) throw new Error("Selected patient is not linked to this hospital.");
+      if (!patientLink?.id) {
+        throw new Error("Selected patient is not linked to this hospital.");
+      }
+
+      const patProfile = Array.isArray(patientLink.patient) ? patientLink.patient[0] : patientLink.patient;
+      const firstName = patProfile?.first_name || "";
+      const lastName = patProfile?.last_name || "";
+      const patName = `${firstName} ${lastName}`.trim();
+
+      patientDetails = {
+        name: patName || "Patient",
+      };
+    }
+
+    if (isChat) {
+      const chatHistory = Array.isArray(body?.history) ? body.history : [];
+      if (!chatHistory.length) {
+        return jsonResponse({ success: false, message: "History is empty." }, 400);
+      }
+
+      const openAiApiKey = (Deno.env.get("OPENAI_API_KEY") || "").trim();
+      if (!openAiApiKey) {
+        return jsonResponse({
+          success: true,
+          reply: "I am a local simulation. Could you describe the patient's symptoms? (Please configure OPENAI_API_KEY for dynamic AI).",
+          model: "fallback",
+        });
+      }
+
+      let triageTargetContext = "";
+      let specialtyFocusInstructions = "";
+
+      if (doctorDetails) {
+        const spec = doctorDetails.specialization || doctorDetails.department || "General Medicine";
+        triageTargetContext = `You are prepping the patient for an upcoming clinical consultation with Dr. ${doctorDetails.name} (Specialty: ${spec}, Department: ${doctorDetails.department || "N/A"}).`;
+        specialtyFocusInstructions = `Based on your clinical knowledge of Dr. ${doctorDetails.name}'s specialty (${spec}) and department (${doctorDetails.department || "N/A"}), you must dynamically determine what specific medical history, clinical concerns, pain indicators, triggers, onset characteristics, severity, relevant medications, and risk factors are crucial for a doctor in this field. Focus your questions specifically on extracting these relevant points to construct a high-yield history.`;
+      } else {
+        triageTargetContext = "You are preparing a comprehensive patient history for a general medical consultation.";
+        specialtyFocusInstructions = "Focus on general clinical history intake: chief complaint, onset, duration, character, progression, severity, and associated symptoms.";
+      }
+
+      let patientNameContext = "";
+      if (patientDetails) {
+        patientNameContext = `The patient's name is ${patientDetails.name}. You can refer to them by their name and direct questions to them or their accompanying staff/relative.`;
+      }
+
+      const systemPrompt = `You are a highly skilled and empathetic AI Clinical Triage Assistant for ${hospitalName}. 
+Your goal is to conduct a professional, detailed medical history interview (triage intake) before the patient sees the doctor.
+
+${triageTargetContext}
+${patientNameContext}
+
+Clinical Protocol:
+1. Dynamically tailor your questions: ${specialtyFocusInstructions}
+2. Ensure you systematically cover:
+   - Detailed description of chief complaints and symptoms (onset, character, location, radiation, what makes it better/worse).
+   - Duration and progression of the condition over time.
+   - Relevant past medical history, chronic conditions (e.g., hypertension, diabetes, cardiac history), surgeries, and allergies.
+   - Current medications, dosages, and adherence (if any).
+   - Vitals if measured recently (e.g., temperature, blood pressure, oxygen saturation, blood sugar).
+
+Interaction Rules:
+1. Ask only ONE clear, concise question at a time to avoid cognitive overload and allow natural voice replies.
+2. Maintain natural, fluent, and highly empathetic bilingual conversational flow (Hindi, English, or Hinglish - Hindi written in Latin script, e.g., "aapko kab se ye takleef hai?"). Match the user's preferred language.
+3. Keep your questions clinical, concise, and direct. Do not engage in casual chitchat.
+4. STRICT CRITICAL CONSTRAINT: Do not provide any diagnosis, prognosis, treatment advice, or drug recommendations. Focus solely on history taking.
+5. If the user indicates red flags/critical symptoms (e.g., severe sudden chest pain radiating to arm, sudden weakness on one side of body, severe breathing difficulty, uncontrolled bleeding, acute severe pain): calmly advise them to seek immediate emergency care while maintaining your intake readiness.
+6. When you have gathered sufficient clinical details to prepare a comprehensive intake handoff, briefly summarize the key findings in 1-2 sentences to confirm understanding, and append the EXACT completion keyword: "THANK_YOU_INTAKE_COMPLETE".`;
+
+      const messages = [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        ...chatHistory.map((h: any) => ({
+          role: h.role === "assistant" ? "assistant" : "user",
+          content: String(h.content || "").trim(),
+        }))
+      ];
+
+      try {
+        const result = await invokeOpenAIChat({ apiKey: openAiApiKey, messages });
+        return jsonResponse({
+          success: true,
+          reply: result.reply,
+          model: result.model,
+        });
+      } catch (error: any) {
+        return jsonResponse({ success: false, message: error?.message || "Chat failed." }, 500);
+      }
+    }
+
+    const title = asText(body?.title, 180) || "Hospital voice intake";
+    const language = asText(body?.language, 80) || "Hindi / English";
+    const transcript = asText(body?.transcript, MAX_TRANSCRIPT_LENGTH);
+
+    if (!transcript || transcript.length < 8) {
+      throw new Error("Transcript is required before creating a hospital voice intake.");
     }
 
     const fallbackSummary = buildFallbackSummary(transcript);
@@ -473,9 +636,9 @@ Deno.serve(async (req: Request) => {
             transcript,
             title,
             language,
-            hospitalName: onboardingRow.display_name || onboardingRow.registered_name || "",
-            doctorLinked: Boolean(doctorId),
-            patientLinked: Boolean(patientId),
+            hospitalName,
+            doctorDetails,
+            patientDetails,
           }),
         });
         structured = parseJsonSafely(generation.reply);
