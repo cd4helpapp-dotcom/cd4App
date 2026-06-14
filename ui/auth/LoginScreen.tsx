@@ -95,6 +95,7 @@ const resolveRoleSlugFromProfile = (profile: LoginProfileSnapshot | null, email?
   if (slug === 'admin') return 'Admin';
   if (slug === 'doctor') return 'Doctor';
   if (slug === 'marketing') return 'Marketing';
+  if (slug === 'hospital') return 'Hospital';
   return 'Patient';
 };
 
@@ -258,6 +259,7 @@ const LoginScreen: React.FC = () => {
         const normalizedMetadataRole = metadataRole.trim().toLowerCase();
         if (normalizedMetadataRole === 'doctor') roleSlug = 'Doctor';
         if (normalizedMetadataRole === 'admin') roleSlug = 'Admin';
+        if (normalizedMetadataRole === 'hospital') roleSlug = 'Hospital';
       }
     }
 
@@ -273,6 +275,11 @@ const LoginScreen: React.FC = () => {
 
     if (roleSlug === 'Doctor') {
       router.replace('/doctor/dashboard');
+      return;
+    }
+
+    if (roleSlug === 'Hospital') {
+      router.replace('/hospital/dashboard');
       return;
     }
 

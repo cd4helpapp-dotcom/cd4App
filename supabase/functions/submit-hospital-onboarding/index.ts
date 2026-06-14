@@ -250,7 +250,7 @@ Deno.serve(async (req: Request) => {
     const { data: hospitalAuthData, error: hospitalAuthError } = await serviceClient.auth.admin.createUser({
       email: hospitalLoginEmail,
       password: hospitalLoginPassword,
-      email_confirm: false,
+      email_confirm: true,
       user_metadata: {
         role: "hospital",
         first_name: registeredName,

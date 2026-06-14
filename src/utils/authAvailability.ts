@@ -15,6 +15,9 @@ export const getEmailAlreadyRegisteredMessage = (role?: string | null): string =
   if (normalizedRole === 'admin') {
     return 'This email is already registered. Please login instead.';
   }
+  if (normalizedRole === 'hospital') {
+    return 'This email is already registered as a hospital admin. Please login instead.';
+  }
   return 'This email is already registered. Please login instead.';
 };
 

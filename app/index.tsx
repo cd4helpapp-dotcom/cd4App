@@ -31,6 +31,10 @@ export default function Index() {
       return <Redirect href="/doctor/dashboard" />;
     }
 
+    if (roleSlug === 'hospital') {
+      return <Redirect href="/hospital/dashboard" />;
+    }
+
     if (isProfileResolved && isProfileLoadedFromDb && user && needsPatientProfileSetup(user)) {
       return <Redirect href="/profile-setup" />;
     }

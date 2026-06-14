@@ -79,6 +79,10 @@ export default function TabLayout() {
     return <Redirect href="/admin/dashboard" />;
   }
 
+  if (user && roleSlug === 'hospital') {
+    return <Redirect href="/hospital/dashboard" />;
+  }
+
   if (isProfileResolved && isProfileLoadedFromDb && user && needsPatientProfileSetup(user)) {
     return <Redirect href="/profile-setup" />;
   }

@@ -30,7 +30,7 @@ export interface User {
         appearance?: { mode: 'system' | 'light' | 'dark'; };
         chats?: { readReceipts?: boolean; mediaAutoDownload?: boolean; };
     };
-    role: 'Patient' | 'Doctor' | 'Admin' | 'Marketing';
+    role: 'Patient' | 'Doctor' | 'Admin' | 'Marketing' | 'Hospital';
     isVerified: boolean;
     subscription?: {
         id: string;

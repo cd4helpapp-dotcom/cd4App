@@ -226,6 +226,7 @@ const SignupScreen: React.FC = () => {
     if (slug === 'admin') return 'Admin';
     if (slug === 'doctor') return 'Doctor';
     if (slug === 'marketing') return 'Marketing';
+    if (slug === 'hospital') return 'Hospital';
     return 'Patient';
   };
 
@@ -243,6 +244,7 @@ const SignupScreen: React.FC = () => {
 
     if (roleSlug === 'Admin') router.replace('/admin/dashboard');
     else if (roleSlug === 'Doctor') router.replace('/doctor/dashboard');
+    else if (roleSlug === 'Hospital') router.replace('/hospital/dashboard');
     else router.replace('/(tabs)');
   };
 

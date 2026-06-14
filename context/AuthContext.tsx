@@ -27,6 +27,7 @@ const normalizeRoleSlug = (value: unknown): User['role'] => {
   if (normalized === 'admin') return 'Admin';
   if (normalized === 'doctor') return 'Doctor';
   if (normalized === 'marketing') return 'Marketing';
+  if (normalized === 'hospital') return 'Hospital';
   return 'Patient';
 };
 

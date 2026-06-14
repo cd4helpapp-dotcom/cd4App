@@ -163,6 +163,8 @@ const normalizeUserRole = (slug: unknown): User['role'] => {
             return 'Admin';
         case 'marketing':
             return 'Marketing';
+        case 'hospital':
+            return 'Hospital';
         default:
             return 'Patient';
     }
@@ -508,4 +510,3 @@ export const useDoctorAppointments = () => {
         refetchIntervalInBackground: false,
     });
 };
-

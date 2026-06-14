@@ -15,6 +15,11 @@ enabled = true
 verify_jwt = true
 entrypoint = "./functions/voice-chat/index.ts"
 
+[functions.hospital-voice-intake]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/hospital-voice-intake/index.ts"
+
 [functions.chat-agent-ws]
 enabled = true
 verify_jwt = false
