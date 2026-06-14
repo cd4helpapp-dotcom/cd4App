@@ -1,6 +1,8 @@
 import React from 'react';
 import {
     ActivityIndicator,
+    Modal,
+    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -12,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import { MailPlus, Search, Stethoscope } from 'lucide-react-native';
+import { MailPlus, Plus, Stethoscope, X } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
 import { useHospitalDoctors, useLinkHospitalDoctor } from '../../hooks/useHospital';
 
@@ -24,6 +26,7 @@ export default function HospitalDoctorsScreen() {
     const linkDoctor = useLinkHospitalDoctor();
     const [identifier, setIdentifier] = React.useState('');
     const [department, setDepartment] = React.useState('');
+    const [isModalVisible, setIsModalVisible] = React.useState(false);
 
     const doctors = doctorsQuery.data || [];
 
@@ -41,6 +44,7 @@ export default function HospitalDoctorsScreen() {
             });
             setIdentifier('');
             setDepartment('');
+            setIsModalVisible(false);
             Toast.show({ type: 'success', text1: 'Doctor linked', text2: 'Doctor is now available in this hospital panel.' });
         } catch (error: any) {
             Toast.show({
@@ -58,41 +62,81 @@ export default function HospitalDoctorsScreen() {
             refreshControl={<RefreshControl refreshing={doctorsQuery.isRefetching} onRefresh={doctorsQuery.refetch} tintColor={theme.tint} />}
             keyboardShouldPersistTaps="handled"
         >
-            <Text style={[styles.kicker, { color: theme.tint }]}>Hospital Doctors</Text>
-            <Text style={[styles.title, { color: theme.text }]}>Manage doctors inside your hospital.</Text>
-            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-                Link doctors who already have a CD4 doctor account. Use their email or medical registration number.
-            </Text>
-
-            <View style={[styles.formCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                <View style={styles.formHeader}>
-                    <MailPlus size={19} color={theme.tint} />
-                    <Text style={[styles.formTitle, { color: theme.text }]}>Link doctor</Text>
+            <View style={styles.headerRow}>
+                <View style={{ flex: 1 }}>
+                    <Text style={[styles.kicker, { color: theme.tint }]}>Hospital Doctors</Text>
+                    <Text style={[styles.title, { color: theme.text }]}>Doctors</Text>
                 </View>
-                <TextInput
-                    value={identifier}
-                    onChangeText={setIdentifier}
-                    placeholder="Doctor email or registration number"
-                    placeholderTextColor={theme.textSecondary}
-                    autoCapitalize="none"
-                    style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                />
-                <TextInput
-                    value={department}
-                    onChangeText={setDepartment}
-                    placeholder="Department, e.g. Cardiology"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                />
                 <TouchableOpacity
-                    style={[styles.primaryButton, { backgroundColor: theme.tint }, linkDoctor.isPending && styles.disabledButton]}
-                    onPress={handleLinkDoctor}
-                    disabled={linkDoctor.isPending}
+                    style={[styles.addButton, { backgroundColor: theme.tint }]}
+                    onPress={() => setIsModalVisible(true)}
                 >
-                    {linkDoctor.isPending ? <ActivityIndicator color={theme.buttonText} /> : <Search size={17} color={theme.buttonText} />}
-                    <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Add doctor</Text>
+                    <Plus size={16} color={theme.buttonText} />
+                    <Text style={[styles.addButtonText, { color: theme.buttonText }]}>Add Doctor</Text>
                 </TouchableOpacity>
             </View>
+            <Text style={[styles.subtitle, { color: theme.textSecondary, marginBottom: 14 }]}>
+                Manage and link doctors inside your hospital.
+            </Text>
+
+            <Modal
+                visible={isModalVisible}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setIsModalVisible(false)}
+            >
+                <Pressable style={styles.modalOverlay} onPress={() => setIsModalVisible(false)}>
+                    <Pressable
+                        style={[
+                            styles.modalCard,
+                            {
+                                backgroundColor: theme.cardBackground,
+                                borderColor: theme.borderColor,
+                                paddingBottom: Math.max(insets.bottom, 20),
+                            },
+                        ]}
+                        onPress={() => {}}
+                    >
+                        <View style={[styles.modalGrabber, { backgroundColor: theme.borderColor }]} />
+                        <View style={styles.modalHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <MailPlus size={19} color={theme.tint} />
+                                <Text style={[styles.modalTitle, { color: theme.text }]}>Link doctor</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setIsModalVisible(false)}>
+                                <X size={20} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.modalSubtitle, { color: theme.textSecondary, marginBottom: 16 }]}>
+                            Link a doctor using their CD4 email or medical registration number.
+                        </Text>
+
+                        <TextInput
+                            value={identifier}
+                            onChangeText={setIdentifier}
+                            placeholder="Doctor email or registration number"
+                            placeholderTextColor={theme.textSecondary}
+                            autoCapitalize="none"
+                            style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                        />
+                        <TextInput
+                            value={department}
+                            onChangeText={setDepartment}
+                            placeholder="Department, e.g. Cardiology"
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                        />
+                        <TouchableOpacity
+                            style={[styles.primaryButton, { backgroundColor: theme.tint }, linkDoctor.isPending && styles.disabledButton]}
+                            onPress={handleLinkDoctor}
+                            disabled={linkDoctor.isPending}
+                        >
+                            {linkDoctor.isPending ? <ActivityIndicator color={theme.buttonText} /> : <Plus size={17} color={theme.buttonText} />}
+                            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Add doctor</Text>
+                        </TouchableOpacity>
+                    </Pressable>
+                </Pressable>
+            </Modal>
 
             <View style={styles.sectionHeader}>
                 <Text style={[styles.sectionTitle, { color: theme.text }]}>Linked doctors</Text>
@@ -158,4 +202,13 @@ const styles = StyleSheet.create({
     emptyCard: { borderWidth: 1, borderRadius: 18, padding: 18, marginTop: 4 },
     emptyTitle: { fontSize: 16, fontWeight: '900' },
     emptyText: { marginTop: 6, fontSize: 13, lineHeight: 20, fontWeight: '600' },
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+    addButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
+    addButtonText: { fontSize: 13, fontWeight: '900' },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    modalCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 20, paddingTop: 12, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.15, shadowRadius: 5 },
+    modalGrabber: { width: 42, height: 5, borderRadius: 2.5, alignSelf: 'center', marginBottom: 14 },
+    modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    modalTitle: { fontSize: 17, fontWeight: '900' },
+    modalSubtitle: { fontSize: 12, fontWeight: '600', lineHeight: 18 },
 });

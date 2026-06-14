@@ -1,6 +1,8 @@
 import React from 'react';
 import {
     ActivityIndicator,
+    Modal,
+    Pressable,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -12,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import { UserPlus, Users } from 'lucide-react-native';
+import { UserPlus, Users, Plus, X } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
 import { useHospitalDoctors, useHospitalPatients, useLinkHospitalPatient } from '../../hooks/useHospital';
 
@@ -26,6 +28,7 @@ export default function HospitalPatientsScreen() {
     const [email, setEmail] = React.useState('');
     const [notes, setNotes] = React.useState('');
     const [selectedDoctorId, setSelectedDoctorId] = React.useState<string | undefined>(undefined);
+    const [isModalVisible, setIsModalVisible] = React.useState(false);
 
     const patients = patientsQuery.data || [];
     const doctors = doctorsQuery.data || [];
@@ -45,6 +48,7 @@ export default function HospitalPatientsScreen() {
             });
             setEmail('');
             setNotes('');
+            setIsModalVisible(false);
             Toast.show({ type: 'success', text1: 'Patient linked', text2: 'Patient is now visible in hospital panel.' });
         } catch (error: any) {
             Toast.show({
@@ -62,69 +66,109 @@ export default function HospitalPatientsScreen() {
             refreshControl={<RefreshControl refreshing={patientsQuery.isRefetching} onRefresh={patientsQuery.refetch} tintColor={theme.tint} />}
             keyboardShouldPersistTaps="handled"
         >
-            <Text style={[styles.kicker, { color: theme.tint }]}>Hospital Patients</Text>
-            <Text style={[styles.title, { color: theme.text }]}>Map patients under your doctors.</Text>
-            <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-                Link existing CD4 patient accounts to this hospital and optionally assign them to a hospital doctor.
-            </Text>
-
-            <View style={[styles.formCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                <View style={styles.formHeader}>
-                    <UserPlus size={19} color={theme.tint} />
-                    <Text style={[styles.formTitle, { color: theme.text }]}>Link patient</Text>
+            <View style={styles.headerRow}>
+                <View style={{ flex: 1 }}>
+                    <Text style={[styles.kicker, { color: theme.tint }]}>Hospital Patients</Text>
+                    <Text style={[styles.title, { color: theme.text }]}>Patients</Text>
                 </View>
-                <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="Patient email"
-                    placeholderTextColor={theme.textSecondary}
-                    autoCapitalize="none"
-                    keyboardType="email-address"
-                    style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                />
-                <TextInput
-                    value={notes}
-                    onChangeText={setNotes}
-                    placeholder="Notes, UHID, ward, or visit context"
-                    placeholderTextColor={theme.textSecondary}
-                    style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                />
-                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Assign doctor</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-                    <TouchableOpacity
-                        style={[
-                            styles.chip,
-                            { borderColor: theme.borderColor, backgroundColor: selectedDoctorId ? theme.background : theme.successLight },
-                        ]}
-                        onPress={() => setSelectedDoctorId(undefined)}
-                    >
-                        <Text style={[styles.chipText, { color: selectedDoctorId ? theme.textSecondary : theme.tint }]}>Unassigned</Text>
-                    </TouchableOpacity>
-                    {doctors.map((doctor) => {
-                        const selected = selectedDoctorId === doctor.doctorId;
-                        return (
-                            <TouchableOpacity
-                                key={doctor.id}
-                                style={[
-                                    styles.chip,
-                                    { borderColor: theme.borderColor, backgroundColor: selected ? theme.successLight : theme.background },
-                                ]}
-                                onPress={() => setSelectedDoctorId(doctor.doctorId)}
-                            >
-                                <Text style={[styles.chipText, { color: selected ? theme.tint : theme.textSecondary }]}>{doctor.name}</Text>
-                            </TouchableOpacity>
-                        );
-                    })}
-                </ScrollView>
                 <TouchableOpacity
-                    style={[styles.primaryButton, { backgroundColor: theme.tint }, linkPatient.isPending && styles.disabledButton]}
-                    onPress={handleLinkPatient}
-                    disabled={linkPatient.isPending}
+                    style={[styles.addButton, { backgroundColor: theme.tint }]}
+                    onPress={() => setIsModalVisible(true)}
                 >
-                    {linkPatient.isPending ? <ActivityIndicator color={theme.buttonText} /> : <UserPlus size={17} color={theme.buttonText} />}
-                    <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Add patient</Text>
+                    <Plus size={16} color={theme.buttonText} />
+                    <Text style={[styles.addButtonText, { color: theme.buttonText }]}>Add Patient</Text>
                 </TouchableOpacity>
             </View>
+            <Text style={[styles.subtitle, { color: theme.textSecondary, marginBottom: 14 }]}>
+                Manage and link patients under your hospital.
+            </Text>
+
+            <Modal
+                visible={isModalVisible}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setIsModalVisible(false)}
+            >
+                <Pressable style={styles.modalOverlay} onPress={() => setIsModalVisible(false)}>
+                    <Pressable
+                        style={[
+                            styles.modalCard,
+                            {
+                                backgroundColor: theme.cardBackground,
+                                borderColor: theme.borderColor,
+                                paddingBottom: Math.max(insets.bottom, 20),
+                            },
+                        ]}
+                        onPress={() => {}}
+                    >
+                        <View style={[styles.modalGrabber, { backgroundColor: theme.borderColor }]} />
+                        <View style={styles.modalHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <UserPlus size={19} color={theme.tint} />
+                                <Text style={[styles.modalTitle, { color: theme.text }]}>Link patient</Text>
+                            </View>
+                            <TouchableOpacity onPress={() => setIsModalVisible(false)}>
+                                <X size={20} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+                        <Text style={[styles.modalSubtitle, { color: theme.textSecondary, marginBottom: 16 }]}>
+                            Link a patient using their CD4 email address.
+                        </Text>
+
+                        <TextInput
+                            value={email}
+                            onChangeText={setEmail}
+                            placeholder="Patient email"
+                            placeholderTextColor={theme.textSecondary}
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                            style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                        />
+                        <TextInput
+                            value={notes}
+                            onChangeText={setNotes}
+                            placeholder="Notes, UHID, ward, or visit context"
+                            placeholderTextColor={theme.textSecondary}
+                            style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                        />
+                        <Text style={[styles.smallLabel, { color: theme.textSecondary, marginBottom: 4 }]}>Assign doctor</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                            <TouchableOpacity
+                                style={[
+                                    styles.chip,
+                                    { borderColor: theme.borderColor, backgroundColor: selectedDoctorId ? theme.background : theme.successLight },
+                                ]}
+                                onPress={() => setSelectedDoctorId(undefined)}
+                            >
+                                <Text style={[styles.chipText, { color: selectedDoctorId ? theme.textSecondary : theme.tint }]}>Unassigned</Text>
+                            </TouchableOpacity>
+                            {doctors.map((doctor) => {
+                                const selected = selectedDoctorId === doctor.doctorId;
+                                return (
+                                    <TouchableOpacity
+                                        key={doctor.id}
+                                        style={[
+                                            styles.chip,
+                                            { borderColor: theme.borderColor, backgroundColor: selected ? theme.successLight : theme.background },
+                                        ]}
+                                        onPress={() => setSelectedDoctorId(doctor.doctorId)}
+                                    >
+                                        <Text style={[styles.chipText, { color: selected ? theme.tint : theme.textSecondary }]}>{doctor.name}</Text>
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
+                        <TouchableOpacity
+                            style={[styles.primaryButton, { backgroundColor: theme.tint }, linkPatient.isPending && styles.disabledButton]}
+                            onPress={handleLinkPatient}
+                            disabled={linkPatient.isPending}
+                        >
+                            {linkPatient.isPending ? <ActivityIndicator color={theme.buttonText} /> : <Plus size={17} color={theme.buttonText} />}
+                            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Add patient</Text>
+                        </TouchableOpacity>
+                    </Pressable>
+                </Pressable>
+            </Modal>
 
             <View style={styles.sectionHeader}>
                 <Text style={[styles.sectionTitle, { color: theme.text }]}>Linked patients</Text>
@@ -189,4 +233,13 @@ const styles = StyleSheet.create({
     emptyCard: { borderWidth: 1, borderRadius: 18, padding: 18, marginTop: 4 },
     emptyTitle: { fontSize: 16, fontWeight: '900' },
     emptyText: { marginTop: 6, fontSize: 13, lineHeight: 20, fontWeight: '600' },
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+    addButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
+    addButtonText: { fontSize: 13, fontWeight: '900' },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    modalCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 20, paddingTop: 12, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.15, shadowRadius: 5 },
+    modalGrabber: { width: 42, height: 5, borderRadius: 2.5, alignSelf: 'center', marginBottom: 14 },
+    modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+    modalTitle: { fontSize: 17, fontWeight: '900' },
+    modalSubtitle: { fontSize: 12, fontWeight: '600', lineHeight: 18 },
 });

@@ -22,7 +22,7 @@ function ModernTabIcon({
     return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
 }
 
-const HOSPITAL_VISIBLE_TABS = ['dashboard', 'doctors', 'patients', 'voice-intake'] as const;
+const HOSPITAL_VISIBLE_TABS = ['dashboard', 'stats', 'doctors', 'patients', 'settings'] as const;
 
 export default function HospitalLayout() {
     const colorScheme = useColorScheme();
@@ -114,6 +114,16 @@ export default function HospitalLayout() {
                 }}
             />
             <Tabs.Screen
+                name="stats"
+                options={{
+                    title: 'Stats',
+                    tabBarLabel: 'Stats',
+                    tabBarIcon: ({ color, focused }) => (
+                        <ModernTabIcon focused={focused} color={color} activeName="stats-chart" inactiveName="stats-chart-outline" />
+                    ),
+                }}
+            />
+            <Tabs.Screen
                 name="doctors"
                 options={{
                     title: 'Doctors',
@@ -136,14 +146,20 @@ export default function HospitalLayout() {
             <Tabs.Screen
                 name="voice-intake"
                 options={{
+                    href: null,
                     title: 'Voice Intake',
-                    tabBarLabel: 'AI Voice',
+                }}
+            />
+            <Tabs.Screen
+                name="settings"
+                options={{
+                    title: 'Profile',
+                    tabBarLabel: 'Profile',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="mic" inactiveName="mic-outline" />
+                        <ModernTabIcon focused={focused} color={color} activeName="person" inactiveName="person-outline" />
                     ),
                 }}
             />
-            <Tabs.Screen name="settings" options={{ href: null, title: 'Settings' }} />
             <Tabs.Screen name="voice-intake-report" options={{ href: null, title: 'AI Intake PDF' }} />
         </Tabs>
     );
