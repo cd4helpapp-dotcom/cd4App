@@ -78,6 +78,7 @@ const publicKeyCache = new Map<string, { key: string; fetchedAt: number }>();
 const inflightPublicKeyFetch = new Map<string, Promise<string>>();
 const roomParticipantsCache = new Map<string, { patientId: string; doctorId: string; fetchedAt: number }>();
 const inflightRoomParticipantsFetch = new Map<string, Promise<{ patientId: string; doctorId: string }>>();
+const inflightIdentityEnsure = new Map<string, Promise<IdentityKeyPair>>();
 
 const isFresh = (timestamp: number, ttlMs: number): boolean => Date.now() - timestamp < ttlMs;
 
@@ -301,66 +302,78 @@ const getOrCreateLocalIdentity = async (userId: string): Promise<IdentityKeyPair
 };
 
 export const ensureE2EEIdentity = async (userId: string): Promise<IdentityKeyPair> => {
-  const identity = await getOrCreateLocalIdentity(userId);
-  const cachedSync = profileSyncCache.get(userId);
-  if (
-    cachedSync &&
-    cachedSync.publicKey === identity.publicKey &&
-    isFresh(cachedSync.syncedAt, PROFILE_SYNC_TTL_MS)
-  ) {
+  let inflight = inflightIdentityEnsure.get(userId);
+  if (inflight) return await inflight;
+
+  const promise = (async () => {
+    const identity = await getOrCreateLocalIdentity(userId);
+    const cachedSync = profileSyncCache.get(userId);
+    if (
+      cachedSync &&
+      cachedSync.publicKey === identity.publicKey &&
+      isFresh(cachedSync.syncedAt, PROFILE_SYNC_TTL_MS)
+    ) {
+      void backupIdentityToServer(userId, identity);
+      return identity;
+    }
+
+    let syncPromise = inflightProfileSync.get(userId);
+    if (!syncPromise) {
+      syncPromise = (async () => {
+        const { data: existingProfile, error: profileReadError } = await supabase
+          .from('profiles')
+          .select('chat_public_key')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (profileReadError) {
+          throw new Error(`Could not read profile key: ${profileReadError.message}`);
+        }
+
+        const remotePublicKey =
+          typeof existingProfile?.chat_public_key === 'string' ? existingProfile.chat_public_key : '';
+        if (remotePublicKey !== identity.publicKey) {
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({ chat_public_key: identity.publicKey })
+            .eq('id', userId);
+
+          if (updateError) {
+            throw new Error(`Could not sync public key: ${updateError.message}`);
+          }
+        }
+
+        const now = Date.now();
+        profileSyncCache.set(userId, {
+          publicKey: identity.publicKey,
+          syncedAt: now,
+        });
+        publicKeyCache.set(userId, {
+          key: identity.publicKey,
+          fetchedAt: now,
+        });
+      })();
+      inflightProfileSync.set(userId, syncPromise);
+    }
+
+    try {
+      await syncPromise;
+    } finally {
+      if (inflightProfileSync.get(userId) === syncPromise) {
+        inflightProfileSync.delete(userId);
+      }
+    }
+
     void backupIdentityToServer(userId, identity);
     return identity;
-  }
+  })();
 
-  let syncPromise = inflightProfileSync.get(userId);
-  if (!syncPromise) {
-    syncPromise = (async () => {
-      const { data: existingProfile, error: profileReadError } = await supabase
-        .from('profiles')
-        .select('chat_public_key')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (profileReadError) {
-        throw new Error(`Could not read profile key: ${profileReadError.message}`);
-      }
-
-      const remotePublicKey =
-        typeof existingProfile?.chat_public_key === 'string' ? existingProfile.chat_public_key : '';
-      if (remotePublicKey !== identity.publicKey) {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({ chat_public_key: identity.publicKey })
-          .eq('id', userId);
-
-        if (updateError) {
-          throw new Error(`Could not sync public key: ${updateError.message}`);
-        }
-      }
-
-      const now = Date.now();
-      profileSyncCache.set(userId, {
-        publicKey: identity.publicKey,
-        syncedAt: now,
-      });
-      publicKeyCache.set(userId, {
-        key: identity.publicKey,
-        fetchedAt: now,
-      });
-    })();
-    inflightProfileSync.set(userId, syncPromise);
-  }
-
+  inflightIdentityEnsure.set(userId, promise);
   try {
-    await syncPromise;
+    return await promise;
   } finally {
-    if (inflightProfileSync.get(userId) === syncPromise) {
-      inflightProfileSync.delete(userId);
-    }
+    inflightIdentityEnsure.delete(userId);
   }
-
-  void backupIdentityToServer(userId, identity);
-  return identity;
 };
 
 const parseEncryptedPayload = (input: RawEncryptedPayload): ParsedEncryptedPayload | null => {

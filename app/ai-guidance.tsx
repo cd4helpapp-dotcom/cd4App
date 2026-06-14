@@ -1120,6 +1120,12 @@ export default function AiGuidanceScreen() {
   const agentWsTokenRef = useRef<string>('');
   const agentWsPendingRequestsRef = useRef<Map<string, AgentWsPendingRequest>>(new Map());
   const activeWsRequestIdRef = useRef<string | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isUnmountedRef = useRef<boolean>(false);
+  const lastActiveTokenRef = useRef<string>('');
+  const triggerReconnectRef = useRef<((token: string) => void) | null>(null);
+  const handleServerVoiceAudioChunkRef = useRef<((audio: string, text: string, index: number) => void) | null>(null);
   const requestCounterRef = useRef(0);
   const chatSessionStartedAtRef = useRef<number | null>(null);
   const chatLastActivityAtRef = useRef<number | null>(null);
@@ -1130,6 +1136,10 @@ export default function AiGuidanceScreen() {
   const [isAttachmentPicking, setIsAttachmentPicking] = useState(false);
   const activeVoiceSoundRef = useRef<Audio.Sound | null>(null);
   const activeSpeechRef = useRef(false);
+  const serverVoiceAudioChunksMapRef = useRef<Map<number, { audio: string; text: string }>>(new Map());
+  const nextExpectedVoiceAudioIndexRef = useRef<number>(0);
+  const isPlayingServerVoiceAudioRef = useRef<boolean>(false);
+  const hasReceivedServerVoiceAudioChunksRef = useRef<boolean>(false);
   const [isVoiceDeltaLive, setIsVoiceDeltaLive] = useState(false);
   const voiceLiveDraftIdRef = useRef<string | null>(null);
   const voiceLiveSpeechQueueRef = useRef<string[]>([]);
@@ -1356,6 +1366,10 @@ export default function AiGuidanceScreen() {
   }, []);
 
   const closeAgentWs = React.useCallback((reason: string) => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     if (agentWsRef.current) {
       try {
         agentWsRef.current.close();
@@ -1405,11 +1419,15 @@ export default function AiGuidanceScreen() {
         settled = true;
         closeAgentWs('websocket_connect_timeout');
         reject(new Error('Agent websocket connection timed out.'));
+        if (lastActiveTokenRef.current && !isUnmountedRef.current) {
+          triggerReconnectRef.current?.(lastActiveTokenRef.current);
+        }
       }, 12000);
 
       let socket: WebSocket;
       try {
         socket = new WebSocket(wsUrl);
+        socket.binaryType = 'arraybuffer';
       } catch (openError: any) {
         if (openTimeout) {
           clearTimeout(openTimeout);
@@ -1418,6 +1436,9 @@ export default function AiGuidanceScreen() {
         settled = true;
         agentWsConnectPromiseRef.current = null;
         reject(new Error(openError?.message || 'Failed to open agent websocket.'));
+        if (lastActiveTokenRef.current && !isUnmountedRef.current) {
+          triggerReconnectRef.current?.(lastActiveTokenRef.current);
+        }
         return;
       }
 
@@ -1429,6 +1450,8 @@ export default function AiGuidanceScreen() {
           openTimeout = null;
         }
         agentWsTokenRef.current = accessToken;
+        lastActiveTokenRef.current = accessToken;
+        reconnectAttemptsRef.current = 0;
         if (!settled) {
           settled = true;
           resolve(socket);
@@ -1436,6 +1459,33 @@ export default function AiGuidanceScreen() {
       };
 
       socket.onmessage = (messageEvent) => {
+        if (typeof messageEvent.data !== 'string') {
+          try {
+            const buffer = messageEvent.data;
+            const view = new DataView(buffer);
+            const index = view.getUint32(0, true);
+            const textLen = view.getUint32(4, true);
+            
+            const textDecoder = new TextDecoder();
+            const textBytes = new Uint8Array(buffer, 8, textLen);
+            const text = textDecoder.decode(textBytes);
+            
+            const audioBytes = new Uint8Array(buffer, 8 + textLen);
+            
+            let binary = '';
+            const len = audioBytes.byteLength;
+            for (let i = 0; i < len; i++) {
+              binary += String.fromCharCode(audioBytes[i]);
+            }
+            const audioBase64 = btoa(binary);
+
+            handleServerVoiceAudioChunkRef.current?.(audioBase64, text, index);
+          } catch (err: any) {
+            console.warn('[AI WS] Failed to parse binary audio packet:', err?.message);
+          }
+          return;
+        }
+
         let eventPayload: AgentWsServerEvent | null = null;
         try {
           eventPayload = typeof messageEvent.data === 'string' ? JSON.parse(messageEvent.data) : null;
@@ -1485,6 +1535,10 @@ export default function AiGuidanceScreen() {
           reject(new Error('Agent websocket disconnected.'));
         }
         closeAgentWs('websocket_closed');
+        const tokenToUse = lastActiveTokenRef.current;
+        if (tokenToUse && !isUnmountedRef.current) {
+          triggerReconnectRef.current?.(tokenToUse);
+        }
       };
 
       socket.onerror = () => {
@@ -1505,6 +1559,144 @@ export default function AiGuidanceScreen() {
     return await connectPromise;
   }, [closeAgentWs]);
 
+  const triggerReconnect = React.useCallback((token: string) => {
+    if (isUnmountedRef.current) return;
+    if (!AGENT_WS_MODE || !AGENT_WS_ENDPOINT) return;
+    if (reconnectTimeoutRef.current) return;
+
+    const attempt = reconnectAttemptsRef.current;
+    const delaySec = Math.min(16, Math.pow(2, attempt));
+    const jitter = Math.random() * 0.5 * delaySec;
+    const delayMs = (delaySec + jitter) * 1000;
+
+    console.log(`[AI WS] Reconnect attempt #${attempt + 1} scheduled in ${delayMs.toFixed(0)}ms`);
+
+    reconnectTimeoutRef.current = setTimeout(async () => {
+      reconnectTimeoutRef.current = null;
+      if (isUnmountedRef.current) return;
+
+      try {
+        reconnectAttemptsRef.current++;
+        await getOrConnectAgentWs(token);
+        console.log('[AI WS] Reconnected successfully');
+        reconnectAttemptsRef.current = 0;
+      } catch (err: any) {
+        console.warn('[AI WS] Reconnect attempt failed:', err?.message);
+        triggerReconnect(token);
+      }
+    }, delayMs);
+  }, [getOrConnectAgentWs]);
+
+  triggerReconnectRef.current = triggerReconnect;
+
+  const executeHttpFallback = React.useCallback(async (args: {
+    accessToken: string;
+    requestId: string;
+    type: 'chat.message' | 'voice.message';
+    payload: any;
+    onDelta?: (chunk: string) => void;
+    onStage?: (stage: string) => void;
+  }) => {
+    const isChat = args.type === 'chat.message';
+    const endpointName = isChat ? 'chat-ai' : 'voice-chat';
+    const fallbackUrl = `${FUNCTIONS_BASE_URL}/functions/v1/${endpointName}`;
+
+    console.warn(`[AI Failover] Executing HTTP fallback to /${endpointName}`);
+
+    const bodyPayload = { ...args.payload };
+    const streamRequested = isChat && typeof args.onDelta === 'function';
+    if (isChat) {
+      bodyPayload.stream = streamRequested;
+    }
+
+    const controller = new AbortController();
+    const response = await fetch(fallbackUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${args.accessToken}`,
+        apikey: SUPABASE_ANON_KEY || '',
+        'Content-Type': 'application/json',
+        Accept: streamRequested ? 'text/event-stream' : 'application/json',
+      },
+      body: JSON.stringify(bodyPayload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP fallback failed: ${errorText || response.statusText}`);
+    }
+
+    if (streamRequested) {
+      const reader = (response as any)?.body?.getReader?.();
+      if (!reader) {
+        const fallbackText = await response.text().catch(() => '');
+        const recoveredPayload = extractPayloadFromSseOrJsonText(fallbackText);
+        if (recoveredPayload) {
+          return recoveredPayload;
+        }
+        throw new Error('Streaming not supported in HTTP fallback');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalPayload: any = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseSseBuffer(buffer);
+        buffer = parsed.rest;
+
+        for (const event of parsed.events) {
+          if (event.event === 'delta') {
+            const textDelta =
+              typeof event.data?.text === 'string'
+                ? event.data.text
+                : typeof event.data === 'string'
+                  ? event.data
+                  : '';
+            if (textDelta && args.onDelta) {
+              args.onDelta(textDelta);
+            }
+          } else if (event.event === 'stage') {
+            const stage = typeof event.data?.stage === 'string' ? event.data.stage : (typeof event.data === 'string' ? event.data : '');
+            if (stage && args.onStage) {
+              args.onStage(stage);
+            }
+          } else if (event.event === 'done') {
+            finalPayload = event.data;
+          } else if (event.event === 'error') {
+            const message = typeof event.data?.message === 'string' ? event.data.message : 'Streaming fallback failed';
+            throw new Error(message);
+          }
+        }
+      }
+
+      const tail = decoder.decode();
+      if (tail) {
+        buffer += tail;
+        const parsed = parseSseBuffer(buffer);
+        for (const event of parsed.events) {
+          if (event.event === 'delta') {
+            const textDelta = typeof event.data?.text === 'string' ? event.data.text : (typeof event.data === 'string' ? event.data : '');
+            if (textDelta && args.onDelta) {
+              args.onDelta(textDelta);
+            }
+          } else if (event.event === 'done') {
+            finalPayload = event.data;
+          }
+        }
+      }
+
+      return finalPayload;
+    } else {
+      return await response.json();
+    }
+  }, []);
+
   const sendAgentWsRequest = React.useCallback(async (args: {
     accessToken: string;
     requestId: string;
@@ -1514,14 +1706,24 @@ export default function AiGuidanceScreen() {
     onDelta?: (chunk: string) => void;
     onStage?: (stage: string) => void;
   }) => {
-    const socket = await getOrConnectAgentWs(args.accessToken);
+    let socket: WebSocket | null = null;
+    try {
+      socket = await getOrConnectAgentWs(args.accessToken);
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        throw new Error('WebSocket connection is not open');
+      }
+    } catch (wsConnError: any) {
+      console.warn('[AI WS] WebSocket connection failed, fallback to HTTP:', wsConnError?.message);
+      return await executeHttpFallback(args);
+    }
+
     const timeoutMs = Math.max(5000, Number(args.timeoutMs || 120000));
 
     return await new Promise<any>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         agentWsPendingRequestsRef.current.delete(args.requestId);
         try {
-          socket.send(JSON.stringify({ type: 'cancel', targetRequestId: args.requestId, requestId: `cancel-${Date.now()}` }));
+          socket!.send(JSON.stringify({ type: 'cancel', targetRequestId: args.requestId, requestId: `cancel-${Date.now()}` }));
         } catch {
           // noop
         }
@@ -1537,7 +1739,7 @@ export default function AiGuidanceScreen() {
       });
 
       try {
-        socket.send(
+        socket!.send(
           JSON.stringify({
             type: args.type,
             requestId: args.requestId,
@@ -1547,13 +1749,20 @@ export default function AiGuidanceScreen() {
       } catch (sendError: any) {
         clearTimeout(timeoutId);
         agentWsPendingRequestsRef.current.delete(args.requestId);
-        reject(new Error(sendError?.message || 'Failed to send websocket request.'));
+        console.warn('[AI WS] WebSocket send failed, fallback to HTTP:', sendError?.message);
+        executeHttpFallback(args).then(resolve).catch(reject);
       }
     });
-  }, [getOrConnectAgentWs]);
+  }, [getOrConnectAgentWs, executeHttpFallback]);
 
   useEffect(() => {
+    isUnmountedRef.current = false;
     return () => {
+      isUnmountedRef.current = true;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
       closeAgentWs('screen_unmounted');
     };
   }, [closeAgentWs]);
@@ -2155,6 +2364,10 @@ export default function AiGuidanceScreen() {
 
   const stopActiveVoicePlayback = React.useCallback(async (options?: { resetStage?: boolean }) => {
     const shouldResetStage = options?.resetStage ?? true;
+    serverVoiceAudioChunksMapRef.current.clear();
+    nextExpectedVoiceAudioIndexRef.current = 0;
+    isPlayingServerVoiceAudioRef.current = false;
+    hasReceivedServerVoiceAudioChunksRef.current = false;
     if (activeVoiceSoundRef.current) {
       try {
         const sound = activeVoiceSoundRef.current;
@@ -3453,6 +3666,75 @@ export default function AiGuidanceScreen() {
     }
   };
 
+  const playNextServerVoiceAudioChunk = React.useCallback(async () => {
+    if (isPlayingServerVoiceAudioRef.current) return;
+    
+    const nextIdx = nextExpectedVoiceAudioIndexRef.current;
+    const chunk = serverVoiceAudioChunksMapRef.current.get(nextIdx);
+    if (!chunk) {
+      isPlayingServerVoiceAudioRef.current = false;
+      return;
+    }
+
+    isPlayingServerVoiceAudioRef.current = true;
+    serverVoiceAudioChunksMapRef.current.delete(nextIdx);
+    nextExpectedVoiceAudioIndexRef.current = nextIdx + 1;
+
+    try {
+      setVoiceStage('speaking');
+      const sourceUri = `data:audio/mpeg;base64,${chunk.audio}`;
+      
+      const created = await Audio.Sound.createAsync(
+        { uri: sourceUri },
+        { shouldPlay: true }
+      );
+      const sound = created.sound;
+      activeVoiceSoundRef.current = sound;
+      
+      await new Promise<void>((resolve) => {
+        let finished = false;
+        sound.setOnPlaybackStatusUpdate((status: any) => {
+          if (!status?.isLoaded) {
+            if (!finished) {
+              finished = true;
+              resolve();
+            }
+            return;
+          }
+          if (status?.didJustFinish) {
+            if (!finished) {
+              finished = true;
+              resolve();
+            }
+          }
+        });
+      });
+
+      if (activeVoiceSoundRef.current === sound) {
+        activeVoiceSoundRef.current = null;
+      }
+      try {
+        await sound.unloadAsync();
+      } catch {
+        // ignore
+      }
+    } catch (error) {
+      console.warn('[AI WS Client] Server audio chunk playback failed:', error);
+    } finally {
+      isPlayingServerVoiceAudioRef.current = false;
+      setVoiceStage('idle');
+      void playNextServerVoiceAudioChunk();
+    }
+  }, [setVoiceStage]);
+
+  const handleServerVoiceAudioChunk = React.useCallback((audioBase64: string, text: string, index: number) => {
+    hasReceivedServerVoiceAudioChunksRef.current = true;
+    serverVoiceAudioChunksMapRef.current.set(index, { audio: audioBase64, text });
+    void playNextServerVoiceAudioChunk();
+  }, [playNextServerVoiceAudioChunk]);
+
+  handleServerVoiceAudioChunkRef.current = handleServerVoiceAudioChunk;
+
   const playVoiceAudioBase64 = async (audioBase64: string, audioMimeType?: string): Promise<boolean> => {
     const trimmed = (audioBase64 || '').trim();
     if (!trimmed) return false;
@@ -3486,6 +3768,7 @@ export default function AiGuidanceScreen() {
   };
 
   const processVoiceLiveSpeechQueue = React.useCallback(async () => {
+    if (hasReceivedServerVoiceAudioChunksRef.current) return;
     if (voiceLiveSpeechBusyRef.current) return;
     voiceLiveSpeechBusyRef.current = true;
     try {

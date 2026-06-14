@@ -367,11 +367,13 @@ const invokeChatAiOverSse = async (args: {
   return finalPayload
 }
 
-const invokeVoiceChatOverWs = async (args: {
+const invokeVoiceChatStreaming = async (args: {
   supabaseUrl: string
   apiKey: string
   accessToken: string
   payload: any
+  socket: WebSocket
+  requestId: string
   signal?: AbortSignal
 }) => {
   const response = await fetch(`${args.supabaseUrl}/functions/v1/voice-chat`, {
@@ -380,20 +382,111 @@ const invokeVoiceChatOverWs = async (args: {
       Authorization: `Bearer ${args.accessToken}`,
       apikey: args.apiKey,
       "Content-Type": "application/json",
-      Accept: "application/json",
+      Accept: "text/event-stream",
     },
     body: JSON.stringify({
       ...normalizeVoicePayload(args.payload),
-      stream: false,
+      stream: true,
     }),
     signal: args.signal,
   })
 
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok || !data?.success) {
-    throw new Error(toMessageText(data?.message || data || `voice-chat failed (${response.status})`))
+  if (!response.ok) {
+    const rawError = await response.text().catch(() => "")
+    const parsedError = safeJsonParse(rawError)
+    throw new Error(toMessageText(parsedError || rawError || `voice-chat failed (${response.status})`))
   }
-  return data
+
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new Error("voice-chat stream reader unavailable")
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let finalPayload: any = null
+  let shouldStop = false
+
+  const handleVoiceEvent = (event: ParsedSseEvent) => {
+    if (event.event === "error") {
+      throw new Error(toMessageText(event.data, "Voice streaming failed"))
+    }
+
+    if (event.event === "delta") {
+      const text =
+        typeof event.data?.text === "string"
+          ? event.data.text
+          : typeof event.data === "string"
+            ? event.data
+            : ""
+      if (text) {
+        sendWs(args.socket, {
+          type: "delta",
+          requestId: args.requestId,
+          text,
+          ts: Date.now(),
+        })
+      }
+      return
+    }
+
+    if (event.event === "audio-chunk") {
+      const audioChunk = event.data;
+      if (audioChunk && typeof audioChunk.audio === "string") {
+        const binaryString = atob(audioChunk.audio)
+        const audioBytes = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+          audioBytes[i] = binaryString.charCodeAt(i)
+        }
+
+        const textEncoder = new TextEncoder()
+        const textBytes = textEncoder.encode(audioChunk.text || "")
+        const packet = new Uint8Array(8 + textBytes.length + audioBytes.length)
+        const view = new DataView(packet.buffer)
+        
+        view.setUint32(0, typeof audioChunk.index === 'number' ? audioChunk.index : 0, true)
+        view.setUint32(4, textBytes.length, true)
+        packet.set(textBytes, 8)
+        packet.set(audioBytes, 8 + textBytes.length)
+
+        if (args.socket.readyState === WebSocket.OPEN) {
+          args.socket.send(packet)
+        }
+      }
+      return
+    }
+
+    if (event.event === "done") {
+      finalPayload = event.data
+      shouldStop = true
+      return
+    }
+  }
+
+  while (!shouldStop) {
+    const { value, done } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const parsed = parseSseBuffer(buffer)
+    buffer = parsed.rest
+    for (const event of parsed.events) {
+      handleVoiceEvent(event)
+      if (shouldStop) break
+    }
+  }
+
+  const tail = decoder.decode()
+  if (tail) {
+    buffer += tail
+    const parsed = parseSseBuffer(buffer)
+    for (const event of parsed.events) {
+      handleVoiceEvent(event)
+      if (shouldStop) break
+    }
+  }
+
+  return finalPayload
 }
 
 Deno.serve(async (req) => {
@@ -641,11 +734,13 @@ Deno.serve(async (req) => {
           stage: "processing_voice",
           ts: Date.now(),
         })
-        const finalPayload = await invokeVoiceChatOverWs({
+        const finalPayload = await invokeVoiceChatStreaming({
           supabaseUrl,
           apiKey: anonKey,
           accessToken: liveAccessToken,
           payload,
+          socket,
+          requestId,
           signal: abortController.signal,
         })
         sendWs(socket, {

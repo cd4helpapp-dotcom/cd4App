@@ -9,6 +9,7 @@ const ALLOWED_NO_VERIFY = new Set([
   'chat-agent-ws', // WebSocket auth token is validated inside function (query/header token flow).
   'health-reminders', // Cron/manual-secret path supports non-JWT invocations.
   'security-ops-monitor', // Cron/manual-secret path supports non-JWT invocations.
+  'submit-hospital-onboarding', // Anonymous hospital registration flow.
 ]);
 
 const parseFunctionConfigs = (rawToml) => {

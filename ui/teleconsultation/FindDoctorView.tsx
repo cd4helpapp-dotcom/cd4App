@@ -1642,7 +1642,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const finalSubmitFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const activeVoiceSoundRef = React.useRef<Audio.Sound | null>(null);
     const activeWebAudioRef = React.useRef<any | null>(null);
+    const hasReceivedServerAudioChunksRef = React.useRef<boolean>(false);
+    const serverAudioChunksMapRef = React.useRef<Map<number, { audio: string; text: string }>>(new Map());
+    const nextExpectedAudioIndexRef = React.useRef<number>(0);
+    const isPlayingServerAudioRef = React.useRef<boolean>(false);
+    const voiceSilenceInitialDelayRef = React.useRef<number>(2000);
     const agentStreamAbortControllerRef = React.useRef<AbortController | null>(null);
+    const isHomeAgentSendingRef = React.useRef<boolean>(false);
     const activeSpeechRef = React.useRef<boolean>(false);
     const homeVoiceLiveSpeechQueueRef = React.useRef<string[]>([]);
     const homeVoiceLiveSpeechBusyRef = React.useRef(false);
@@ -2903,6 +2909,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         homeVoiceLiveSpeechRunIdRef.current += 1;
         homeVoiceLiveSpeechQueueRef.current = [];
         homeVoiceLiveSpokenCharsRef.current = 0;
+        serverAudioChunksMapRef.current.clear();
+        nextExpectedAudioIndexRef.current = 0;
+        isPlayingServerAudioRef.current = false;
+        hasReceivedServerAudioChunksRef.current = false;
         if (activeWebAudioRef.current) {
             try {
                 activeWebAudioRef.current.pause?.();
@@ -3013,6 +3023,117 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             onError: finalizeSpeechLipSync,
         });
     };
+
+    const playNextServerAudioChunk = React.useCallback(async () => {
+        if (isPlayingServerAudioRef.current) return;
+        
+        const nextIdx = nextExpectedAudioIndexRef.current;
+        const chunk = serverAudioChunksMapRef.current.get(nextIdx);
+        if (!chunk) {
+            isPlayingServerAudioRef.current = false;
+            return;
+        }
+
+        isPlayingServerAudioRef.current = true;
+        serverAudioChunksMapRef.current.delete(nextIdx);
+        nextExpectedAudioIndexRef.current = nextIdx + 1;
+
+        try {
+            setIsVoiceReplyPlaying(true);
+            setVoiceStatusText('Doctor is speaking...');
+            
+            const cleanedSpeechText = sanitizeSpeechText(chunk.text);
+            const durationMs = estimateSpeechDurationMs(cleanedSpeechText);
+            clearLipSyncTicker();
+            clearLipSyncFallbackTimer();
+            if (cleanedSpeechText) {
+                startTimedLipSync(cleanedSpeechText, durationMs);
+            }
+
+            const sourceUri = `data:audio/mpeg;base64,${chunk.audio}`;
+            
+            if (Platform.OS === 'web') {
+                const WebAudioCtor = (globalThis as any)?.Audio;
+                if (typeof WebAudioCtor === 'function') {
+                    const webAudio = new WebAudioCtor(sourceUri);
+                    activeWebAudioRef.current = webAudio;
+                    webAudio.preload = 'auto';
+
+                    await new Promise<void>((resolve, reject) => {
+                        let settled = false;
+                        const finish = () => {
+                            if (settled) return;
+                            settled = true;
+                            resolve();
+                        };
+                        const fail = () => {
+                            if (settled) return;
+                            settled = true;
+                            reject(new Error('web_audio_playback_failed'));
+                        };
+
+                        webAudio.onended = finish;
+                        webAudio.onerror = fail;
+                        const playResult = webAudio.play?.();
+                        if (playResult && typeof playResult.then === 'function') {
+                            playResult.catch(fail);
+                        }
+                    });
+                    return;
+                }
+            }
+
+            const { sound } = await Audio.Sound.createAsync(
+                { uri: sourceUri },
+                { shouldPlay: true },
+                undefined,
+                false
+            );
+
+            activeVoiceSoundRef.current = sound;
+            await sound.setProgressUpdateIntervalAsync(65);
+
+            await new Promise<void>((resolve) => {
+                let finished = false;
+                sound.setOnPlaybackStatusUpdate((status) => {
+                    if (!status.isLoaded) {
+                        if (!finished) {
+                            finished = true;
+                            resolve();
+                        }
+                        return;
+                    }
+                    if (status.didJustFinish) {
+                        if (!finished) {
+                            finished = true;
+                            resolve();
+                        }
+                    }
+                });
+            });
+
+            if (activeVoiceSoundRef.current === sound) {
+                activeVoiceSoundRef.current = null;
+            }
+            try {
+                await sound.unloadAsync();
+            } catch {
+                // ignore
+            }
+        } catch (error) {
+            console.warn('[Home Voice] Server audio chunk playback failed:', error);
+        } finally {
+            isPlayingServerAudioRef.current = false;
+            stopLipSyncAnimation(true);
+            void playNextServerAudioChunk();
+        }
+    }, [stopLipSyncAnimation, startTimedLipSync, clearLipSyncTicker, clearLipSyncFallbackTimer]);
+
+    const handleServerAudioChunk = React.useCallback((audioBase64: string, text: string, index: number) => {
+        hasReceivedServerAudioChunksRef.current = true;
+        serverAudioChunksMapRef.current.set(index, { audio: audioBase64, text });
+        void playNextServerAudioChunk();
+    }, [playNextServerAudioChunk]);
 
     const playVoiceAudioBase64 = React.useCallback(
         async (audioBase64: string, audioMimeType?: string, speechText?: string): Promise<boolean> => {
@@ -3373,6 +3494,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             return false;
         }
 
+        if (isHomeAgentSendingRef.current) {
+            console.warn('[Home Agent] callHomeAgent already in progress, ignoring duplicate call');
+            return false;
+        }
+        isHomeAgentSendingRef.current = true;
+
         const requestToken = `agent-${Date.now()}-${agentRequestCounterRef.current + 1}`;
         agentRequestCounterRef.current += 1;
         activeAgentRequestTokenRef.current = requestToken;
@@ -3623,6 +3750,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             upsertAgentDraftMessage(aiDraftId, voiceStreamedText, aiDraftCreatedAt || nowIso());
                         }
 
+                        if (hasReceivedServerAudioChunksRef.current) {
+                            return;
+                        }
+
                         if (!nativeVoiceIdByPersona.female) {
                             return;
                         }
@@ -3660,6 +3791,14 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             ? event.data
                                             : '';
                                 handleVoiceDelta(textDelta);
+                                continue;
+                            }
+
+                            if (event.event === 'audio-chunk') {
+                                const audioChunk = event.data;
+                                if (audioChunk && typeof audioChunk.audio === 'string') {
+                                    handleServerAudioChunk(audioChunk.audio, audioChunk.text || '', typeof audioChunk.index === 'number' ? audioChunk.index : 0);
+                                }
                                 continue;
                             }
 
@@ -3709,6 +3848,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             ? event.data
                                             : '';
                                 handleVoiceDelta(textDelta);
+                                continue;
+                            }
+                            if (event.event === 'audio-chunk') {
+                                const audioChunk = event.data;
+                                if (audioChunk && typeof audioChunk.audio === 'string') {
+                                    handleServerAudioChunk(audioChunk.audio, audioChunk.text || '', typeof audioChunk.index === 'number' ? audioChunk.index : 0);
+                                }
                                 continue;
                             }
                             if (event.event === 'done') {
@@ -4084,6 +4230,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             }
             return false;
         } finally {
+            isHomeAgentSendingRef.current = false;
             setIsAgentVoiceLiveStreaming(false);
             agentStreamingDraftMessageIdRef.current = null;
             if (agentStreamAbortControllerRef.current) {
@@ -4112,7 +4259,34 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             }
 
             clearVoiceAutoSubmitTimers();
-            const safeDelay = Math.max(150, delayMs);
+            
+            let adaptiveDelayMs = delayMs;
+            const words = transcript.split(/\s+/).filter(Boolean);
+            const wordCount = words.length;
+            const lowerTranscript = transcript.toLowerCase();
+            
+            const quickResponseTerms = [
+                'yes', 'no', 'confirm', 'first slot', 'slot', 'book', 'haan', 'han', 'theek', 'thik', 'sahi', 'okay', 'ok',
+                'first', 'second', 'third', 'last', 'wahi', 'done', 'appointment'
+            ];
+            const hasQuickResponseTerm = quickResponseTerms.some(term => lowerTranscript.includes(term));
+            
+            const symptomTerms = [
+                'pain', 'fever', 'vomit', 'cough', 'cold', 'headache', 'rash', 'infection', 'breathing', 'period', 'pregnancy',
+                'sugar', 'bp', 'diabetes', 'bukhar', 'dard', 'khansi', 'sardard', 'chot', 'blood', 'khoon'
+            ];
+            const hasSymptomTerm = symptomTerms.some(term => lowerTranscript.includes(term));
+
+            if (wordCount <= 4 || hasQuickResponseTerm) {
+                adaptiveDelayMs = 1100;
+            } else if (wordCount >= 8 || hasSymptomTerm) {
+                adaptiveDelayMs = 2800;
+            } else {
+                adaptiveDelayMs = 1800;
+            }
+
+            const safeDelay = Math.max(150, adaptiveDelayMs);
+            voiceSilenceInitialDelayRef.current = safeDelay;
             const countdownStartedAt = Date.now();
             setVoiceSilenceCountdownMs(safeDelay);
             setVoiceStatusText(reason === 'end' ? 'Pause detected. Sending now...' : 'Pause detected. Sending shortly...');
@@ -4285,37 +4459,19 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         if (voiceSessionActiveRef.current) {
             setVoiceLiveTranscript(transcript);
             voiceLiveTranscriptRef.current = transcript;
-        } else {
-            setSymptomInput(transcript);
-        }
 
-        if (event.isFinal) {
-            if (!voiceSessionActiveRef.current) {
-                handleSymptomSubmit(transcript);
-                return;
-            }
-            // In continuous mode, avoid premature auto-send on chunk-final events.
-            // Submission is primarily handled on stable `end`, but this fallback
-            // ensures send still happens on devices where `end` is delayed/missed.
             if (finalSubmitFallbackTimerRef.current) {
                 clearTimeout(finalSubmitFallbackTimerRef.current);
-            }
-            finalSubmitFallbackTimerRef.current = setTimeout(() => {
                 finalSubmitFallbackTimerRef.current = null;
-                if (voiceSubmitInProgressRef.current || isAgentSending || autoSubmitTimerRef.current) {
-                    return;
-                }
-                const latest = voiceLiveTranscriptRef.current.trim();
-                if (!latest || !voiceSessionActiveRef.current) {
-                    return;
-                }
-                const elapsed = Date.now() - lastVoiceResultAtRef.current;
-                if (elapsed < VOICE_END_MIN_SILENCE_MS) {
-                    return;
-                }
-                queueVoiceAutoSubmit(latest, VOICE_END_AUTO_SUBMIT_DELAY_MS, 'final');
-            }, VOICE_FINAL_FALLBACK_DELAY_MS);
-            setVoiceStatusText('Listening... pause when done.');
+            }
+
+            // Continuous auto-submit: clears and schedules submit timer dynamically on every word spoken
+            queueVoiceAutoSubmit(transcript, VOICE_END_AUTO_SUBMIT_DELAY_MS, 'end');
+        } else {
+            setSymptomInput(transcript);
+            if (event.isFinal) {
+                handleSymptomSubmit(transcript);
+            }
         }
     });
 
@@ -4930,7 +5086,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const isDoctorVoiceEngaged = isVoiceReplyPlaying || isListening || isAssistantAwaitingResponse;
     const voiceAutoSendProgress = voiceSilenceCountdownMs === null
         ? 0
-        : Math.max(0, Math.min(1, voiceSilenceCountdownMs / VOICE_AUTO_SUBMIT_DELAY_MS));
+        : Math.max(0, Math.min(1, voiceSilenceCountdownMs / voiceSilenceInitialDelayRef.current));
     const voiceRobotWaveLabel = shouldShowVoiceUpgradePrompt
             ? 'Upgrade to Pro to continue voice chat.'
         : isVoiceReplyPlaying
@@ -5192,10 +5348,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             },
                         ]}
                     >
-                        {/* Drag Handle */}
-                        <View style={styles.bottomSheetHandleWrap}>
-                            <View style={[styles.bottomSheetHandle, { backgroundColor: theme.textSecondary + '50' }]} />
-                        </View>
+
 
                         {/* Header */}
                         <View style={[styles.bottomSheetHeader, { borderBottomColor: theme.borderColor }]}>

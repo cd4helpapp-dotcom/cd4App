@@ -935,13 +935,18 @@ export const runAutonomousToolLoop = async (args: any) => {
       status: 'success',
     })
 
-    let search = await resolveDoctorRecommendationsWithFallback({
-      serviceClient: args.serviceClient,
-      departmentSuggestion: args.departmentSuggestion,
-      locationCity: args.locationCity,
-      searchAreaCity: args.searchAreaCity,
-      latestMessageText: args.latestMessageText
-    })
+    let search = args.speculativeDoctorsResult;
+    if (search) {
+      console.log('[AI Speculative Prefetch] Reusing speculative doctor recommendations result in runAutonomousToolLoop');
+    } else {
+      search = await resolveDoctorRecommendationsWithFallback({
+        serviceClient: args.serviceClient,
+        departmentSuggestion: args.departmentSuggestion,
+        locationCity: args.locationCity,
+        searchAreaCity: args.searchAreaCity,
+        latestMessageText: args.latestMessageText
+      })
+    }
 
     // 4. External web fallback is disabled by default.
     // It can be enabled only via env flag for controlled experiments.

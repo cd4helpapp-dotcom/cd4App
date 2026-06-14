@@ -447,6 +447,30 @@ Deno.serve(async (req) => {
       hasSmartDoctorSearchSignal(messageText) ||
       hasAnyTerm(normalizedMessageText, DOCTOR_SEARCH_INTENT_TERMS)
 
+    let speculativeDoctorSearchPromise: Promise<any> | null = null;
+    if (likelyDoctorSearchFromText) {
+      const explicitUiCity = normalizeCityInput(payload?.searchAreaCity) || normalizeCityInput(payload?.preferredCity);
+      const regexCity = await extractAndValidateCityFromText(messageText, serviceClient);
+      const searchAreaCityHeur = regexCity || explicitUiCity || locationCity || null;
+      
+      const messageDepartmentMatch = resolveMessageDepartmentMatch(messageText);
+      const concernDepartmentMatch = resolveMessageDepartmentMatch(concernText);
+      const departmentHeur = messageDepartmentMatch || concernDepartmentMatch;
+
+      console.log(`[AI Speculative Prefetch] Starting parallel doctor search for specialty: ${departmentHeur?.label} and city: ${searchAreaCityHeur}`);
+      
+      speculativeDoctorSearchPromise = resolveDoctorRecommendationsWithFallback({
+        serviceClient,
+        departmentSuggestion: departmentHeur,
+        locationCity,
+        searchAreaCity: searchAreaCityHeur,
+        latestMessageText: messageText
+      }).catch(err => {
+        console.warn('[AI Speculative Prefetch] Speculative doctor recommendations failed:', err?.message);
+        return null;
+      });
+    }
+
     // 1. Context & History (Define 'history' before extraction)
     const history = normalizeHistory(payload?.history)
 
@@ -770,6 +794,15 @@ Deno.serve(async (req) => {
     )
 
     if (shouldRunAutonomousTools) {
+      let speculativeDoctorsResult = null;
+      if (speculativeDoctorSearchPromise) {
+        try {
+          speculativeDoctorsResult = await speculativeDoctorSearchPromise;
+        } catch (specErr) {
+          console.warn('[AI Speculative Prefetch] Speculative search await error:', specErr);
+        }
+      }
+
       autonomousResult = await runAutonomousToolLoop({
         serviceClient, userId, openAiApiKey, concernText, combinedUserText, latestMessageText: messageText,
         hasDoctorIntent: doctorSearchIntent, hasDoctorSearchIntent: doctorSearchIntent, 
@@ -780,7 +813,8 @@ Deno.serve(async (req) => {
         dangerFromUserInput, triageCoverage: aiIntent === 'triage' ? { ...triageCoverage, covered: 1 } : triageCoverage, 
         departmentSuggestion, locationCity, searchAreaCity, 
         accessToken: requestAccessToken, conversationId,
-        userProfile // Pass profile for automated identity
+        userProfile, // Pass profile for automated identity
+        speculativeDoctorsResult
       })
       doctorRecommendations = autonomousResult.doctorRecommendations || []
       recommendationMode = autonomousResult.recommendationMode
@@ -816,14 +850,14 @@ Deno.serve(async (req) => {
       messagesToSend.push({
         role: 'system',
         content: voiceReplyRequested
-          ? 'FAST RESPONSE MODE: Keep answer concise (2-4 short lines). Avoid long markdown and avoid unnecessary details. Prioritize immediate actionable guidance.'
+          ? 'FAST RESPONSE MODE: Keep answer concise. Use clean markdown formatting like **bolding** key clinical details/warnings, and bullet points for actionable steps. Prioritize immediate actionable guidance.'
           : 'FAST RESPONSE MODE: Reply quickly but keep the answer useful. Aim for 4-7 short lines with direct medical guidance, avoid filler, and keep only the most relevant details.'
       })
     }
     if (voiceReplyRequested) {
       messagesToSend.push({
         role: 'system',
-        content: 'VOICE REPLY MODE: Speak in a natural female-doctor style. Give useful medical guidance, not an empty reply: immediate care, key red flags, and one relevant follow-up question when needed. Keep it speakable in 2-4 short sentences unless urgent safety guidance needs more.'
+        content: 'VOICE REPLY MODE: Speak in a natural female-doctor style. Give useful medical guidance: immediate care, key red flags, and one relevant follow-up question when needed. Use clear markdown formatting (**bold** key warnings or terms, bullet lists for instructions) so it is readable on screen, but keep sentences structured for natural text-to-speech.'
       })
     }
     const shouldUseDoctorLikeTriageQuestionStyle =
@@ -833,7 +867,7 @@ Deno.serve(async (req) => {
     if (shouldUseDoctorLikeTriageQuestionStyle) {
       messagesToSend.push({
         role: 'system',
-        content: 'TRIAGE QUESTION STYLE: If you need more information, ask like a doctor in a natural conversation. Do not output a heading, decorative emoji, or bullet checklist. Use one short paragraph and ask only the most important next question(s).'
+        content: 'TRIAGE QUESTION STYLE: If you need more information, ask like a doctor in a natural conversation. You can use markdown to highlight key details, but keep it clear and ask only the most important next question(s).'
       })
     }
     

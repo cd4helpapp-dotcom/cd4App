@@ -1,4 +1,4 @@
-﻿// @ts-nocheck
+// @ts-nocheck
 import { createClient } from "npm:@supabase/supabase-js@2"
 
 const corsHeaders = {
@@ -415,6 +415,54 @@ function parseEnvInt(key: string, fallback: number): number {
   const raw = Number((Deno.env.get(key) || "").trim())
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback
 }
+
+const extractSentences = (buffer: string): { sentences: string[], rest: string } => {
+  const sentences: string[] = [];
+  let current = buffer;
+
+  while (true) {
+    const match = current.match(/[.?!।\n]/);
+    if (!match || match.index === undefined) {
+      break;
+    }
+    const boundaryIdx = match.index;
+    const sentence = current.slice(0, boundaryIdx + 1);
+    sentences.push(sentence);
+    current = current.slice(boundaryIdx + 1);
+  }
+
+  return { sentences, rest: current };
+};
+
+const concatenateBase64Audio = (chunks: string[]): string => {
+  const validChunks = chunks.filter(Boolean);
+  if (validChunks.length === 0) return "";
+  if (validChunks.length === 1) return validChunks[0];
+  
+  let totalLength = 0;
+  const binaryChunks = validChunks.map(base64 => {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    totalLength += bytes.length;
+    return bytes;
+  });
+
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const bytes of binaryChunks) {
+    merged.set(bytes, offset);
+    offset += bytes.length;
+  }
+
+  let binary = '';
+  for (let i = 0; i < merged.byteLength; i++) {
+    binary += String.fromCharCode(merged[i]);
+  }
+  return btoa(binary);
+};
 
 type ParsedSseEvent = {
   event: string
@@ -1308,7 +1356,10 @@ Deno.serve(async (req) => {
 
     const requestStartedAt = Date.now()
 
-    const runVoicePipeline = async (emitDelta?: (text: string) => void) => {
+    const runVoicePipeline = async (
+      emitDelta?: (text: string) => void,
+      emitAudioChunk?: (chunk: { index: number; text: string; audio: string; mimeType: string }) => void
+    ) => {
       let chatResult:
       | { reply: string; source: string; model: string | null; responseData?: Record<string, unknown> }
       | null = null
@@ -1324,11 +1375,11 @@ Deno.serve(async (req) => {
             modelUsed: fastScopeDecision.modelUsed,
           }
         : null
-
+ 
     const shouldRunAiScopeClassifier =
       Boolean(openAiApiKey) &&
       scopeDecision?.reason === "context_followup_fast_path"
-
+ 
     if (shouldRunAiScopeClassifier) {
       try {
         const aiScopeDecision = await classifyMedicalScopeByAI({
@@ -1349,28 +1400,176 @@ Deno.serve(async (req) => {
         console.warn("[VoiceChat] AI scope classifier failed:", scopeError)
       }
     }
-
+ 
     const shouldAllowMedicalAssistant = scopeDecision ? scopeDecision.isMedical === true : true
     const isMedical = scopeDecision?.isMedical === true
-
+ 
     let chatLatencyMs = 0
     let ttsLatencyMs = 0
-
+    let ttsResult: { audioBase64: string; model: string | null; mimeType: string | null } = {
+      audioBase64: "",
+      model: null,
+      mimeType: null,
+    }
+    let ttsErrorMessage: string | null = null
+    const resolvedVoicePreset = resolveVoicePreset(voicePersonaPreference)
+ 
     if (shouldAllowMedicalAssistant) {
       const chatStartedAt = Date.now()
-      chatResult = await callChatAI({
-        message: transcriptText,
-        accessToken,
-        concern: concernText,
-        conversationId,
-        mode,
-        history,
-        locationCity,
-        searchAreaCity,
-        streamResponse: Boolean(emitDelta),
-        onDelta: emitDelta,
-      })
-      chatLatencyMs = Date.now() - chatStartedAt
+      
+      if (emitAudioChunk) {
+        let sentenceBuffer = "";
+        let sentenceIndex = 0;
+        const ttsPromises: Promise<any>[] = [];
+
+        const processChunk = (chunk: string) => {
+          if (emitDelta) emitDelta(chunk);
+          sentenceBuffer += chunk;
+          const { sentences, rest } = extractSentences(sentenceBuffer);
+          sentenceBuffer = rest;
+
+          for (const sentence of sentences) {
+            const trimmed = sentence.trim();
+            if (!trimmed) continue;
+            
+            const currentIndex = sentenceIndex++;
+            const cleanSentence = cleanMarkdownForSpeech(trimmed);
+            if (!cleanSentence) continue;
+
+            const ttsPromise = (async () => {
+              const voiceStyle = buildVoiceStyleInstruction(cleanSentence);
+              try {
+                const synthesized = await synthesizeSpeech(
+                  cleanSentence,
+                  DEFAULT_TTS_MODEL,
+                  DEFAULT_TTS_FALLBACK_MODEL,
+                  resolvedVoicePreset.voice,
+                  openAiApiKey,
+                  voiceStyle,
+                  ttsMode
+                );
+                emitAudioChunk({
+                  index: currentIndex,
+                  text: trimmed,
+                  audio: synthesized.audioBase64,
+                  mimeType: synthesized.mimeType
+                });
+                return { index: currentIndex, text: trimmed, audio: synthesized.audioBase64 };
+              } catch (err: any) {
+                console.warn(`[VoiceChat] Parallel TTS failed for index ${currentIndex}:`, err?.message);
+                return null;
+              }
+            })();
+            ttsPromises.push(ttsPromise);
+          }
+        };
+
+        chatResult = await callChatAI({
+          message: transcriptText,
+          accessToken,
+          concern: concernText,
+          conversationId,
+          mode,
+          history,
+          locationCity,
+          searchAreaCity,
+          streamResponse: true,
+          onDelta: processChunk
+        });
+
+        if (sentenceBuffer.trim()) {
+          const trimmed = sentenceBuffer.trim();
+          const currentIndex = sentenceIndex++;
+          const cleanSentence = cleanMarkdownForSpeech(trimmed);
+          if (cleanSentence) {
+            const ttsPromise = (async () => {
+              const voiceStyle = buildVoiceStyleInstruction(cleanSentence);
+              try {
+                const synthesized = await synthesizeSpeech(
+                  cleanSentence,
+                  DEFAULT_TTS_MODEL,
+                  DEFAULT_TTS_FALLBACK_MODEL,
+                  resolvedVoicePreset.voice,
+                  openAiApiKey,
+                  voiceStyle,
+                  ttsMode
+                );
+                emitAudioChunk({
+                  index: currentIndex,
+                  text: trimmed,
+                  audio: synthesized.audioBase64,
+                  mimeType: synthesized.mimeType
+                });
+                return { index: currentIndex, text: trimmed, audio: synthesized.audioBase64 };
+              } catch (err: any) {
+                console.warn(`[VoiceChat] Parallel TTS failed for final chunk:`, err?.message);
+                return null;
+              }
+            })();
+            ttsPromises.push(ttsPromise);
+          }
+        }
+
+        const ttsResults = await Promise.all(ttsPromises);
+        const successfulChunks = ttsResults.filter(r => r !== null) as { index: number; text: string; audio: string }[];
+        successfulChunks.sort((a, b) => a.index - b.index);
+
+        const fullAudioBase64 = concatenateBase64Audio(successfulChunks.map(c => c.audio));
+        
+        chatLatencyMs = Date.now() - chatStartedAt;
+        ttsResult = {
+          audioBase64: fullAudioBase64,
+          model: DEFAULT_TTS_MODEL,
+          mimeType: DEFAULT_AUDIO_MIME_TYPE
+        };
+      } else {
+        chatResult = await callChatAI({
+          message: transcriptText,
+          accessToken,
+          concern: concernText,
+          conversationId,
+          mode,
+          history,
+          locationCity,
+          searchAreaCity,
+          streamResponse: false,
+        })
+        chatLatencyMs = Date.now() - chatStartedAt
+        
+        const fullReplyText = (chatResult.reply || "").trim()
+        const spokenReplyText = trimVoiceReply(fullReplyText, ttsMode)
+        chatResult.reply = fullReplyText
+
+        if (!preferLocalPlayback) {
+          const speechText = cleanMarkdownForSpeech(spokenReplyText)
+          const voiceStyleInstruction = buildVoiceStyleInstruction(speechText)
+          console.log(`[VoiceChat] Starting TTS synthesis...`)
+          const ttsStartedAt = Date.now()
+          try {
+            const synthesized = await synthesizeSpeech(
+              speechText,
+              DEFAULT_TTS_MODEL,
+              DEFAULT_TTS_FALLBACK_MODEL,
+              resolvedVoicePreset.voice,
+              openAiApiKey,
+              voiceStyleInstruction,
+              ttsMode,
+            )
+            ttsResult = {
+              audioBase64: synthesized.audioBase64,
+              model: synthesized.model,
+              mimeType: synthesized.mimeType,
+            }
+          } catch (ttsError) {
+            ttsErrorMessage = ttsError?.message || String(ttsError || "tts_failed")
+            console.warn(`[VoiceChat] TTS synthesis failed; returning text with client fallback. ${ttsErrorMessage}`)
+          }
+          ttsLatencyMs = Date.now() - ttsStartedAt
+          console.log(`[VoiceChat] TTS synthesis complete. Audio length (base64): ${ttsResult.audioBase64?.length || 0} bytes`)
+        } else {
+          console.log(`[VoiceChat] Skipping server TTS, expecting local playback on device.`)
+        }
+      }
       console.log(
         `[VoiceChat] AI Reply generated: "${chatResult.reply.slice(0, 50)}..." source: ${chatResult.source} scope=${scopeDecision?.source || "heuristic"}:${scopeDecision?.reason || "medical_terms"}`,
       )
@@ -1392,46 +1591,6 @@ Deno.serve(async (req) => {
       console.log(
         `[VoiceChat] Out-of-scope reply generated: "${chatResult.reply}" scope=${scopeDecision?.source || "heuristic"}:${scopeDecision?.reason || "non_medical_default"}`,
       )
-    }
-
-    const fullReplyText = (chatResult.reply || "").trim()
-    const spokenReplyText = trimVoiceReply(fullReplyText, ttsMode)
-    chatResult.reply = fullReplyText
-    const resolvedVoicePreset = resolveVoicePreset(voicePersonaPreference)
-    let ttsResult: { audioBase64: string; model: string | null; mimeType: string | null } = {
-      audioBase64: "",
-      model: null,
-      mimeType: null,
-    }
-    let ttsErrorMessage: string | null = null
-    if (!preferLocalPlayback) {
-      const speechText = cleanMarkdownForSpeech(spokenReplyText)
-      const voiceStyleInstruction = buildVoiceStyleInstruction(speechText)
-      console.log(`[VoiceChat] Starting TTS synthesis...`)
-      const ttsStartedAt = Date.now()
-      try {
-        const synthesized = await synthesizeSpeech(
-          speechText,
-          DEFAULT_TTS_MODEL,
-          DEFAULT_TTS_FALLBACK_MODEL,
-          resolvedVoicePreset.voice,
-          openAiApiKey,
-          voiceStyleInstruction,
-          ttsMode,
-        )
-        ttsResult = {
-          audioBase64: synthesized.audioBase64,
-          model: synthesized.model,
-          mimeType: synthesized.mimeType,
-        }
-      } catch (ttsError) {
-        ttsErrorMessage = ttsError?.message || String(ttsError || "tts_failed")
-        console.warn(`[VoiceChat] TTS synthesis failed; returning text with client fallback. ${ttsErrorMessage}`)
-      }
-      ttsLatencyMs = Date.now() - ttsStartedAt
-      console.log(`[VoiceChat] TTS synthesis complete. Audio length (base64): ${ttsResult.audioBase64?.length || 0} bytes`)
-    } else {
-      console.log(`[VoiceChat] Skipping server TTS, expecting local playback on device.`)
     }
     supabase.from("ai_agent_actions").insert({
       user_id: user.id,
@@ -1511,10 +1670,15 @@ Deno.serve(async (req) => {
         start(controller) {
           ;(async () => {
             try {
-              const successPayload = await runVoicePipeline((text) => {
-                if (!text) return
-                controller.enqueue(encodeSseEvent("delta", { text }))
-              })
+              const successPayload = await runVoicePipeline(
+                (text) => {
+                  if (!text) return
+                  controller.enqueue(encodeSseEvent("delta", { text }))
+                },
+                (audioChunk) => {
+                  controller.enqueue(encodeSseEvent("audio-chunk", audioChunk))
+                }
+              )
               controller.enqueue(encodeSseEvent("done", successPayload))
             } catch (streamError) {
               const message = streamError?.message || String(streamError || "Voice chat failed")
