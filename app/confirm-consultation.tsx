@@ -44,7 +44,7 @@ export default function ConfirmConsultationScreen() {
   const router = useRouter();
   const { resolvedColorScheme } = useThemePreference();
   const theme = Colors[resolvedColorScheme ?? 'light'];
-  const { user } = useAuthContext();
+  const { user, session } = useAuthContext();
   const bookAppointmentMutation = useBookAppointment();
   const params = useLocalSearchParams<{
     doctorId?: string;
@@ -97,6 +97,10 @@ export default function ConfirmConsultationScreen() {
 
     setIsPreparing(true);
     try {
+      if (!session?.access_token) {
+        throw new Error('Authentication session missing. Please login again and retry booking.');
+      }
+      supabase.functions.setAuth(session.access_token);
       const { data, error } = await supabase.functions.invoke('manage-appointment-payment', {
         body: { action: 'create_order', doctorId, slotId },
       });
@@ -125,7 +129,7 @@ export default function ConfirmConsultationScreen() {
     } finally {
       setIsPreparing(false);
     }
-  }, [doctorId, fallbackGrossAmount, router, slotId]);
+  }, [doctorId, fallbackGrossAmount, router, session?.access_token, slotId]);
 
   React.useEffect(() => {
     void loadQuote();

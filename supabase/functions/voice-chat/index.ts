@@ -1412,6 +1412,8 @@ Deno.serve(async (req) => {
       mimeType: null,
     }
     let ttsErrorMessage: string | null = null
+    let fullReplyText = ""
+    let spokenReplyText = ""
     const resolvedVoicePreset = resolveVoicePreset(voicePersonaPreference)
  
     if (shouldAllowMedicalAssistant) {
@@ -1535,14 +1537,13 @@ Deno.serve(async (req) => {
           streamResponse: false,
         })
         chatLatencyMs = Date.now() - chatStartedAt
-        
-        const fullReplyText = (chatResult.reply || "").trim()
-        const spokenReplyText = trimVoiceReply(fullReplyText, ttsMode)
+        fullReplyText = (chatResult.reply || "").trim()
+        spokenReplyText = trimVoiceReply(fullReplyText, ttsMode)
         chatResult.reply = fullReplyText
 
         if (!preferLocalPlayback) {
-          const speechText = cleanMarkdownForSpeech(spokenReplyText)
-          const voiceStyleInstruction = buildVoiceStyleInstruction(speechText)
+            const speechText = cleanMarkdownForSpeech(spokenReplyText)
+            const voiceStyleInstruction = buildVoiceStyleInstruction(speechText)
           console.log(`[VoiceChat] Starting TTS synthesis...`)
           const ttsStartedAt = Date.now()
           try {
@@ -1570,6 +1571,12 @@ Deno.serve(async (req) => {
           console.log(`[VoiceChat] Skipping server TTS, expecting local playback on device.`)
         }
       }
+      if (!chatResult) {
+        throw new Error("Voice chat returned no response")
+      }
+      fullReplyText = (chatResult.reply || "").trim()
+      spokenReplyText = trimVoiceReply(fullReplyText, ttsMode)
+      chatResult.reply = fullReplyText
       console.log(
         `[VoiceChat] AI Reply generated: "${chatResult.reply.slice(0, 50)}..." source: ${chatResult.source} scope=${scopeDecision?.source || "heuristic"}:${scopeDecision?.reason || "medical_terms"}`,
       )
@@ -1711,4 +1718,3 @@ Deno.serve(async (req) => {
     )
   }
 })
-

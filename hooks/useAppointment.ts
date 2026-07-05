@@ -312,6 +312,11 @@ export const useBookAppointment = () => {
                 );
             }
 
+            if (!session?.access_token) {
+                throw new Error('Authentication session missing. Please login again and retry booking.');
+            }
+            supabase.functions.setAuth(session.access_token);
+
             const { data: verifyData, error: verifyError } = await supabase.functions.invoke('manage-appointment-payment', {
                 body: {
                     action: 'verify_and_book',

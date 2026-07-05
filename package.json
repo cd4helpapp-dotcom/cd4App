@@ -7,6 +7,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "test:symptom-flow": "node scripts/test-symptom-flow.mjs",
+    "test:edge-smoke": "node scripts/test-edge-smoke.mjs",
     "security:check-edge-jwt": "node scripts/check-edge-jwt-policy.mjs",
     "seed:dummy-doctors": "node scripts/seed-dummy-doctors.mjs",
     "seed:dummy-doctors:dry": "node scripts/seed-dummy-doctors.mjs --dry-run"

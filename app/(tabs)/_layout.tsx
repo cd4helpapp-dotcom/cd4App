@@ -64,7 +64,16 @@ export default function TabLayout() {
 
   React.useEffect(() => {
     if (!user?.id) return;
-    void prefetchChatRooms(queryClient, user.id).catch(() => { });
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      void prefetchChatRooms(queryClient, user.id).catch(() => { });
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [queryClient, user?.id]);
 
   if (isLoading || (user && !isProfileResolved)) {

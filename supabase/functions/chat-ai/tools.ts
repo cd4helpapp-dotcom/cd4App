@@ -45,6 +45,7 @@ import {
   getMissingTriageQuestions,
   getConcernTriageProfile,
   getConcernSpecificTriageGuidance,
+  buildTriageQuestionBlueprint,
   hasSmartBookingConfirmationSignal,
   hasSmartSlotReferenceSignal
 } from "./shared.ts"
@@ -671,6 +672,7 @@ User Identity (FOR BOOKING): ${userIdentity || 'Anonymous/Not provided'}
 Language Instruction: ${args.languageInstruction}
 Tool Context: ${args.toolContext}
 Dynamic Triage Guidance: ${getConcernSpecificTriageGuidance(triageQuestionBasis, args.triageCoverage || {})}
+Triage Blueprint: ${buildTriageQuestionBlueprint(triageQuestionBasis, args.triageCoverage || {})}
 Missing Info: ${getMissingTriageQuestions(args.triageCoverage || {}, triageQuestionBasis).join(', ')}
 
 Guidelines:
@@ -1677,32 +1679,25 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     }
   }
 
-  // Step 2: Specialty-only fallback across the app.
-  // If city-specific match is missing, keep concern/specialty strict before showing unrelated local doctors.
-  if (doctors.length === 0 && specialty) {
-    const specialtyFilter = buildSpecializationOrFilter(exactDepartmentTerms)
-    let query = args.serviceClient
+  // Step 2: City-only fallback.
+  // If the exact city+specialty search is empty, stay within the same city before widening scope.
+  if (doctors.length === 0 && city) {
+    recommendationMode = 'local_any'
+    const { data } = await args.serviceClient
       .from('doctors')
       .select('*, profiles(first_name, last_name, profile_picture)')
+      .ilike('city', cityLike!)
       .order('is_verified', { ascending: false })
       .limit(6)
-
-    if (specialtyFilter) {
-      query = query.or(specialtyFilter)
-    } else {
-      query = query.ilike('specialization', `%${specialty}%`)
-    }
-
-    const { data } = await query
+    
     if (data && data.length > 0) {
       doctors = data
-      recommendationMode = 'all_app_specialty'
-      meta.usedAppWideFallback = true
+      meta.localCityVisible = true
     }
   }
 
   // Step 3: Related Specialty fallback inside the same city.
-  // Only use related specialties if the exact concern-specific specialty is unavailable across the app.
+  // If the exact specialty is unavailable locally, try the closest related local specialists next.
   if (doctors.length === 0 && city && resolvedDepartment?.id) {
     const relatedIds = RELATED_DEPARTMENT_IDS[resolvedDepartment.id] || ['kayachikitsa']
     const relatedTerms = relatedIds.flatMap((departmentId) => {
@@ -1729,24 +1724,31 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     }
   }
 
-  // Step 4: City-only fallback.
-  // If neither exact nor related concern doctors are available, show other verified local doctors.
-  if (doctors.length === 0 && city) {
-    recommendationMode = 'local_any'
-    const { data } = await args.serviceClient
+  // Step 4: Specialty-only fallback across the app.
+  // Only widen to the whole app after local options are exhausted.
+  if (doctors.length === 0 && specialty) {
+    const specialtyFilter = buildSpecializationOrFilter(exactDepartmentTerms)
+    let query = args.serviceClient
       .from('doctors')
       .select('*, profiles(first_name, last_name, profile_picture)')
-      .ilike('city', cityLike!)
       .order('is_verified', { ascending: false })
       .limit(6)
-    
+
+    if (specialtyFilter) {
+      query = query.or(specialtyFilter)
+    } else {
+      query = query.ilike('specialization', `%${specialty}%`)
+    }
+
+    const { data } = await query
     if (data && data.length > 0) {
       doctors = data
-      meta.localCityVisible = true
+      recommendationMode = 'all_app_specialty'
+      meta.usedAppWideFallback = true
     }
   }
 
-  // Step 5: Global App Fallback (IF no local or concern-based match found, show all app doctors instead of 0)
+  // Step 5: Global App Fallback (if nothing local or specialty-matched exists, show all verified doctors).
   if (doctors.length === 0) {
     recommendationMode = 'all_app'
     const { data } = await args.serviceClient
@@ -1787,4 +1789,3 @@ export const upsertConversationMemory = async (args: any) => {
     conversation_id: args.conversationId, user_id: args.userId, summary: args.summary, key_facts: args.keyFacts, updated_at: new Date().toISOString()
   }, { onConflict: 'conversation_id' })
 }
-

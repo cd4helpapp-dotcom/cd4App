@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, TouchableOpacity, Text } from 'react-native';
+import { InteractionManager, StyleSheet, View, TouchableOpacity, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from 'react-native';
 import Colors from '../../constants/Colors';
@@ -17,6 +17,23 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const floatingBottom = Math.max(insets.bottom + 24, 28);
   const tabSwipeHandlers = useTabSwipeNavigation('index');
+  const [shouldMountHomeContent, setShouldMountHomeContent] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (!cancelled) setShouldMountHomeContent(true);
+    });
+    const fallbackTimer = setTimeout(() => {
+      if (!cancelled) setShouldMountHomeContent(true);
+    }, 450);
+
+    return () => {
+      cancelled = true;
+      task?.cancel?.();
+      clearTimeout(fallbackTimer);
+    };
+  }, []);
 
   return (
     <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
@@ -24,7 +41,26 @@ export default function HomeScreen() {
         {/* <ModeToggle /> */}
 
         <View style={{ flex: 1 }}>
-          <TeleConsultationView theme={theme} />
+          {shouldMountHomeContent ? (
+            <TeleConsultationView theme={theme} />
+          ) : (
+            <View style={styles.homeBootstrap}>
+              <View style={[styles.bootstrapCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                <View style={[styles.bootstrapLine, { width: '58%', backgroundColor: theme.borderColor }]} />
+                <View style={[styles.bootstrapLine, { width: '86%', backgroundColor: theme.borderColor, opacity: 0.75 }]} />
+                <View style={[styles.bootstrapHero, { backgroundColor: theme.borderColor, opacity: 0.26 }]} />
+                <View style={styles.bootstrapRow}>
+                  <View style={[styles.bootstrapPill, { backgroundColor: theme.borderColor, opacity: 0.55 }]} />
+                  <View style={[styles.bootstrapPill, { backgroundColor: theme.borderColor, opacity: 0.45 }]} />
+                  <View style={[styles.bootstrapPill, { backgroundColor: theme.borderColor, opacity: 0.35 }]} />
+                </View>
+              </View>
+              <View style={[styles.bootstrapCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                <View style={[styles.bootstrapLine, { width: '42%', backgroundColor: theme.borderColor }]} />
+                <View style={[styles.bootstrapBlock, { backgroundColor: theme.borderColor, opacity: 0.24 }]} />
+              </View>
+            </View>
+          )}
         </View>
       </View>
 
@@ -66,5 +102,38 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
+  },
+  homeBootstrap: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 14,
+  },
+  bootstrapCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: 16,
+    gap: 14,
+  },
+  bootstrapLine: {
+    height: 12,
+    borderRadius: 999,
+  },
+  bootstrapHero: {
+    height: 140,
+    borderRadius: 20,
+  },
+  bootstrapRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  bootstrapPill: {
+    flex: 1,
+    height: 34,
+    borderRadius: 17,
+  },
+  bootstrapBlock: {
+    height: 64,
+    borderRadius: 16,
   },
 });

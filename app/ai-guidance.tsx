@@ -1102,6 +1102,7 @@ export default function AiGuidanceScreen() {
   const [agentProgressIndex, setAgentProgressIndex] = useState(0);
   const autoSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastVoiceSubmitRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  const voiceAutoSubmitDelayMs = 850;
   const voiceFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voicePulse = useRef(new Animated.Value(1)).current;
   const typingDot1 = useRef(new Animated.Value(0.28)).current;
@@ -1145,6 +1146,7 @@ export default function AiGuidanceScreen() {
   const voiceLiveSpeechQueueRef = useRef<string[]>([]);
   const voiceLiveSpeechBusyRef = useRef(false);
   const voiceLiveSpokenCharsRef = useRef(0);
+  const voiceOpenAiAudioOnlyRef = useRef(true);
   const activeAgentProgressHint = AGENT_PROGRESS_HINTS[agentProgressIndex] || AGENT_PROGRESS_HINTS[0];
   const setVoiceStage = React.useCallback((stage: VoiceLiveStage, customHint?: string) => {
     setVoiceLiveStage(stage);
@@ -3647,6 +3649,14 @@ export default function AiGuidanceScreen() {
       ? await playVoiceAudioBase64(audioBase64, audioMimeType)
       : false;
 
+    if (voiceOpenAiAudioOnlyRef.current) {
+      if (!playedBackendAudio) {
+        console.warn('[AI Voice] OpenAI audio-only mode is enabled; skipping browser speech fallback.');
+        setVoiceStage('idle');
+      }
+      return;
+    }
+
     if (!playedBackendAudio) {
       // 4. Fallback to Local TTS
       activeSpeechRef.current = true;
@@ -3728,6 +3738,19 @@ export default function AiGuidanceScreen() {
   }, [setVoiceStage]);
 
   const handleServerVoiceAudioChunk = React.useCallback((audioBase64: string, text: string, index: number) => {
+    if (!hasReceivedServerVoiceAudioChunksRef.current) {
+      voiceLiveSpeechQueueRef.current = [];
+      voiceLiveSpeechBusyRef.current = false;
+      voiceLiveSpokenCharsRef.current = 0;
+      if (activeSpeechRef.current) {
+        try {
+          void Speech.stop();
+        } catch (error) {
+          console.warn('[AI WS Client] Failed to stop local speech before server audio playback:', error);
+        }
+        activeSpeechRef.current = false;
+      }
+    }
     hasReceivedServerVoiceAudioChunksRef.current = true;
     serverVoiceAudioChunksMapRef.current.set(index, { audio: audioBase64, text });
     void playNextServerVoiceAudioChunk();
@@ -3769,6 +3792,7 @@ export default function AiGuidanceScreen() {
 
   const processVoiceLiveSpeechQueue = React.useCallback(async () => {
     if (hasReceivedServerVoiceAudioChunksRef.current) return;
+    if (voiceOpenAiAudioOnlyRef.current) return;
     if (voiceLiveSpeechBusyRef.current) return;
     voiceLiveSpeechBusyRef.current = true;
     try {
@@ -3853,6 +3877,14 @@ export default function AiGuidanceScreen() {
     setIsSending(true);
     isSendingRef.current = true;
     setVoiceStage('processing', 'Sending your symptom details to the AI voice assistant.');
+    voiceOpenAiAudioOnlyRef.current = true;
+    serverVoiceAudioChunksMapRef.current.clear();
+    nextExpectedVoiceAudioIndexRef.current = 0;
+    isPlayingServerVoiceAudioRef.current = false;
+    hasReceivedServerVoiceAudioChunksRef.current = false;
+    voiceLiveSpeechQueueRef.current = [];
+    voiceLiveSpeechBusyRef.current = false;
+    voiceLiveSpokenCharsRef.current = 0;
 
     let targetConversationId = conversationIdRef.current;
     if (!targetConversationId) {
@@ -4348,12 +4380,11 @@ export default function AiGuidanceScreen() {
       const remainingTail = voiceStreamedText.slice(voiceLiveSpokenCharsRef.current).trim();
       if (remainingTail) {
         voiceLiveSpeechQueueRef.current.push(remainingTail);
-        void processVoiceLiveSpeechQueue();
         voiceLiveSpokenViaDelta = true;
       }
 
       // 4. Speak the response (prefer base64 audio) when live delta speech was not already used.
-      if (!voiceLiveSpokenViaDelta) {
+      if (!voiceLiveSpokenViaDelta && !hasReceivedServerVoiceAudioChunksRef.current && !voiceOpenAiAudioOnlyRef.current) {
         void speakText(aiText, audioBase64, audioMimeType);
       }
       setIsVoiceDeltaLive(false);
@@ -4418,6 +4449,7 @@ export default function AiGuidanceScreen() {
       setVoiceStage('processing');
     } else {
       setVoiceStage('idle');
+      setIsVoicePromptVisible(false);
     }
   });
 
@@ -4457,7 +4489,7 @@ export default function AiGuidanceScreen() {
         };
         setVoiceStage('processing', 'Analyzing your voice input...');
         void sendVoiceMessage(normalized);
-      }, 150);
+      }, voiceAutoSubmitDelayMs);
     }
   });
 

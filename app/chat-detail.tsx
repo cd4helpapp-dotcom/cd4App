@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Toast from 'react-native-toast-message';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView } from 'react-native';
+import Markdown from 'react-native-markdown-display';
 import { useColorScheme } from 'react-native';
 import Colors from '../constants/Colors';
 import { getImageUrl } from '../constants/Config';
@@ -529,6 +530,126 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
     ]);
     const isSystemMessage = typeof msg.text === 'string' && systemMessageSet.has(msg.text);
     const isEncryptedAttachment = (msg.type === 'image' || msg.type === 'file') && msg.is_encrypted && isSystemMessage;
+    const assistantMarkdownStyles = React.useMemo(
+        () => ({
+            body: {
+                color: isMe ? '#fff' : theme.text,
+                fontSize: 16,
+                lineHeight: 22,
+            },
+            paragraph: {
+                marginTop: 0,
+                marginBottom: 8,
+            },
+            heading1: {
+                color: isMe ? '#fff' : theme.text,
+                fontSize: 18,
+                lineHeight: 24,
+                fontWeight: '800' as const,
+                marginTop: 2,
+                marginBottom: 8,
+            },
+            heading2: {
+                color: isMe ? '#fff' : theme.text,
+                fontSize: 16,
+                lineHeight: 22,
+                fontWeight: '800' as const,
+                marginTop: 2,
+                marginBottom: 6,
+            },
+            heading3: {
+                color: isMe ? '#fff' : theme.text,
+                fontSize: 15,
+                lineHeight: 21,
+                fontWeight: '700' as const,
+                marginTop: 2,
+                marginBottom: 5,
+            },
+            strong: {
+                color: isMe ? '#fff' : theme.text,
+                fontWeight: '800' as const,
+            },
+            em: {
+                color: isMe ? '#fff' : theme.text,
+                fontStyle: 'italic' as const,
+            },
+            link: {
+                color: isMe ? '#fff' : theme.tint,
+                textDecorationLine: 'underline' as const,
+            },
+            bullet_list: {
+                marginTop: 2,
+                marginBottom: 8,
+            },
+            bullet_list_icon: {
+                color: isMe ? 'rgba(255,255,255,0.8)' : theme.tint,
+            },
+            bullet_list_content: {
+                color: isMe ? '#fff' : theme.text,
+            },
+            ordered_list: {
+                marginTop: 2,
+                marginBottom: 8,
+            },
+            ordered_list_icon: {
+                color: isMe ? 'rgba(255,255,255,0.8)' : theme.tint,
+            },
+            ordered_list_content: {
+                color: isMe ? '#fff' : theme.text,
+            },
+            list_item: {
+                flexDirection: 'row' as const,
+                alignItems: 'flex-start' as const,
+                marginTop: 2,
+                marginBottom: 2,
+            },
+            blockquote: {
+                borderLeftWidth: 3,
+                borderLeftColor: theme.tint,
+                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.tint + '12',
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                marginTop: 4,
+                marginBottom: 8,
+            },
+            code_inline: {
+                color: isMe ? '#fff' : theme.text,
+                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.background,
+                borderRadius: 6,
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+            },
+            code_block: {
+                color: isMe ? '#fff' : theme.text,
+                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.background,
+                borderWidth: 1,
+                borderColor: theme.borderColor,
+                borderRadius: 10,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                marginTop: 4,
+                marginBottom: 8,
+            },
+            fence: {
+                color: isMe ? '#fff' : theme.text,
+                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.background,
+                borderWidth: 1,
+                borderColor: theme.borderColor,
+                borderRadius: 10,
+                paddingHorizontal: 10,
+                paddingVertical: 8,
+                marginTop: 4,
+                marginBottom: 8,
+            },
+            hr: {
+                backgroundColor: theme.borderColor,
+                height: 1,
+                marginTop: 8,
+                marginBottom: 8,
+            },
+        }),
+        [isMe, theme]
+    );
 
     if (isSystemMessage || isEncryptedAttachment) {
          const label = (msg.type === 'image')
@@ -576,7 +697,13 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
                 </TouchableOpacity>
             ) : null}
             {msg.type === 'text' && msg.text ? (
-                <Text style={[styles.messageText, { color: isMe ? '#fff' : theme.text }]}>{msg.text}</Text>
+                isMe ? (
+                    <Text style={[styles.messageText, { color: '#fff' }]}>{msg.text}</Text>
+                ) : (
+                    <Markdown style={assistantMarkdownStyles}>
+                        {msg.text}
+                    </Markdown>
+                )
             ) : null}
             {msg.is_pending ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}><Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.75)' : theme.textSecondary }}>{msg.type === 'text' ? 'Sending...' : 'Uploading...'}</Text></View>

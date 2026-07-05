@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { AppNotification } from '../src/types';
 
 const getNotificationDedupeKey = (notification: AppNotification): string => {
@@ -33,6 +33,17 @@ export const useNotificationsSystem = () => {
     const { user, isAuthenticated } = useAuthContext();
     const queryClient = useQueryClient();
     const userId = user?.id;
+    const [enabled, setEnabled] = React.useState(false);
+
+    React.useEffect(() => {
+        if (!userId || !isAuthenticated) {
+            setEnabled(false);
+            return;
+        }
+
+        const timer = setTimeout(() => setEnabled(true), 1200);
+        return () => clearTimeout(timer);
+    }, [userId, isAuthenticated]);
 
     const queryKey = ['notifications', userId];
     const unreadCountQueryKey = ['notifications-unread-count', userId];
@@ -52,7 +63,7 @@ export const useNotificationsSystem = () => {
             if (error) throw error;
             return dedupeNotifications(data as AppNotification[]);
         },
-        enabled: !!userId && isAuthenticated,
+        enabled: !!userId && isAuthenticated && enabled,
         staleTime: 1000 * 60, // 1 minute
     });
 
@@ -71,7 +82,7 @@ export const useNotificationsSystem = () => {
             if (error) throw error;
             return dedupeNotifications(data as AppNotification[]).length;
         },
-        enabled: !!userId && isAuthenticated,
+        enabled: !!userId && isAuthenticated && enabled,
         staleTime: 1000 * 30, // 30 seconds
     });
 

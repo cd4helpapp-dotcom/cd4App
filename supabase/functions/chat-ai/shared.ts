@@ -637,6 +637,253 @@ type ConcernTriageProfile = {
   redFlags: string
 }
 
+type TriageQuestionSlot = 'onset' | 'severity' | 'associated' | 'medicationContext'
+
+const TRIAGE_SLOT_ORDER: TriageQuestionSlot[] = ['onset', 'severity', 'associated', 'medicationContext']
+
+const TRIAGE_GENERIC_PATTERNS = [
+  /\btell me more\b/i,
+  /\bshare more\b/i,
+  /\bgive more details\b/i,
+  /\bmore details\b/i,
+  /\bwhat symptoms\b/i,
+  /\bwhat problem\b/i,
+  /\bhow can i help\b/i,
+  /\bplease elaborate\b/i,
+  /\bdescribe your symptoms\b/i,
+  /\bany other symptoms\b/i,
+  /\bkya problem hai\b/i,
+  /\bthoda detail\b/i,
+  /\baur bataye\b/i,
+]
+
+const TRIAGE_SLOT_KEYWORDS: Record<TriageQuestionSlot, string[]> = {
+  onset: ['kab se', 'since when', 'when did', 'how long', 'started', 'start hua', 'start hui', 'start huye'],
+  severity: ['kitna', 'severity', '1-10', '1 to 10', 'pressure', 'tightness', 'sharp', 'burning', 'constant', 'cramping', 'worse'],
+  associated: ['saath', 'also', 'along with', 'fever', 'cough', 'breath', 'breathing', 'wheezing', 'vomit', 'nausea', 'weakness', 'numbness', 'swelling', 'bleeding', 'rash', 'urine', 'dizziness', 'sweating', 'vision'],
+  medicationContext: ['medicine', 'medication', 'tablet', 'allergy', 'inhaler', 'paracetamol', 'bp', 'blood pressure', 'diabetes', 'pregnancy', 'history'],
+}
+
+const TRIAGE_QUESTION_TEMPLATES: Record<string, Record<TriageQuestionSlot, string>> = {
+  chest_pain: {
+    onset: 'Chest pain kab se start hua, aur kya abhi bhi ho raha hai?',
+    severity: 'Dard 1-10 me kitna hai, aur pressure/tightness jaisa lagta hai ya sharp?',
+    associated: 'Saath me saans phoolna, pasina, chakkar, nausea, ya dard arm/jaw/back me ja raha hai kya?',
+    medicationContext: 'BP ya heart ki history hai, ya koi heart/BP medicine chal rahi hai?',
+  },
+  breathing_cough: {
+    onset: 'Khansi ya saans ki problem kab se hai?',
+    severity: 'Kya saans rest me bhi phool rahi hai, ya chalne par?',
+    associated: 'Fever, wheezing, chest pain, ya phlegm ka rang badla hua hai kya?',
+    medicationContext: 'Inhaler, allergy, asthma history, ya koi medicine li hai kya?',
+  },
+  fever: {
+    onset: 'Bukhar kab se hai, aur kya continuous hai ya aata-jata?',
+    severity: 'Highest temperature kitna gaya tha?',
+    associated: 'Khansi, gala dard, body pain, chills, rash, vomiting, ya loose motion bhi hai kya?',
+    medicationContext: 'Paracetamol ya koi aur medicine li hai, aur allergy to nahi?',
+  },
+  headache: {
+    onset: 'Headache kab se hai, aur kya achanak start hua tha?',
+    severity: 'Dard kitna severe hai aur exact kahan feel ho raha hai?',
+    associated: 'Vomiting, vision change, weakness, numbness, fever, ya neck stiffness hai kya?',
+    medicationContext: 'BP ya migraine history hai, aur koi painkiller liya hai kya?',
+  },
+  abdomen: {
+    onset: 'Pet dard kab se hai aur exactly kahan hai?',
+    severity: 'Dard constant hai, cramping hai, burning jaisa hai, ya khane ke baad badhta hai?',
+    associated: 'Vomiting, loose motion, blood, fever, dehydration, ya urine me problem bhi hai kya?',
+    medicationContext: 'Koi acidity medicine, painkiller, ya allergy issue hai kya? Pregnancy possibility ho to batayein.',
+  },
+  skin: {
+    onset: 'Rash ya itching kab se hai aur kya spread ho rahi hai?',
+    severity: 'Itching, pain, ya swelling kitni severe hai?',
+    associated: 'Fever, pus, facial swelling, ya breathing issue hua hai kya?',
+    medicationContext: 'Koi cream, allergy medicine, ya naya product/food use kiya hai kya?',
+  },
+  urinary: {
+    onset: 'Urine ki problem kab se hai, aur kitni baar ho rahi hai?',
+    severity: 'Burning ya pain kitna hai, aur lower abdomen ya side/back me bhi dard hai kya?',
+    associated: 'Fever, blood in urine, vomiting, pregnancy, ya urine kam aa raha hai kya?',
+    medicationContext: 'Koi antibiotic, kidney stone history, diabetes medicine, ya allergy hai kya?',
+  },
+  gyne_pregnancy: {
+    onset: 'Last period kab aaya tha, aur symptom kab start hua?',
+    severity: 'Bleeding ya pain kitna hai, aur pads kitne use ho rahe hain?',
+    associated: 'Dizziness, fever, foul discharge, severe lower abdomen pain, ya vomiting hai kya?',
+    medicationContext: 'Contraceptive/hormonal medicine, pregnancy test, ya allergy hai kya?',
+  },
+  child: {
+    onset: 'Bachche ki age kya hai, aur symptoms kab se hain?',
+    severity: 'Fever/pain kitna hai, aur kya baccha feed, drink, aur active hai?',
+    associated: 'Breathing issue, rash, vomiting, diarrhea, ya kam urine/wet diapers hain kya?',
+    medicationContext: 'Koi medicine di hai, aur allergy history hai kya?',
+  },
+  mental_health: {
+    onset: 'Ye problem kab se ho rahi hai aur koi trigger tha kya?',
+    severity: 'Sleep ya work kitna affect ho raha hai, aur panic attacks hote hain kya?',
+    associated: 'Low mood, appetite change, substance use, ya unsafe feel hota hai kya?',
+    medicationContext: 'Koi psychiatry medicine, therapy, alcohol/drug use, ya aur medicines hain kya?',
+  },
+  metabolic: {
+    onset: 'Reading kab check ki thi aur ye naya hai ya purana?',
+    severity: 'Reading kitni high/low hai aur saath me dizziness, sweating, headache, chest pain, ya weakness hai kya?',
+    associated: 'Thirst, frequent urine, weight change, palpitations, swelling, ya vision changes hain kya?',
+    medicationContext: 'Current medicines, missed doses, diet change, ya allergy hai kya?',
+  },
+  injury_ortho: {
+    onset: 'Problem kab start hui aur kya fall, twist, ya injury hui thi?',
+    severity: 'Dard 1-10 me kitna hai, aur limb move/use kar pa rahe hain kya?',
+    associated: 'Swelling, deformity, numbness, weakness, fever, ya pain arm/leg me ja raha hai kya?',
+    medicationContext: 'Painkiller, blood thinner, bone/joint history, ya allergy hai kya?',
+  },
+}
+
+const TRIAGE_DEFAULT_TEMPLATES: Record<TriageQuestionSlot, string> = {
+  onset: 'Main symptom kab se hai?',
+  severity: 'Ye kitna severe hai aur kya better ya worse karta hai?',
+  associated: 'Koi aur related symptom bhi hai kya?',
+  medicationContext: 'Koi medicine li hai, allergy hai, ya chronic illness hai kya?',
+}
+
+const TRIAGE_LANGUAGE_HINTS = [
+  /\b(kya|hai|nahi|mujhe|mera|meri|mere|kab|kitna|saath|dard|bukhar|khansi|pet|pait|saans|doctor)\b/i,
+  /[\u0900-\u097F]/,
+]
+
+const isLikelyHinglish = (text: string): boolean => TRIAGE_LANGUAGE_HINTS.some((pattern) => pattern.test(text || ''))
+
+const getTriageQuestionTemplate = (profile: ConcernTriageProfile, slot: TriageQuestionSlot): string => {
+  const profileTemplates = TRIAGE_QUESTION_TEMPLATES[profile.id]
+  return profileTemplates?.[slot] || TRIAGE_DEFAULT_TEMPLATES[slot]
+}
+
+const detectTriageQuestionSlot = (text: string): TriageQuestionSlot | null => {
+  const normalized = normalize(text || '')
+  if (!normalized) return null
+  for (const slot of TRIAGE_SLOT_ORDER) {
+    if (TRIAGE_SLOT_KEYWORDS[slot].some((keyword) => normalized.includes(normalize(keyword)))) {
+      return slot
+    }
+  }
+  return null
+}
+
+const getLastAssistantQuestionSlot = (history: any[]): TriageQuestionSlot | null => {
+  const recentAssistantQuestions = (history || [])
+    .filter((item) => item?.role === 'assistant' && typeof item?.content === 'string' && item.content.includes('?'))
+    .slice(-4)
+
+  for (let index = recentAssistantQuestions.length - 1; index >= 0; index -= 1) {
+    const slot = detectTriageQuestionSlot(recentAssistantQuestions[index]?.content || '')
+    if (slot) return slot
+  }
+  return null
+}
+
+const getTriageMissingSlots = (coverage: any): TriageQuestionSlot[] => {
+  const missing: TriageQuestionSlot[] = []
+  if (!coverage?.onset) missing.push('onset')
+  if (!coverage?.severity) missing.push('severity')
+  if (!coverage?.associated) missing.push('associated')
+  if (!coverage?.medicationContext) missing.push('medicationContext')
+  return missing
+}
+
+export const buildTriageQuestionBlueprint = (concernText: string, coverage: any = {}): string => {
+  const profile = getConcernTriageProfile(concernText)
+  const missingSlots = getTriageMissingSlots(coverage)
+  const nextSlots = missingSlots.slice(0, 2).map((slot) => getTriageQuestionTemplate(profile, slot))
+  if (nextSlots.length === 0) {
+    return `Concern focus: ${profile.label}. Enough history appears present; move to guidance or doctor recommendation if the user is asking for next steps.`
+  }
+  return `Concern focus: ${profile.label}. Next question priority: ${nextSlots.join(' | ')}`
+}
+
+export const buildTriageFollowUpReply = (args: {
+  concernText: string
+  coverage?: any
+  history?: any[]
+  voiceMode?: boolean
+  latestMessageText?: string
+}): { valid: boolean; reply: string; reason?: string; profileId: string; missingSlots: TriageQuestionSlot[] } => {
+  const profile = getConcernTriageProfile(args.concernText || args.latestMessageText || '')
+  const coverage = args.coverage || {}
+  const history = Array.isArray(args.history) ? args.history : []
+  const missingSlots = getTriageMissingSlots(coverage)
+  if (missingSlots.length === 0) {
+    return {
+      valid: true,
+      reply: 'Samajh gaya. Ab main concise guidance de raha hoon.',
+      profileId: profile.id,
+      missingSlots,
+    }
+  }
+
+  const latestSlot = missingSlots[0]
+  const secondSlot = args.voiceMode ? null : missingSlots[1] || null
+  const questions = [getTriageQuestionTemplate(profile, latestSlot)]
+  if (secondSlot) questions.push(getTriageQuestionTemplate(profile, secondSlot))
+
+  const lead = isLikelyHinglish(`${args.concernText || ''} ${args.latestMessageText || ''}`)
+    ? 'Samajh gaya.'
+    : 'Understood.'
+  const reply = secondSlot
+    ? `${lead} ${questions[0]} ${questions[1]}`
+    : `${lead} ${questions[0]}`
+
+  const validation = validateTriageQuestionReply(reply, {
+    concernText: args.concernText || args.latestMessageText || '',
+    coverage,
+    history,
+    voiceMode: Boolean(args.voiceMode),
+  })
+
+  return {
+    valid: validation.valid,
+    reply,
+    reason: validation.reasons[0] || null,
+    profileId: profile.id,
+    missingSlots,
+  }
+}
+
+export const validateTriageQuestionReply = (reply: string, args: {
+  concernText?: string
+  coverage?: any
+  history?: any[]
+  voiceMode?: boolean
+} = {}): { valid: boolean; reasons: string[]; slot: TriageQuestionSlot | null } => {
+  const reasons: string[] = []
+  const normalizedReply = normalize(reply || '')
+  const profile = getConcernTriageProfile(args.concernText || '')
+  const coverage = args.coverage || {}
+  const missingSlots = getTriageMissingSlots(coverage)
+  const slot = detectTriageQuestionSlot(reply)
+  const lastAssistantSlot = getLastAssistantQuestionSlot(Array.isArray(args.history) ? args.history : [])
+
+  if (!normalizedReply) reasons.push('empty')
+  if (missingSlots.length > 0 && !reply.includes('?')) reasons.push('no_question_mark')
+  if (TRIAGE_GENERIC_PATTERNS.some((pattern) => pattern.test(reply || ''))) reasons.push('generic')
+  if (/^\s*[-*]\s+/m.test(reply || '') || /###\s+/i.test(reply || '')) reasons.push('checklist_or_heading')
+  if (missingSlots.length > 0 && !slot) reasons.push('vague_or_untyped_question')
+  if (lastAssistantSlot && slot && lastAssistantSlot === slot && missingSlots.length > 0) reasons.push('repetitive')
+
+  const questionWordAnchors = ['?', 'kab se', 'since when', 'how long', 'kitna', '1-10', 'saath', 'fever', 'cough', 'pain', 'breath', 'vomit', 'nausea', 'medicine', 'allergy']
+  const hasQuestionAnchor = questionWordAnchors.some((anchor) => normalizedReply.includes(normalize(anchor)))
+  if (missingSlots.length > 0 && !hasQuestionAnchor) reasons.push('not_medical_enough')
+
+  if (profile.id !== 'general') {
+    const profileAnchorHit = profile.terms.some((term) => {
+      const normalizedTerm = normalize(term)
+      return normalizedTerm.length >= 4 && normalizedReply.includes(normalizedTerm)
+    })
+    if (missingSlots.length > 0 && !profileAnchorHit && !slot) reasons.push('not_concern_specific')
+  }
+
+  return { valid: reasons.length === 0, reasons, slot }
+}
+
 const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
   {
     id: 'chest_pain',

@@ -46,6 +46,7 @@ import {
   hasLocalDoctorSearchPreference,
   hasSmartBookingPrepareSignal,
   hasSmartBookingConfirmationSignal,
+  buildTriageFollowUpReply,
   BOOKING_PREPARE_INTENT_TERMS,
   BOOKING_CONFIRMATION_TERMS,
   BOOKING_DECLINE_TERMS,
@@ -857,7 +858,7 @@ Deno.serve(async (req) => {
     if (voiceReplyRequested) {
       messagesToSend.push({
         role: 'system',
-        content: 'VOICE REPLY MODE: Speak in a natural female-doctor style. Give useful medical guidance: immediate care, key red flags, and one relevant follow-up question when needed. Use clear markdown formatting (**bold** key warnings or terms, bullet lists for instructions) so it is readable on screen, but keep sentences structured for natural text-to-speech.'
+        content: 'VOICE REPLY MODE: Speak in a natural female-doctor style. Give useful medical guidance in a clean rich-text layout that looks good in chat: start with one short empathetic line, then use 2 to 4 compact bullet points or short sections with markdown headings like ### What to do, ### Watch for, and ### Next question only when needed. Bold key warnings or important terms. Keep each bullet short, conversational, and easy to read aloud. Avoid one long paragraph.'
       })
     }
     const shouldUseDoctorLikeTriageQuestionStyle =
@@ -1029,6 +1030,33 @@ Deno.serve(async (req) => {
       }
     }
 
+    const shouldValidateTriageQuestion =
+      (aiIntent === 'triage' || hasSymptomSignal(messageText)) &&
+      !doctorSearchIntent &&
+      !bookingIntent
+
+    if (shouldValidateTriageQuestion) {
+      const validationResult = buildTriageFollowUpReply({
+        concernText: concernText || combinedUserText || messageText,
+        coverage: triageCoverage,
+        history,
+        voiceMode: voiceReplyRequested,
+        latestMessageText: messageText,
+      })
+
+      const replyLooksValid = validationResult.valid &&
+        !/(\bmore details\b|\btell me more\b|\bgive more details\b|\bwhat symptoms\b|\bplease elaborate\b)/i.test(reply)
+
+      if (!replyLooksValid) {
+        console.log('[chat-ai] triage reply fallback engaged', {
+          profileId: validationResult.profileId,
+          missingSlots: validationResult.missingSlots,
+          reason: validationResult.reason || 'invalid_triage_reply',
+        })
+        reply = validationResult.reply
+      }
+    }
+
     // 9. Persistence
     let finalKeyFacts = memoryRecord.keyFacts || []
     const resolvedDoctorId =
@@ -1144,4 +1172,3 @@ Deno.serve(async (req) => {
     return streamRequested ? createStreamingResponse(errorPayload) : new Response(JSON.stringify(errorPayload), { headers: corsHeaders, status: 400 })
   }
 })
-
