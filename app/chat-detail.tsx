@@ -870,21 +870,14 @@ export default function ChatDetailScreen() {
     const hasLiveCall = callStatus === 'ringing' || callStatus === 'active';
 
     const handleBackNavigation = useCallback(() => {
-        if (hasLiveCall) {
-            setIsCallMinimized(true);
-        }
         router.back();
-    }, [hasLiveCall, router]);
+    }, [router]);
 
     useEffect(() => {
         const { BackHandler } = require('react-native');
         const onBackPress = () => {
-            if (hasLiveCall) {
-                setIsCallMinimized(true);
-                router.back();
-                return true;
-            }
-            return false;
+            router.back();
+            return true;
         };
 
         const backHandler = BackHandler.addEventListener('hardwareBackPress', onBackPress);

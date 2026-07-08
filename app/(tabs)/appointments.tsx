@@ -12,6 +12,8 @@ import {
   TextInput,
   Platform,
   Pressable,
+  Keyboard,
+  KeyboardAvoidingView,
   useColorScheme,
   RefreshControl,
 } from 'react-native';
@@ -258,6 +260,7 @@ export default function AppointmentsScreen() {
   const [bookingDoctor, setBookingDoctor] = React.useState<Doctor | null>(null);
   const [selectedSlot, setSelectedSlot] = React.useState<Slot | null>(null);
   const [autoOpenedDoctorId, setAutoOpenedDoctorId] = React.useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = React.useState(0);
 
   // Fetch patient's existing appointments to show booked status
   const { data: myAppointments = [], refetch: refetchApts } = useMyAppointments();
@@ -314,6 +317,24 @@ export default function AppointmentsScreen() {
       setDebouncedCitySearchQuery('');
     }
   }, [openDropdown]);
+
+  React.useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (event: any) => {
+      setKeyboardHeight(Math.max(0, Number(event?.endCoordinates?.height || 0)));
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   const isDarkTheme = theme.background.toLowerCase() === '#121212' || theme.cardBackground.toLowerCase() === '#1e1e1e';
   const skeletonBaseColor = isDarkTheme ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
   const skeletonGlowColor = isDarkTheme ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.72)';
@@ -1019,9 +1040,29 @@ export default function AppointmentsScreen() {
         animationType="fade"
         onRequestClose={() => setOpenDropdown(null)}
       >
-        <View style={styles.filterModalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
+          style={[
+            styles.filterModalOverlay,
+            {
+              paddingBottom: Platform.OS === 'android'
+                ? Math.max(insets.bottom + 12, keyboardHeight > 0 ? keyboardHeight + 12 : 12)
+                : insets.bottom + 12,
+            },
+          ]}
+        >
           <Pressable style={styles.filterModalBackdrop} onPress={() => setOpenDropdown(null)} />
-          <View style={[styles.filterModalSheet, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+          <View
+            style={[
+              styles.filterModalSheet,
+              {
+                backgroundColor: theme.cardBackground,
+                borderColor: theme.borderColor,
+                maxHeight: keyboardHeight > 0 ? '56%' : '62%',
+              },
+            ]}
+          >
             <View style={styles.filterModalHeader}>
               <Text style={[styles.filterModalTitle, { color: theme.text }]}>{activeDropdownTitle}</Text>
               <TouchableOpacity onPress={() => setOpenDropdown(null)} style={styles.filterModalClose} activeOpacity={0.8}>
@@ -1042,7 +1083,11 @@ export default function AppointmentsScreen() {
               </View>
             ) : null}
 
-            <ScrollView style={styles.filterModalList} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.filterModalList}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
               {visibleDropdownOptions.map((option) => {
                 const isSelected = isDropdownOptionSelected(option.value);
                 return (
@@ -1072,7 +1117,7 @@ export default function AppointmentsScreen() {
               ) : null}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal

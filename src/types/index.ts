@@ -162,6 +162,13 @@ export interface UpdateSettingsData {
 export interface AiChatHistoryMessage {
     role: 'user' | 'assistant';
     content: string;
+    doctorRecommendations?: Array<Record<string, any>>;
+    bookingSlotOptions?: Array<Record<string, any>>;
+    departmentSuggestion?: { id?: string; label?: string; confidence?: number | null } | null;
+    bookingPrompt?: string;
+    consultRecommended?: boolean;
+    needsHumanReview?: boolean;
+    reviewReason?: string | null;
 }
 
 export interface AiChatRequest {

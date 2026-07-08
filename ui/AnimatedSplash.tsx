@@ -14,16 +14,16 @@ export default function AnimatedSplash({ onAnimationFinish }: AnimatedSplashProp
 
     useEffect(() => {
         Animated.sequence([
-            Animated.delay(900),
+            Animated.delay(260),
             Animated.parallel([
                 Animated.timing(scaleAnim, {
-                    toValue: 1.04,
-                    duration: 260,
+                    toValue: 1.03,
+                    duration: 180,
                     useNativeDriver: true,
                 }),
                 Animated.timing(fadeAnim, {
                     toValue: 0,
-                    duration: 260,
+                    duration: 180,
                     useNativeDriver: true,
                 }),
             ]),

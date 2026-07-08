@@ -766,9 +766,37 @@ const hasConsultCueInText = (rawText: string): boolean => {
     'doctor ko dikhaiye',
     'appointment book',
     'consult now',
+    'show doctors',
+    'doctor suggestion',
+    'doctor suggestions',
+    'specialist consultation',
+    'specialist review',
+    'get checked',
+    'medical evaluation',
+    'clinical review',
+    'follow up with doctor',
+    'follow-up with doctor',
+    'should be examined',
+    'needs examination',
+    'recommended to see a doctor',
+    'recommended to consult',
+    'doctor assessment',
   ];
 
   return consultTerms.some((term) => text.includes(term));
+};
+
+const hasSoftDoctorNeedCue = (rawText: string): boolean => {
+  const text = (rawText || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!text) return false;
+
+  return [
+    /\b(doctor|specialist|clinician|physician)\b.{0,32}\b(advise|advised|review|consult|visit|see|evaluation|check)\b/i,
+    /\b(please|kindly)?\s*(consider|plan|arrange)\s+(a\s+)?(doctor|specialist)\s+(visit|consultation|review)\b/i,
+    /\b(if this continues|if symptoms persist|if it gets worse|if worsening)\b/i,
+    /\b(persistent|worsening|ongoing)\b.{0,28}\b(symptom|pain|cough|fever|breathing|bleeding|vomiting)\b/i,
+    /\b(in-person|in person)\b.{0,18}\b(review|check|care|evaluation|visit)\b/i,
+  ].some((pattern) => pattern.test(text));
 };
 
 const shouldShowConsultButton = (
@@ -787,15 +815,23 @@ const shouldShowConsultButton = (
     return true;
   }
 
-  if ((riskScore || 0) >= 4) {
+  if ((riskScore || 0) >= 0.35) {
     return true;
   }
 
-  if (reviewReason === 'emergency_signal' || reviewReason === 'moderation_flagged') {
+  if (
+    reviewReason === 'emergency_signal' ||
+    reviewReason === 'moderation_flagged' ||
+    reviewReason === 'danger_signal_detected'
+  ) {
     return true;
   }
 
   if (hasConsultCueInText(replyText)) {
+    return true;
+  }
+
+  if ((riskScore || 0) >= 0.2 && hasSoftDoctorNeedCue(replyText)) {
     return true;
   }
 
@@ -829,10 +865,23 @@ const buildHistoryForApi = (chatMessages: ChatMessage[], maxMessages: number = 2
 
       if (item.sender === 'ai' && Array.isArray(item.recommendedDoctors) && item.recommendedDoctors.length > 0) {
         payload.doctorRecommendations = item.recommendedDoctors.slice(0, 6);
+        if (item.recommendedDepartmentLabel) {
+          payload.departmentSuggestion = {
+            label: item.recommendedDepartmentLabel,
+          };
+        }
       }
 
       if (item.sender === 'ai' && Array.isArray(item.bookingSlotOptions) && item.bookingSlotOptions.length > 0) {
         payload.bookingSlotOptions = item.bookingSlotOptions.slice(0, 6);
+      }
+
+       if (item.sender === 'ai' && item.showConsultNow) {
+        payload.consultRecommended = true;
+      }
+
+      if (item.sender === 'ai' && typeof item.bookingPrompt === 'string' && item.bookingPrompt.trim()) {
+        payload.bookingPrompt = item.bookingPrompt.trim();
       }
 
       return payload;
@@ -888,6 +937,10 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 const STREAM_MODE_RAW = (process.env.EXPO_PUBLIC_CHAT_STREAM_MODE || 'on').trim().toLowerCase();
 const STREAM_MODE: 'on' | 'off' | 'auto' =
   STREAM_MODE_RAW === 'on' || STREAM_MODE_RAW === 'off' ? STREAM_MODE_RAW : 'auto';
+const CHAT_VOICE_TTS_MODE: 'fast' | 'premium' =
+  (process.env.EXPO_PUBLIC_CHAT_VOICE_TTS_MODE || 'premium').trim().toLowerCase() === 'fast'
+    ? 'fast'
+    : 'premium';
 const AGENT_WS_MODE = (process.env.EXPO_PUBLIC_AGENT_WS_MODE || 'on').trim().toLowerCase() === 'on';
 const AGENT_WS_FIRST = (process.env.EXPO_PUBLIC_AGENT_WS_FIRST || 'off').trim().toLowerCase() === 'on';
 const toWebSocketBaseUrl = (baseUrl: string): string => {
@@ -1138,7 +1191,7 @@ export default function AiGuidanceScreen() {
   const isUnmountedRef = useRef<boolean>(false);
   const lastActiveTokenRef = useRef<string>('');
   const triggerReconnectRef = useRef<((token: string) => void) | null>(null);
-  const handleServerVoiceAudioChunkRef = useRef<((audio: string, text: string, index: number) => void) | null>(null);
+  const handleServerVoiceAudioChunkRef = useRef<((audio: string, text: string, index: number, mimeType?: string) => void) | null>(null);
   const requestCounterRef = useRef(0);
   const chatSessionStartedAtRef = useRef<number | null>(null);
   const chatLastActivityAtRef = useRef<number | null>(null);
@@ -1149,7 +1202,7 @@ export default function AiGuidanceScreen() {
   const [isAttachmentPicking, setIsAttachmentPicking] = useState(false);
   const activeVoiceSoundRef = useRef<Audio.Sound | null>(null);
   const activeSpeechRef = useRef(false);
-  const serverVoiceAudioChunksMapRef = useRef<Map<number, { audio: string; text: string }>>(new Map());
+  const serverVoiceAudioChunksMapRef = useRef<Map<number, { audio: string; text: string; mimeType?: string }>>(new Map());
   const nextExpectedVoiceAudioIndexRef = useRef<number>(0);
   const isPlayingServerVoiceAudioRef = useRef<boolean>(false);
   const hasReceivedServerVoiceAudioChunksRef = useRef<boolean>(false);
@@ -2781,6 +2834,7 @@ export default function AiGuidanceScreen() {
       setIsSending(true);
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
+      const activeConversationId = conversationIdRef.current || undefined;
 
       let reportId = null;
       if (token) {
@@ -2788,7 +2842,7 @@ export default function AiGuidanceScreen() {
         const history = buildHistoryForApi(messages, 40);
 
         const { data, error } = await supabase.functions.invoke('save-ai-report', {
-          body: { concern, history }
+          body: { concern, history, conversationId: activeConversationId }
         });
 
         if (!error && data?.success) {
@@ -2797,7 +2851,6 @@ export default function AiGuidanceScreen() {
       }
 
       setMode('teleconsultation');
-      const activeConversationId = conversationIdRef.current || undefined;
       router.replace({
         pathname: '/(tabs)/appointments',
         params: {
@@ -3704,7 +3757,7 @@ export default function AiGuidanceScreen() {
 
     try {
       setVoiceStage('speaking');
-      const sourceUri = `data:audio/mpeg;base64,${chunk.audio}`;
+    const sourceUri = `data:${chunk.mimeType || 'audio/mpeg'};base64,${chunk.audio}`;
       
       const created = await Audio.Sound.createAsync(
         { uri: sourceUri },
@@ -3749,7 +3802,21 @@ export default function AiGuidanceScreen() {
     }
   }, [setVoiceStage]);
 
-  const handleServerVoiceAudioChunk = React.useCallback((audioBase64: string, text: string, index: number) => {
+  const handleServerVoiceAudioChunk = React.useCallback((
+    audioBase64: string,
+    text: string,
+    index: number,
+    mimeType?: string
+  ) => {
+    if (!Number.isFinite(index) || index < 0) {
+      return;
+    }
+    if (index < nextExpectedVoiceAudioIndexRef.current) {
+      return;
+    }
+    if (serverVoiceAudioChunksMapRef.current.has(index)) {
+      return;
+    }
     if (!hasReceivedServerVoiceAudioChunksRef.current) {
       voiceLiveSpeechQueueRef.current = [];
       voiceLiveSpeechBusyRef.current = false;
@@ -3764,7 +3831,7 @@ export default function AiGuidanceScreen() {
       }
     }
     hasReceivedServerVoiceAudioChunksRef.current = true;
-    serverVoiceAudioChunksMapRef.current.set(index, { audio: audioBase64, text });
+    serverVoiceAudioChunksMapRef.current.set(index, { audio: audioBase64, text, mimeType });
     void playNextServerVoiceAudioChunk();
   }, [playNextServerVoiceAudioChunk]);
 
@@ -3986,7 +4053,7 @@ export default function AiGuidanceScreen() {
         return currentSession.access_token;
       };
 
-      const historyForVoice = buildHistoryForApi(messagesRef.current, 8);
+      const historyForVoice = buildHistoryForApi(messagesRef.current, 14);
       const baseVoiceRequestBody = {
         text,
         concern,
@@ -3997,7 +4064,7 @@ export default function AiGuidanceScreen() {
         locationCity,
         searchAreaCity: locationCity,
         preferLocalPlayback: false,
-        ttsMode: 'fast' as const,
+        ttsMode: CHAT_VOICE_TTS_MODE,
       };
 
       const canUseAgentWebSocket = (): boolean => {
@@ -4131,6 +4198,8 @@ export default function AiGuidanceScreen() {
         let buffer = '';
         let finalPayload: any = null;
         let shouldStopReading = false;
+        let sawAnyStreamOutput = false;
+        let streamedAudioTranscript = '';
 
         while (!shouldStopReading) {
           const { value, done } = await reader.read();
@@ -4149,6 +4218,7 @@ export default function AiGuidanceScreen() {
                     ? event.data
                     : '';
               if (textDelta) {
+                sawAnyStreamOutput = true;
                 setIsVoiceDeltaLive(true);
                 voiceStreamedText += textDelta;
                 setMessages((prev) =>
@@ -4185,6 +4255,27 @@ export default function AiGuidanceScreen() {
               throw new Error(message);
             }
 
+            if (event.event === 'audio-chunk') {
+              const audioBase64 =
+                typeof event.data?.audio === 'string'
+                  ? event.data.audio.trim()
+                  : '';
+              if (audioBase64) {
+                sawAnyStreamOutput = true;
+                const chunkText = typeof event.data?.text === 'string' ? event.data.text : '';
+                if (chunkText.trim()) {
+                  streamedAudioTranscript = `${streamedAudioTranscript} ${chunkText.trim()}`.trim();
+                }
+                handleServerVoiceAudioChunkRef.current?.(
+                  audioBase64,
+                  chunkText,
+                  Number.isFinite(Number(event.data?.index)) ? Number(event.data.index) : 0,
+                  typeof event.data?.mimeType === 'string' ? event.data.mimeType : undefined
+                );
+              }
+              continue;
+            }
+
             if (event.event === 'done') {
               finalPayload = event.data;
               shouldStopReading = true;
@@ -4219,6 +4310,7 @@ export default function AiGuidanceScreen() {
                     ? event.data
                     : '';
               if (textDelta) {
+                sawAnyStreamOutput = true;
                 setIsVoiceDeltaLive(true);
                 voiceStreamedText += textDelta;
                 setMessages((prev) =>
@@ -4235,6 +4327,26 @@ export default function AiGuidanceScreen() {
               finalPayload = event.data;
               break;
             }
+            if (event.event === 'audio-chunk') {
+              const audioBase64 =
+                typeof event.data?.audio === 'string'
+                  ? event.data.audio.trim()
+                  : '';
+              if (audioBase64) {
+                sawAnyStreamOutput = true;
+                const chunkText = typeof event.data?.text === 'string' ? event.data.text : '';
+                if (chunkText.trim()) {
+                  streamedAudioTranscript = `${streamedAudioTranscript} ${chunkText.trim()}`.trim();
+                }
+                handleServerVoiceAudioChunkRef.current?.(
+                  audioBase64,
+                  chunkText,
+                  Number.isFinite(Number(event.data?.index)) ? Number(event.data.index) : 0,
+                  typeof event.data?.mimeType === 'string' ? event.data.mimeType : undefined
+                );
+              }
+              continue;
+            }
             if (event.event === 'message') {
               const messagePayload = event.data;
               const isStructuredPayload =
@@ -4250,6 +4362,20 @@ export default function AiGuidanceScreen() {
         }
 
         if (!finalPayload) {
+          if (sawAnyStreamOutput) {
+            const partialText = (voiceStreamedText || streamedAudioTranscript || '').trim();
+            return {
+              success: true,
+              data: {
+                text: partialText,
+                message: partialText,
+                reply: partialText,
+                audio: '',
+                audioMimeType: undefined,
+                source: 'voice_stream_partial',
+              },
+            };
+          }
           throw new Error('Voice stream completed without payload.');
         }
         return finalPayload;
@@ -4975,6 +5101,15 @@ export default function AiGuidanceScreen() {
             </TouchableOpacity>
           </View>
         ) : null}
+        <View
+          style={[
+            styles.composerShell,
+            {
+              backgroundColor: isDark ? '#171A1F' : '#F7FAFC',
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(9,21,31,0.08)',
+            },
+          ]}
+        >
         <View style={styles.inputRow}>
           {isVoiceEnabledOnThisScreen ? (
             <TouchableOpacity
@@ -5004,7 +5139,7 @@ export default function AiGuidanceScreen() {
           </TouchableOpacity>
           <TextInput
             style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-            placeholder={isAssistantMode ? "Describe your symptoms..." : "Type your response..."}
+            placeholder={isAssistantMode ? "Type symptoms or tap the mic..." : "Type your response..."}
             placeholderTextColor={palette.placeholder}
             value={input}
             onChangeText={setInput}
@@ -5019,6 +5154,7 @@ export default function AiGuidanceScreen() {
           >
             <Send size={18} color="#fff" />
           </TouchableOpacity>
+        </View>
         </View>
       </View>
 
@@ -5516,6 +5652,18 @@ const styles = StyleSheet.create({
   },
   inputArea: {
     paddingHorizontal: 12,
+    paddingTop: 10,
+  },
+  composerShell: {
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    shadowColor: '#09151F',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 8,
   },
   attachmentPreviewRow: {
     borderWidth: 1,
@@ -5543,40 +5691,39 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
   micButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
   attachmentButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 4,
-  },
-  input: {
-    flex: 1,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
-    fontSize: 15,
-    maxHeight: 120,
-    marginHorizontal: 4,
-  },
-  sendButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 4,
+  },
+  input: {
+    flex: 1,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 12,
+    fontSize: 15,
+    maxHeight: 120,
+    minHeight: 48,
+  },
+  sendButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   stopTypingBtn: {
     marginTop: 8,

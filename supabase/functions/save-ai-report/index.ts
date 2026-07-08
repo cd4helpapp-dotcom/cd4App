@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1"
+import { detectTriageQuestionSlot, getConcernTriageProfile, getTriageQuestionTemplate } from "../chat-ai/shared.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -106,6 +107,7 @@ type TriageSnapshot = {
   severity: string
   associatedSymptoms: string[]
   medicationContext: string
+  riskNote: string
   captureScore: number
   missingDataPoints: string[]
 }
@@ -121,6 +123,43 @@ const normalizeHistory = (value: unknown): TriageHistoryItem[] => {
     .slice(-24)
 }
 
+const isUuid = (value: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value || "")
+
+const choosePreferredHistory = (
+  primary: TriageHistoryItem[],
+  secondary: TriageHistoryItem[],
+): TriageHistoryItem[] => {
+  const primaryUserTurns = primary.filter((item) => item.role === "user").length
+  const secondaryUserTurns = secondary.filter((item) => item.role === "user").length
+  if (secondaryUserTurns > primaryUserTurns) return secondary
+  if (secondary.length > primary.length + 2) return secondary
+  return primary.length > 0 ? primary : secondary
+}
+
+const fetchHistoryFromConversation = async (args: {
+  supabase: any
+  userId: string
+  conversationId: string
+}): Promise<TriageHistoryItem[]> => {
+  if (!isUuid(args.conversationId)) return []
+
+  const { data: messages } = await args.supabase
+    .from("ai_chat_messages")
+    .select("sender, text")
+    .eq("conversation_id", args.conversationId)
+    .eq("user_id", args.userId)
+    .order("created_at", { ascending: true })
+    .limit(80)
+
+  return normalizeHistory(
+    (messages || []).map((row: any) => ({
+      role: row?.sender === "ai" ? "assistant" : "user",
+      content: clipText(typeof row?.text === "string" ? row.text : "", 320),
+    })),
+  )
+}
+
 const isClinicalValueMissing = (value: string): boolean => {
   const normalized = clipText(value, 160).toLowerCase()
   return (
@@ -131,6 +170,22 @@ const isClinicalValueMissing = (value: string): boolean => {
   )
 }
 
+const normalizeTranscriptNoise = (value: string): string =>
+  String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[_*#`~]+/g, " ")
+    .replace(/[|/]+/g, " ")
+    .replace(/\b(umm+|uhh+|hmm+|matlab|like|you know)\b/gi, " ")
+    .replace(/([a-z])\1{2,}/gi, "$1$1")
+    .replace(/\s+/g, " ")
+    .trim()
+
+const splitClinicalClauses = (value: string): string[] =>
+  normalizeTranscriptNoise(value)
+    .split(/\s*(?:[,.!?;]+|\band\b|\baur\b|\blekin\b|\bbut\b)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3)
+
 const matchFirstPattern = (text: string, patterns: RegExp[]): string | null => {
   for (const pattern of patterns) {
     const match = text.match(pattern)
@@ -138,6 +193,16 @@ const matchFirstPattern = (text: string, patterns: RegExp[]): string | null => {
     const raw = typeof match[1] === "string" && match[1].trim() ? match[1] : match[0]
     const normalized = clipText(raw, 120)
     if (normalized) return normalized
+  }
+  return null
+}
+
+const matchFirstPatternAcrossSegments = (text: string, patterns: RegExp[]): string | null => {
+  const direct = matchFirstPattern(text, patterns)
+  if (direct) return direct
+  for (const segment of splitClinicalClauses(text)) {
+    const match = matchFirstPattern(segment, patterns)
+    if (match) return match
   }
   return null
 }
@@ -159,17 +224,59 @@ const CLINICAL_SYMPTOM_RULES: Array<{ regex: RegExp; label: string }> = [
   { regex: /\b(dizziness|vertigo|faint)\b/i, label: "Dizziness" },
 ]
 
+const NEGATION_PATTERN = /\b(no|not|denies?|without|never|nahin|nahi|na|mat|none)\b/i
+
+const hasNegatedMatch = (text: string, regex: RegExp): boolean => {
+  const source = String(text || "")
+  const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`
+  const matcher = new RegExp(regex.source, flags)
+  let match: RegExpExecArray | null = null
+
+  while ((match = matcher.exec(source)) !== null) {
+    const start = Math.max(0, match.index - 28)
+    const context = source.slice(start, match.index)
+    if (NEGATION_PATTERN.test(context)) return true
+  }
+
+  return false
+}
+
 const extractAssociatedSymptoms = (text: string): string[] => {
-  const combined = (text || "").toLowerCase()
+  const combined = normalizeTranscriptNoise(text).toLowerCase()
   if (!combined.trim()) return []
-  return CLINICAL_SYMPTOM_RULES
-    .filter((entry) => entry.regex.test(combined))
+
+  const labels = CLINICAL_SYMPTOM_RULES
+    .filter((entry) => entry.regex.test(combined) && !hasNegatedMatch(combined, entry.regex))
     .map((entry) => entry.label)
     .slice(0, 8)
+
+  return Array.from(new Set(labels))
+}
+
+const extractMedicationMentions = (text: string): string[] => {
+  const combined = normalizeTranscriptNoise(text).toLowerCase()
+  const patterns = [
+    /\b(?:tab|tablet|cap|capsule|syrup|drops|spray|inhaler|insulin|injection)\s+([a-z][a-z0-9+\/ -]{2,60})\b/gi,
+    /\b([a-z][a-z0-9-]{2,40}(?:\s+[a-z0-9-]{1,20}){0,2})\s+(?:\d{2,4}\s*(?:mg|mcg|ml)|dose|tablet|tab|capsule|cap|syrup)\b/gi,
+    /\b([a-z][a-z0-9-]{2,40})\s+(?:li hai|liya hai|le raha|le rahi|use kiya|use ki hai|started|continue kar raha)\b/gi,
+  ]
+
+  const found: string[] = []
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null = null
+    while ((match = pattern.exec(combined)) !== null) {
+      const candidate = clipText(match[1] || "", 80)
+      if (!candidate) continue
+      if (/\b(no|not|nahi|nahin|none)\b/i.test(candidate)) continue
+      found.push(candidate)
+    }
+  }
+
+  return Array.from(new Set(found)).slice(0, 3)
 }
 
 const extractMedicationContext = (text: string): string => {
-  const combined = (text || "").toLowerCase()
+  const combined = normalizeTranscriptNoise(text).toLowerCase()
   if (!combined.trim()) return "Not clearly stated"
 
   if (/\b(no medicine[s]?|not taking any medicine[s]?|nahi koi medicine|koi medicine nahi)\b/i.test(combined)) {
@@ -180,11 +287,24 @@ const extractMedicationContext = (text: string): string => {
     combined.match(/\b(?:taking|using|on)\s+([a-z0-9,\s-]{3,80})/i) ||
     combined.match(/\b(?:medicine|medication|tablet|dawai|dava)\s*[:\-]?\s*([a-z0-9,\s-]{3,80})/i)
 
-  if (medicineMatch?.[1]) {
-    return `Patient mentioned medication context: ${clipText(medicineMatch[1], 120)}`
+  const deniedAllergy =
+    /\b(no allergy|not allergic|allergy nahi|allergy nahin|koi allergy nahi|drug allergy nahi)\b/i.test(combined)
+
+  const medicationMentions = extractMedicationMentions(combined)
+
+  if (medicineMatch?.[1] || medicationMentions.length > 0) {
+    const medText = medicineMatch?.[1]
+      ? clipText(medicineMatch[1], 120)
+      : medicationMentions.join(", ")
+    return deniedAllergy
+      ? `Patient reported medicine use (${medText}) and denied drug allergy`
+      : `Patient reported medicine use (${medText})`
   }
 
-  if (/\b(allergy|allergic)\b/i.test(combined)) return "Patient mentioned allergy context"
+  if (deniedAllergy) return "Patient denied known drug allergy"
+  if (/\b(allergy|allergic)\b/i.test(combined) && !hasNegatedMatch(combined, /\b(allergy|allergic)\b/i)) {
+    return "Patient mentioned allergy context"
+  }
   return "Not clearly stated"
 }
 
@@ -192,29 +312,35 @@ const extractTriageSnapshot = (args: { concern: string; history: TriageHistoryIt
   const history = Array.isArray(args.history) ? args.history : []
   const userLines = history.filter((item) => item.role === "user").map((item) => item.content)
   const assistantLines = history.filter((item) => item.role === "assistant").map((item) => item.content)
-  const combinedUser = userLines.join(" ")
+  const combinedUser = normalizeTranscriptNoise(userLines.join(" "))
   const combinedAssistant = assistantLines.join(" ").toLowerCase()
+  const combinedLower = combinedUser.toLowerCase()
 
   const duration =
-    matchFirstPattern(combinedUser, [
+    matchFirstPatternAcrossSegments(combinedUser, [
       /\b((?:for|since)\s+[a-z0-9\s]{1,30})\b/i,
       /\b(last\s+\d+\s*(?:hour|hours|hr|hrs|day|days|week|weeks|month|months|year|years))\b/i,
       /\b(\d+\s*(?:day|days|week|weeks|month|months|year|years|din|hafte|hafta|mahina|mahine|saal))\b/i,
       /\b(\d+\s*(?:hour|hours|hr|hrs|min|mins|minute|minutes|ghanta|ghante))\b/i,
+      /\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(day|days|week|weeks|month|months|year|years)\b/i,
       /\b(kal se|aaj se|subah se|raat se)\b/i,
     ]) || "Not clearly stated"
 
   const severity =
-    matchFirstPattern(combinedUser, [
+    matchFirstPatternAcrossSegments(combinedUser, [
       /\b(([1-9]|10)\s*\/\s*10)\b/i,
       /\b(mild|moderate|severe)\b/i,
       /\b([1-9]|10)\s*(?:out of|\/)\s*10\b/i,
       /\b(bahut zyada|zyada|high|intense)\b/i,
       /\b(light|kam|thoda)\b/i,
+      /\b(unbearable|worst|getting worse|bohot zyada)\b/i,
     ]) || "Not clearly stated"
 
   const associatedSymptoms = extractAssociatedSymptoms(combinedUser)
   const medicationContext = extractMedicationContext(combinedUser)
+  const riskNote = /\b(chest pain|difficulty breathing|shortness of breath|faint|unconscious|severe bleeding|stroke)\b/i.test(combinedLower)
+    ? "Emergency red-flag language was detected in the captured chat."
+    : "No explicit emergency red-flag language was detected in the captured chat."
   const answeredTopics: Array<{ label: string; value: string }> = [
     { label: "Onset / Duration", value: duration },
     { label: "Severity", value: severity },
@@ -248,61 +374,199 @@ const extractTriageSnapshot = (args: { concern: string; history: TriageHistoryIt
     severity,
     associatedSymptoms,
     medicationContext,
+    riskNote,
     captureScore: Math.max(0, answeredTopics.length - missingDataPoints.length),
     missingDataPoints,
   }
 }
 
-const QA_PRIORITY_RULES: Array<{ label: string; pattern: RegExp }> = [
-  { label: "Onset / Duration", pattern: /\b(when did|how long|since when|duration|kab se|kitne din|kitni der)\b/i },
-  { label: "Severity", pattern: /\b(severity|severe|pain scale|scale of|1-10|1\/10|10\/10|kitna severe|kitni severity)\b/i },
-  { label: "Associated Symptoms", pattern: /\b(other symptom|associated symptom|aur koi symptom|fever|cough|itching|nausea|vomit)\b/i },
-  { label: "Medicine / Allergy Context", pattern: /\b(medicine|medication|tablet|allergy|dawai|dava)\b/i },
-]
+const TRIAGE_SLOT_LABELS: Record<"onset" | "severity" | "associated" | "medicationContext", string> = {
+  onset: "Onset / Duration",
+  severity: "Severity",
+  associated: "Associated Symptoms",
+  medicationContext: "Medicine / Allergy Context",
+}
 
 const buildQuestionFingerprint = (value: string): string =>
   sanitizePdfText(value).toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim()
 
+const normalizeInlineText = (value: string, maxLength: number = 160): string =>
+  sanitizePdfText((value || "").replace(/\s+/g, " ").trim()).slice(0, maxLength)
+
+const ENGLISH_TRIAGE_SLOT_QUESTIONS: Record<"onset" | "severity" | "associated" | "medicationContext", string> = {
+  onset: "When did the main symptom begin, and is it still ongoing?",
+  severity: "How severe is the problem right now?",
+  associated: "What other symptoms are happening along with this?",
+  medicationContext: "What medicines have been taken already, and are there any allergies or relevant conditions?",
+}
+
+const toProfessionalEnglishAnswer = (value: string): string => {
+  let text = normalizeInlineText(normalizeTranscriptNoise(value), 220)
+  if (!text) return "Answer not clearly captured before booking"
+
+  const replacements: Array<[RegExp, string]> = [
+    [/\bhaan\b/gi, "yes"],
+    [/\bhan\b/gi, "yes"],
+    [/\bnahi\b/gi, "no"],
+    [/\bnahin\b/gi, "no"],
+    [/\bbukhar\b/gi, "fever"],
+    [/\bkhansi\b/gi, "cough"],
+    [/\bsaans\b/gi, "breathing"],
+    [/\bpet dard\b/gi, "stomach pain"],
+    [/\bpait dard\b/gi, "stomach pain"],
+    [/\bdard\b/gi, "pain"],
+    [/\bulti\b/gi, "vomiting"],
+    [/\bsubah se\b/gi, "since morning"],
+    [/\bkal raat se\b/gi, "since last night"],
+    [/\baaj se\b/gi, "since today"],
+    [/\bzyada\b/gi, "more"],
+    [/\bthoda\b/gi, "mild"],
+    [/\bbaar baar urine\b/gi, "frequent urination"],
+    [/\bpyaas\b/gi, "thirst"],
+    [/\bpet\b/gi, "stomach"],
+    [/\bsaath me\b/gi, "along with"],
+    [/\bchal raha hai\b/gi, "has been continuing"],
+    [/\bho raha hai\b/gi, "is happening"],
+  ]
+
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement)
+  }
+
+  text = text.replace(/\s+/g, " ").trim()
+  if (!/[.?!]$/.test(text)) text = `${text}.`
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const QUESTION_PROMPT_PATTERNS = [
+  /\?/,
+  /\b(please tell|tell me|which|what|when|how|can you share|can you tell|would you|do you|kya|kaun|kaunsa|kab|kitna|kitni|batao|bataye|batayein)\b/i,
+]
+
+const BOOKING_OR_SELECTION_PATTERN =
+  /\b(doctor|dr\.?|physician|consult|consultation|slot|appointment|book|booking|available slots?|choose a doctor|select a doctor|which doctor|doctor you want|choose a slot|select a slot|kaun se doctor|kaunsa slot|clinic|hospital|fee|experience)\b/i
+
+const HEALTH_QA_PATTERN =
+  /\b(symptom|pain|ache|fever|temperature|cough|cold|breath|breathing|chest|headache|migraine|stomach|abdomen|vomit|nausea|loose motion|diarrhea|urine|burning|period|pregnan|bp|blood pressure|pulse|sugar|diabetes|rash|itch|swelling|injury|fracture|bleeding|wound|medicine|medication|tablet|allergy|severity|duration|onset|red flag|bukhar|khansi|dard|saans|ulti|dawai|dava|kab se|kitne din|kitni der)\b/i
+
+const isBookingOrSelectionText = (value: string): boolean =>
+  BOOKING_OR_SELECTION_PATTERN.test(value || "")
+
+const isAssistantQuestionLike = (value: string): boolean =>
+  QUESTION_PROMPT_PATTERNS.some((pattern) => pattern.test(value || ""))
+
+const isHealthQaPair = (question: string, answer: string): boolean => {
+  const combined = `${question} ${answer}`
+  if (isBookingOrSelectionText(question)) return false
+  if (isBookingOrSelectionText(answer) && !HEALTH_QA_PATTERN.test(answer)) return false
+  return HEALTH_QA_PATTERN.test(combined)
+}
+
+const cleanQuestionCandidate = (value: string, maxLength: number = 180): string =>
+  normalizeInlineText(
+    (value || "")
+      .replace(/[#*_`>]+/g, " ")
+      .replace(/^\s*(?:[-]|\d+[.)])\s*/g, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+    maxLength,
+  )
+
 const extractQuestionText = (value: string): string => {
-  const compact = clipText(value, 200)
+  const originalLines = sanitizePdfText(value || "")
+    .split(/\n+/)
+    .map((line) => cleanQuestionCandidate(line, 220))
+    .filter(Boolean)
+
+  const promptLine = originalLines.find((line) =>
+    QUESTION_PROMPT_PATTERNS.slice(1).some((pattern) => pattern.test(line)),
+  )
+  if (promptLine) {
+    return cleanQuestionCandidate(promptLine, 180)
+  }
+
+  const compact = cleanQuestionCandidate((value || "").replace(/\s+/g, " "), 220)
   if (!compact) return ""
-  const match = compact.match(/([^?]{4,170}\?)/)
-  if (match?.[1]) return clipText(match[1], 180)
-  return compact.endsWith("?") ? compact : clipText(`${compact}?`, 180)
+  const questionMatches = compact.match(/[^?]{4,160}\?/g) || []
+  if (questionMatches.length > 0) {
+    return cleanQuestionCandidate(questionMatches.slice(0, 3).join(" "), 190)
+  }
+  return cleanQuestionCandidate(compact, 180)
 }
 
 const findNearestUserAnswer = (history: TriageHistoryItem[], questionIndex: number, maxLookAhead = 6): string => {
+  const fragments: string[] = []
+
   for (let index = questionIndex + 1; index < history.length && index <= questionIndex + maxLookAhead; index += 1) {
     const item = history[index]
     if (!item || typeof item.content !== "string") continue
-    if (item.role === "user" && item.content.trim()) return clipText(item.content, 220)
+    if (item.role === "user" && item.content.trim()) {
+      fragments.push(normalizeInlineText(item.content, 120))
+      const joined = fragments.join(" ")
+      if (joined.split(/\s+/).length >= 5 || /[.?!]|\/10\b|\b(no|yes|nahi|haan)\b/i.test(joined)) {
+        return toProfessionalEnglishAnswer(joined)
+      }
+      continue
+    }
     if (item.role === "assistant" && index > questionIndex + 1 && /\?/.test(item.content)) break
   }
-  return "Answer not clearly captured before booking"
+
+  return fragments.length
+    ? toProfessionalEnglishAnswer(fragments.join(" "))
+    : "Answer not clearly captured before booking"
 }
 
-const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], maxPairs = 4): string[] => {
+const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concernText: string, maxPairs = 4): string[] => {
   const history = Array.isArray(historyInput) ? historyInput : []
   if (!history.length) return ["No AI/voice chat transcript attached"]
 
+  const profile = getConcernTriageProfile(concernText)
   const lines: string[] = []
   const seen = new Set<string>()
+  const seenSlots = new Set<string>()
 
-  for (const rule of QA_PRIORITY_RULES) {
-    if (lines.length >= maxPairs * 2) break
-    const questionIndex = history.findIndex((item) => item.role === "assistant" && rule.pattern.test(item.content || ""))
-    if (questionIndex < 0) continue
+  for (let questionIndex = 0; questionIndex < history.length && lines.length < maxPairs * 2; questionIndex += 1) {
+    const item = history[questionIndex]
+    if (item.role !== "assistant" || typeof item.content !== "string" || !item.content.includes("?")) continue
 
-    const question = extractQuestionText(history[questionIndex].content || "")
-    const fingerprint = buildQuestionFingerprint(question)
-    if (!question || !fingerprint || seen.has(fingerprint)) continue
+    const slot = detectTriageQuestionSlot(item.content || "")
+    if (!slot || seenSlots.has(slot)) continue
+
+    const question = ENGLISH_TRIAGE_SLOT_QUESTIONS[slot] || extractQuestionText(item.content || "") || getTriageQuestionTemplate(profile, slot)
+    const fingerprint = buildQuestionFingerprint(`${slot}:${question}`)
+    const answer = findNearestUserAnswer(history, questionIndex)
+    if (!question || !fingerprint || seen.has(fingerprint) || !isHealthQaPair(question, answer)) continue
     seen.add(fingerprint)
+    seenSlots.add(slot)
 
-    lines.push(`Q: ${clipText(`${rule.label}: ${question}`, 220)}`)
-    lines.push(`A: ${findNearestUserAnswer(history, questionIndex)}`)
+    lines.push(`Q: ${clipText(`${TRIAGE_SLOT_LABELS[slot]}: ${question}`, 220)}`)
+    lines.push(`A: ${answer}`)
   }
 
-  return lines.length ? lines : ["No explicit symptom triage Q&A captured from transcript"]
+  for (let index = 0; index < history.length && lines.length < maxPairs * 2; index += 1) {
+    const item = history[index]
+    if (item.role !== "assistant" || !isAssistantQuestionLike(item.content || "")) continue
+
+    const question = extractQuestionText(item.content || "")
+    if (!question) continue
+    const answer = findNearestUserAnswer(history, index)
+    if (!isHealthQaPair(question, answer)) continue
+    const fingerprint = buildQuestionFingerprint(question)
+    if (!fingerprint || seen.has(fingerprint)) continue
+    seen.add(fingerprint)
+
+    lines.push(`Q: ${clipText(question, 220)}`)
+    lines.push(`A: ${toProfessionalEnglishAnswer(answer)}`)
+  }
+
+  if (lines.length) return lines
+
+  const patientNotes = history
+    .filter((item) => item.role === "user" && HEALTH_QA_PATTERN.test(item.content || "") && !isBookingOrSelectionText(item.content || ""))
+    .slice(-4)
+    .map((item, idx) => `Patient note ${idx + 1}: ${toProfessionalEnglishAnswer(item.content)}`)
+
+  return patientNotes.length ? patientNotes : ["No explicit symptom triage Q&A captured from transcript"]
 }
 
 const buildAiChatTimelineLines = (historyInput: TriageHistoryItem[], maxLines = 4): string[] => {
@@ -325,7 +589,7 @@ const buildGeminiSummary = async (geminiApiKey: string, history: TriageHistoryIt
   const prompt = `You are a clinical documentation assistant.
 Create a concise doctor-facing triage summary from the chat history.
 
-Output format (plain text only):
+Output format (plain text only, in professional English only):
 1) Chief concern:
 2) Onset/duration:
 3) Severity and progression:
@@ -335,6 +599,7 @@ Output format (plain text only):
 
 Rules:
 - If data is missing, write "Not clearly stated".
+- Translate Hindi/Hinglish content into clear professional English.
 - Keep objective, no definitive diagnosis.
 - Maximum 140 words.
 
@@ -357,6 +622,23 @@ ${historyText}`
   if (!response.ok) return ""
   const aiData = await response.json()
   return sanitizePdfText(aiData?.candidates?.[0]?.content?.parts?.[0]?.text || "")
+}
+
+const buildHeuristicSummary = (snapshot: TriageSnapshot): string => {
+  const lines = [
+    `Chief concern: ${snapshot.chiefConcern}.`,
+    `Onset/duration: ${snapshot.duration}.`,
+    `Severity: ${snapshot.severity}.`,
+    `Associated symptoms: ${snapshot.associatedSymptoms.length ? snapshot.associatedSymptoms.join(", ") : "Not clearly stated"}.`,
+    `Medicine/allergy context: ${snapshot.medicationContext}.`,
+    `Risk note: ${snapshot.riskNote}.`,
+  ]
+
+  if (snapshot.missingDataPoints.length) {
+    lines.push(`Still unclear for doctor follow-up: ${snapshot.missingDataPoints.join(", ")}.`)
+  }
+
+  return lines.join(" ")
 }
 
 const buildReportPdfBytes = async (args: {
@@ -656,11 +938,16 @@ Deno.serve(async (req) => {
       }, 429)
     }
 
-    const { concern, history } = await req.json()
+    const { concern, history, conversationId } = await req.json()
     const safeConcern = clipText(concern || "General", 120) || "General"
-    const compactHistory = normalizeHistory(history)
+    const payloadHistory = normalizeHistory(history)
+    const conversationHistory =
+      typeof conversationId === "string" && isUuid(conversationId.trim())
+        ? await fetchHistoryFromConversation({ supabase, userId: user.id, conversationId: conversationId.trim() })
+        : []
+    const compactHistory = choosePreferredHistory(payloadHistory, conversationHistory)
     const triageSnapshot = extractTriageSnapshot({ concern: safeConcern, history: compactHistory })
-    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, 4)
+    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 4)
     const aiChatTimelineLines = buildAiChatTimelineLines(compactHistory, 4)
 
     let summary = ""
@@ -670,13 +957,7 @@ Deno.serve(async (req) => {
       console.error("Summary generation failed:", err)
     }
 
-    const fallbackSummary = [
-      `Chief concern: ${triageSnapshot.chiefConcern}.`,
-      `Onset/duration: ${triageSnapshot.duration}.`,
-      `Severity: ${triageSnapshot.severity}.`,
-      `Associated symptoms: ${triageSnapshot.associatedSymptoms.length ? triageSnapshot.associatedSymptoms.join(", ") : "Not clearly stated"}.`,
-      `Medicine/allergy context: ${triageSnapshot.medicationContext}.`,
-    ].join(" ")
+    const fallbackSummary = buildHeuristicSummary(triageSnapshot)
     const safeSummary = clipText(summary || fallbackSummary || "No summary generated.", 1400) || "No summary generated."
     const userMeta = user.user_metadata || user.raw_user_meta_data || {}
     const patientFirstName = clipText(userMeta.first_name || userMeta.firstName || "", 60)

@@ -14,7 +14,7 @@ type DoctorSafeScreenProps = {
 export default function DoctorSafeScreen({
   children,
   backgroundColor,
-  edges = [],
+  edges = ['top', 'bottom'],
   style,
   panHandlers,
 }: DoctorSafeScreenProps) {

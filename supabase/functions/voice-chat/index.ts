@@ -6,12 +6,16 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "tts-1"
+const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "gpt-4o-mini-tts"
 const DEFAULT_TTS_FALLBACK_MODEL = Deno.env.get("VOICE_MODEL_FALLBACK")?.trim() || "tts-1-hd"
 const DEFAULT_STT_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL")?.trim() || "whisper-1"
 const DEFAULT_STT_FALLBACK_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL_FALLBACK")?.trim() || "whisper-1"
 const DEFAULT_SCOPE_MODEL = Deno.env.get("VOICE_SCOPE_MODEL")?.trim() || "gpt-4o-mini"
 const DEFAULT_SCOPE_FALLBACK_MODEL = Deno.env.get("VOICE_SCOPE_MODEL_FALLBACK")?.trim() || "gpt-4o"
+const DEFAULT_TTS_MODE: "fast" | "premium" =
+  (Deno.env.get("VOICE_DEFAULT_TTS_MODE") || "premium").trim().toLowerCase() === "fast"
+    ? "fast"
+    : "premium"
 const DEFAULT_AUDIO_MIME_TYPE = Deno.env.get("VOICE_AUDIO_MIME_TYPE")?.trim() || "audio/mpeg"
 const DEFAULT_AUDIO_RESPONSE_FORMAT = DEFAULT_AUDIO_MIME_TYPE.includes("wav")
   ? "wav"
@@ -419,16 +423,51 @@ function parseEnvInt(key: string, fallback: number): number {
 const extractSentences = (buffer: string): { sentences: string[], rest: string } => {
   const sentences: string[] = [];
   let current = buffer;
+  const softChunkTarget = 140;
+  const hardChunkLimit = 220;
 
   while (true) {
     const match = current.match(/[.?!।\n]/);
-    if (!match || match.index === undefined) {
+    if (match && match.index !== undefined) {
+      const boundaryIdx = match.index;
+      const sentence = current.slice(0, boundaryIdx + 1);
+      sentences.push(sentence);
+      current = current.slice(boundaryIdx + 1);
+      continue;
+    }
+
+    if (current.length < softChunkTarget) {
       break;
     }
-    const boundaryIdx = match.index;
-    const sentence = current.slice(0, boundaryIdx + 1);
+
+    let fallbackBoundary = -1;
+    const softSlice = current.slice(0, hardChunkLimit);
+    const candidateBoundaries = [
+      softSlice.lastIndexOf(", "),
+      softSlice.lastIndexOf("; "),
+      softSlice.lastIndexOf(": "),
+      softSlice.lastIndexOf(" - "),
+      softSlice.lastIndexOf(" "),
+    ];
+    for (const candidate of candidateBoundaries) {
+      if (candidate >= softChunkTarget * 0.45) {
+        fallbackBoundary = candidate;
+        break;
+      }
+    }
+
+    if (fallbackBoundary < 0) {
+      fallbackBoundary = Math.min(current.length, hardChunkLimit);
+    } else {
+      fallbackBoundary += 1;
+    }
+
+    const sentence = current.slice(0, fallbackBoundary).trim();
+    if (!sentence) {
+      break;
+    }
     sentences.push(sentence);
-    current = current.slice(boundaryIdx + 1);
+    current = current.slice(fallbackBoundary);
   }
 
   return { sentences, rest: current };
@@ -1269,7 +1308,7 @@ Deno.serve(async (req) => {
     let sttModelUsed: string | null = null
     let preferLocalPlayback = false
     let streamRequested = false
-    let ttsMode: "fast" | "premium" = "fast"
+    let ttsMode: "fast" | "premium" = DEFAULT_TTS_MODE
     let warmupRequested = false
 
     if (contentType.includes("multipart/form-data")) {
@@ -1300,12 +1339,21 @@ Deno.serve(async (req) => {
         String(form.get("preferredCity") || "").trim() ||
         null
       voicePersonaPreference = String(form.get("voicePersona") || "").trim() || null
-      ttsMode = String(form.get("ttsMode") || "").trim().toLowerCase() === "premium" ? "premium" : "fast"
+      const requestedTtsMode = String(form.get("ttsMode") || "").trim().toLowerCase()
+      ttsMode = requestedTtsMode === "premium"
+        ? "premium"
+        : requestedTtsMode === "fast"
+          ? "fast"
+          : DEFAULT_TTS_MODE
       streamRequested = String(form.get("stream") || "").trim().toLowerCase() === "true"
     } else {
       const body = await req.json().catch(() => ({}))
       warmupRequested = body?.warmup === true
-      ttsMode = body?.ttsMode === "premium" ? "premium" : "fast"
+      ttsMode = body?.ttsMode === "premium"
+        ? "premium"
+        : body?.ttsMode === "fast"
+          ? "fast"
+          : DEFAULT_TTS_MODE
       transcriptText = (body?.text || "").trim()
       console.log(`[VoiceChat] Received text input: "${transcriptText}"`)
       concernText = (body?.concern || "General Assistant").toString().trim() || "General Assistant"

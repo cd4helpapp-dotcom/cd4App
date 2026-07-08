@@ -307,6 +307,7 @@ const SignupScreen: React.FC = () => {
           data: {
             first_name: formData.firstName,
             last_name: formData.lastName,
+            phone_number: formData.phoneNumber,
             phone: formData.phoneNumber,
           }
         }

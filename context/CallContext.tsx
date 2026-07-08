@@ -176,6 +176,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const ongoingNotificationIdRef = useRef<string | null>(null);
     const incomingRingtoneSoundRef = useRef<Audio.Sound | null>(null);
     const isIncomingRingtonePlayingRef = useRef(false);
+    const isJoiningChannelRef = useRef(false);
 
     const hasOngoingCall = callStatus === 'ringing' || callStatus === 'active';
     const currentRoomId = activeCallRoomId || boundRoomId;
@@ -197,6 +198,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsVideoMuted(false);
         setIsSpeakerOn(false);
         setActiveCallRoomId(null);
+        setBoundRoomId(null);
     }, []);
 
     const scheduleResetToIdle = useCallback((delayMs: number) => {
@@ -210,6 +212,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [resetToIdle]);
 
     const cleanupEngine = useCallback(async () => {
+        isJoiningChannelRef.current = false;
         if (engineRef.current) {
             try {
                 engineRef.current.leaveChannel();
@@ -352,6 +355,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             engineInstance.registerEventHandler({
                 onJoinChannelSuccess: (connection: any) => {
                     if (__DEV__) console.log('[Agora] Joined channel:', connection.channelId);
+                    isJoiningChannelRef.current = false;
                     setIsJoined(true);
                 },
                 onUserJoined: (_connection: any, uid: number) => {
@@ -585,78 +589,86 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         clearStatusResetTimer();
 
-        const eligibility = await getConsultationEligibilityForRoom(targetRoomId);
-        if (!eligibility.allowed) {
-            throw new Error(eligibility.reason || 'Consultation window closed.');
-        }
+        try {
+            const eligibility = await getConsultationEligibilityForRoom(targetRoomId);
+            if (!eligibility.allowed) {
+                throw new Error(eligibility.reason || 'Consultation window closed.');
+            }
 
-        const tokenBundle = await fetchAgoraToken(targetRoomId);
+            const [tokenBundle, engineReady] = await Promise.all([
+                fetchAgoraToken(targetRoomId),
+                initEngine(),
+            ]);
+            if (!engineReady) {
+                throw new Error('Could not initialize Agora call engine. Please check Agora setup and rebuild the app.');
+            }
 
-        const engineReady = await initEngine();
-        if (!engineReady) {
-            throw new Error('Could not initialize Agora call engine. Please check Agora setup and rebuild the app.');
-        }
+            const { data: sessionData, error } = await supabase
+                .from('call_sessions')
+                .insert({
+                    room_id: targetRoomId,
+                    caller_id: user.id,
+                    type,
+                    status: 'ringing',
+                    agora_token: tokenBundle.token,
+                })
+                .select('id')
+                .single();
 
-        setBoundRoomId(targetRoomId);
-        setActiveCallRoomId(targetRoomId);
+            if (error) throw error;
 
-        const { data: sessionData, error } = await supabase
-            .from('call_sessions')
-            .insert({
-                room_id: targetRoomId,
-                caller_id: user.id,
-                type,
-                status: 'ringing',
-                agora_token: tokenBundle.token,
-            })
-            .select('id')
-            .single();
+            setBoundRoomId(targetRoomId);
+            setActiveCallRoomId(targetRoomId);
+            setIsCaller(true);
+            setAgoraToken(tokenBundle.token);
+            setLocalAgoraUid(tokenBundle.uid);
+            setCallType(type);
+            setIsAudioMuted(false);
+            setIsVideoMuted(type === 'audio');
+            setCallStatus('ringing');
 
-        if (error) throw error;
-
-        setIsCaller(true);
-        setAgoraToken(tokenBundle.token);
-        setLocalAgoraUid(tokenBundle.uid);
-        setCallType(type);
-        setIsAudioMuted(false);
-        setIsVideoMuted(type === 'audio');
-        setCallStatus('ringing');
-
-        void (async () => {
-            const { data, error: pushError } = await supabase.functions.invoke('send-chat-notification', {
-                body: {
-                    record: {
-                        id: sessionData.id,
-                        room_id: targetRoomId,
-                        caller_id: user.id,
-                        type,
-                        status: 'ringing',
+            void (async () => {
+                const { data, error: pushError } = await supabase.functions.invoke('send-chat-notification', {
+                    body: {
+                        record: {
+                            id: sessionData.id,
+                            room_id: targetRoomId,
+                            caller_id: user.id,
+                            type,
+                            status: 'ringing',
+                        },
+                        table: 'call_sessions',
                     },
-                    table: 'call_sessions',
-                },
-            });
+                });
 
-            if (pushError) {
-                const message = await extractFunctionInvokeErrorMessage(pushError);
-                if (__DEV__) console.warn('[CallContext] Call push notification skipped:', message);
-                return;
-            }
+                if (pushError) {
+                    const message = await extractFunctionInvokeErrorMessage(pushError);
+                    if (__DEV__) console.warn('[CallContext] Call push notification skipped:', message);
+                    return;
+                }
 
-            if (data?.success === false) {
-                const message =
-                    typeof data?.error === 'string' && data.error.trim()
-                        ? data.error.trim()
-                        : 'Notification service returned unsuccessful response.';
-                if (__DEV__) console.warn('[CallContext] Call push notification not sent:', message);
-            }
-        })();
+                if (data?.success === false) {
+                    const message =
+                        typeof data?.error === 'string' && data.error.trim()
+                            ? data.error.trim()
+                            : 'Notification service returned unsuccessful response.';
+                    if (__DEV__) console.warn('[CallContext] Call push notification not sent:', message);
+                }
+            })();
+        } catch (error) {
+            await cleanupEngine();
+            resetToIdle();
+            throw error;
+        }
     }, [
         activeCallRoomId,
         clearStatusResetTimer,
+        cleanupEngine,
         fetchAgoraToken,
         getConsultationEligibilityForRoom,
         hasOngoingCall,
         initEngine,
+        resetToIdle,
         user?.id,
     ]);
 
@@ -671,8 +683,6 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         try {
             clearStatusResetTimer();
-            setBoundRoomId(targetRoomId);
-            setActiveCallRoomId(targetRoomId);
 
             const { data: session, error: sessionError } = await supabase
                 .from('call_sessions')
@@ -686,7 +696,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (sessionError) throw sessionError;
             if (!session) return;
 
-            const tokenBundle = await fetchAgoraToken(targetRoomId);
+            const [tokenBundle, engineReady] = await Promise.all([
+                fetchAgoraToken(targetRoomId),
+                initEngine(),
+            ]);
+            if (!engineReady) {
+                throw new Error('Could not initialize Agora call engine. Please check Agora setup and rebuild the app.');
+            }
 
             const { error } = await supabase
                 .from('call_sessions')
@@ -704,17 +720,20 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (user?.id) {
                 setIsCaller(session.caller_id === user.id);
             }
+            setBoundRoomId(targetRoomId);
+            setActiveCallRoomId(targetRoomId);
             setCallStatus('active');
         } catch (error) {
             if (__DEV__) console.error('[CallContext] Error accepting call:', error);
             throw error;
         }
-    }, [activeCallRoomId, clearStatusResetTimer, currentRoomId, fetchAgoraToken, hasOngoingCall, user?.id]);
+    }, [activeCallRoomId, clearStatusResetTimer, currentRoomId, fetchAgoraToken, hasOngoingCall, initEngine, user?.id]);
 
     const endCall = useCallback(async (roomId?: string | null) => {
         const targetRoomId = (roomId || currentRoomId || '').trim();
         if (!targetRoomId) return;
 
+        clearStatusResetTimer();
         try {
             const { data: activeSessions } = await supabase
                 .from('call_sessions')
@@ -739,17 +758,19 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             setCallStatus('ended');
-            await cleanupEngine();
-            scheduleResetToIdle(2000);
         } catch (error) {
             if (__DEV__) console.error('[CallContext] Error ending call:', error);
+        } finally {
+            await cleanupEngine();
+            scheduleResetToIdle(2000);
         }
-    }, [cleanupEngine, currentRoomId, markTodayAppointmentCompletedForRoom, queryClient, scheduleResetToIdle]);
+    }, [cleanupEngine, clearStatusResetTimer, currentRoomId, markTodayAppointmentCompletedForRoom, queryClient, scheduleResetToIdle]);
 
     const declineCall = useCallback(async (roomId?: string | null) => {
         const targetRoomId = (roomId || currentRoomId || '').trim();
         if (!targetRoomId) return;
 
+        clearStatusResetTimer();
         try {
             await supabase
                 .from('call_sessions')
@@ -758,12 +779,13 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 .eq('status', 'ringing');
 
             setCallStatus('declined');
-            await cleanupEngine();
-            scheduleResetToIdle(2000);
         } catch (error) {
             if (__DEV__) console.error('[CallContext] Error declining call:', error);
+        } finally {
+            await cleanupEngine();
+            scheduleResetToIdle(2000);
         }
-    }, [cleanupEngine, currentRoomId, scheduleResetToIdle]);
+    }, [cleanupEngine, clearStatusResetTimer, currentRoomId, scheduleResetToIdle]);
 
     const toggleAudio = useCallback(() => {
         if (!engineRef.current) return;
@@ -988,15 +1010,25 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     useEffect(() => {
         let isCancelled = false;
         if (callStatus === 'active' && agoraToken && localAgoraUid && !isJoined && currentRoomId) {
+            if (isJoiningChannelRef.current) return;
             const connect = async () => {
+                isJoiningChannelRef.current = true;
                 const initialized = await initEngine();
-                if (isCancelled || !initialized || !engineRef.current) return;
+                if (isCancelled || !initialized || !engineRef.current) {
+                    isJoiningChannelRef.current = false;
+                    return;
+                }
 
                 const shouldBeSpeakerOn = callType === 'video';
                 setIsSpeakerOn(shouldBeSpeakerOn);
                 engineRef.current.setEnableSpeakerphone(shouldBeSpeakerOn);
 
-                engineRef.current.joinChannel(agoraToken, currentRoomId, localAgoraUid, {});
+                try {
+                    engineRef.current.joinChannel(agoraToken, currentRoomId, localAgoraUid, {});
+                } catch (error) {
+                    isJoiningChannelRef.current = false;
+                    if (__DEV__) console.error('[CallContext] Failed to join Agora channel:', error);
+                }
             };
             void connect();
         }

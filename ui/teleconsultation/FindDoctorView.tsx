@@ -6795,14 +6795,30 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     enabled={Platform.OS === 'ios'}
-                    style={styles.modalOverlay}
+                    style={[
+                        styles.modalOverlay,
+                        {
+                            paddingBottom: Platform.OS === 'android'
+                                ? Math.max(insets.bottom + 12, keyboardHeight > 0 ? keyboardHeight + 12 : 12)
+                                : insets.bottom + 12,
+                        },
+                    ]}
                 >
                     <TouchableOpacity
                         style={styles.modalBackdrop}
                         activeOpacity={1}
                         onPress={() => setIsCityPickerVisible(false)}
                     />
-                    <View style={[styles.modalSheet, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                    <View
+                        style={[
+                            styles.modalSheet,
+                            {
+                                backgroundColor: theme.cardBackground,
+                                borderColor: theme.borderColor,
+                                maxHeight: keyboardHeight > 0 ? '64%' : '72%',
+                            },
+                        ]}
+                    >
                         <View style={[styles.modalHandle, { backgroundColor: theme.borderColor }]} />
 
                         <View style={styles.modalHeader}>
@@ -6861,7 +6877,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         </View>
 
                         <Text style={[styles.cityListTitle, { color: theme.textSecondary }]}>Available cities</Text>
-                        <ScrollView style={styles.modalList} showsVerticalScrollIndicator={false}>
+                        <ScrollView
+                            style={styles.modalList}
+                            showsVerticalScrollIndicator={false}
+                            keyboardShouldPersistTaps="handled"
+                        >
                             <TouchableOpacity
                                 style={[
                                     styles.cityOptionRow,

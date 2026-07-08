@@ -585,8 +585,8 @@ export const extractTenScaleSeverity = (text: string): number | null => {
 export const getTriageCoverage = (combinedUserText: string): any => {
   const text = normalize(combinedUserText)
   const onset =
-    hasAnyTerm(text, ['since', 'started', 'kab se', 'aaj se', 'kal se', 'subah se', 'shaam se', 'raat se']) ||
-    /\b\d+\s*(minute|minutes|min|mins|hour|hours|hr|hrs|day|days|week|weeks|month|months)\b/.test(text)
+    hasAnyTerm(text, ['since', 'started', 'kab se', 'aaj se', 'kal se', 'subah se', 'shaam se', 'raat se', 'din se', 'hafte se', 'mahine se']) ||
+    /\b\d+\s*(minute|minutes|min|mins|hour|hours|hr|hrs|day|days|week|weeks|month|months|din|dino|dinon|ghanta|ghante|hafta|hafte|mahina|mahine)\b/.test(text)
   const severity =
     hasAnyTerm(text, ['mild', 'moderate', 'severe', 'pain scale', 'zyada', 'bahut', 'bohot', 'high fever', 'unbearable']) ||
     /\b([1-9]|10)\s*\/\s*10\b/.test(text) ||
@@ -658,10 +658,10 @@ const TRIAGE_GENERIC_PATTERNS = [
 ]
 
 const TRIAGE_SLOT_KEYWORDS: Record<TriageQuestionSlot, string[]> = {
-  onset: ['kab se', 'since when', 'when did', 'how long', 'started', 'start hua', 'start hui', 'start huye'],
-  severity: ['kitna', 'severity', '1-10', '1 to 10', 'pressure', 'tightness', 'sharp', 'burning', 'constant', 'cramping', 'worse'],
-  associated: ['saath', 'also', 'along with', 'fever', 'cough', 'breath', 'breathing', 'wheezing', 'vomit', 'nausea', 'weakness', 'numbness', 'swelling', 'bleeding', 'rash', 'urine', 'dizziness', 'sweating', 'vision'],
-  medicationContext: ['medicine', 'medication', 'tablet', 'allergy', 'inhaler', 'paracetamol', 'bp', 'blood pressure', 'diabetes', 'pregnancy', 'history'],
+  onset: ['kab se', 'since when', 'when did', 'how long', 'started', 'start hua', 'start hui', 'start huye', 'begin', 'began', 'ongoing', 'shuruaat'],
+  severity: ['kitna', 'severity', '1-10', '1 to 10', 'pressure', 'tightness', 'sharp', 'burning', 'constant', 'cramping', 'worse', 'mild', 'moderate', 'severe', 'intensity'],
+  associated: ['saath', 'also', 'along with', 'other symptoms', 'aur kya', 'aur kaun se', 'fever', 'cough', 'breath', 'breathing', 'wheezing', 'vomit', 'nausea', 'weakness', 'numbness', 'swelling', 'bleeding', 'rash', 'urine', 'dizziness', 'sweating', 'vision'],
+  medicationContext: ['medicine', 'medication', 'tablet', 'allergy', 'inhaler', 'paracetamol', 'bp', 'blood pressure', 'diabetes', 'pregnancy', 'history', 'taken any medicines', 'ongoing conditions', 'regular medicine', 'purani bimari'],
 }
 
 const TRIAGE_QUESTION_TEMPLATES: Record<string, Record<TriageQuestionSlot, string>> = {
@@ -746,19 +746,192 @@ const TRIAGE_DEFAULT_TEMPLATES: Record<TriageQuestionSlot, string> = {
   medicationContext: 'Koi medicine li hai, allergy hai, ya chronic illness hai kya?',
 }
 
-const TRIAGE_LANGUAGE_HINTS = [
-  /\b(kya|hai|nahi|mujhe|mera|meri|mere|kab|kitna|saath|dard|bukhar|khansi|pet|pait|saans|doctor)\b/i,
-  /[\u0900-\u097F]/,
+const TRIAGE_SLOT_OPENERS: Record<TriageQuestionSlot, string[]> = {
+  onset: [
+    'Thoda ye samajhna zaroori hai',
+    'Doctor ke perspective se pehle ye clear kar lete hain',
+    'Sabse pehle onset samajhte hain',
+  ],
+  severity: [
+    'Ab intensity samajhna important hai',
+    'Clinical picture ke liye severity clear karni hogi',
+    'Doctor ko severity samajhni padegi',
+  ],
+  associated: [
+    'Saath ke symptoms bhi important hain',
+    'Ye bhi dekhna hoga ki aur kya saath me ho raha hai',
+    'Associated symptoms se diagnosis narrow hota hai',
+  ],
+  medicationContext: [
+    'Treatment safety ke liye ye bhi batayein',
+    'Medicine history bhi important hai',
+    'Prescription decide karne se pehle ye context chahiye',
+  ],
+}
+
+const TRIAGE_SLOT_VARIANTS: Record<TriageQuestionSlot, string[]> = {
+  onset: [
+    'Ye problem exactly kab se start hui hai?',
+    'Symptoms ki shuruaat kab hui thi?',
+    'Kab se ye issue chal raha hai, aur kya abhi bhi same intensity me hai?',
+  ],
+  severity: [
+    'Abhi ye kitna severe lag raha hai, agar 1 se 10 me batayein?',
+    'Pain ya discomfort ki intensity 1-10 me kitni hogi?',
+    'Kya ye mild hai, moderate hai, ya kaafi zyada takleef de raha hai?',
+  ],
+  associated: [
+    'Iske saath aur kya symptoms aa rahe hain?',
+    'Saath me fever, nausea, breathing issue, ya koi aur complaint bhi hai kya?',
+    'Kya iske alawa koi aur related symptom notice hua hai?',
+  ],
+  medicationContext: [
+    'Ab tak iske liye koi medicine li hai kya?',
+    'Koi allergy, regular medicine, ya purani bimari ka history hai kya?',
+    'Aap abhi koi tablets, inhaler, BP/diabetes medicine, ya aur treatment le rahe hain kya?',
+  ],
+}
+
+type TriageReplyLanguage = 'devanagari_hindi' | 'roman_hindi' | 'english'
+
+const ROMAN_HINDI_HINTS = [
+  /\b(kya|hai|nahi|mujhe|mera|meri|mere|kab|kitna|saath|dard|bukhar|khansi|pet|pait|saans|ulti|dawai|takleef|abhi|aur)\b/i,
+  /\b(kaafi|zyada|thoda|kabse|kaunsa|kaunse|samajh|batayein|bataye|chal raha|ho raha)\b/i,
 ]
 
-const isLikelyHinglish = (text: string): boolean => TRIAGE_LANGUAGE_HINTS.some((pattern) => pattern.test(text || ''))
+const ENGLISH_HINTS = [
+  /\b(when|where|what|which|how|pain|fever|cough|breathing|symptom|symptoms|medicine|allergy|severity|history|doctor)\b/i,
+]
 
-const getTriageQuestionTemplate = (profile: ConcernTriageProfile, slot: TriageQuestionSlot): string => {
+const detectTriageReplyLanguage = (text: string): TriageReplyLanguage => {
+  const sourceText = String(text || '').trim()
+  if (!sourceText) return 'english'
+  if (looksDevanagari(sourceText)) return 'devanagari_hindi'
+  if (ROMAN_HINDI_HINTS.some((pattern) => pattern.test(sourceText))) return 'roman_hindi'
+  if (ENGLISH_HINTS.some((pattern) => pattern.test(sourceText))) return 'english'
+  return 'english'
+}
+
+const getDeterministicVariantIndex = (seed: string, modulo: number): number => {
+  if (!seed || modulo <= 1) return 0
+  let hash = 0
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0
+  }
+  return hash % modulo
+}
+
+const extractRecentClinicalContext = (text: string): string => {
+  const normalizedText = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!normalizedText) return ''
+  const clinicalFragments = [
+    /(?:have|having|with|about|regarding)\s+([A-Za-z][A-Za-z\s-]{3,40})/i,
+    /(?:mujhe|mere ko|mera|meri|mere|mene|main)\s+([A-Za-z][A-Za-z\s-]{3,40})/i,
+    /(?:मुझे|मेरे|मेरी|मेरा)\s+([\u0900-\u097F\s-]{3,40})/i,
+    /\b(fever|bukhar|cough|khansi|cold|headache|migraine|chest pain|breathing issue|stomach pain|pet dard|pait dard|rash|allergy|urine problem|diabetes|sugar|bp|blood pressure|thyroid|injury|fracture)\b/i,
+  ]
+
+  for (const pattern of clinicalFragments) {
+    const match = normalizedText.match(pattern)
+    const captured = typeof match?.[1] === 'string' ? match[1] : typeof match?.[0] === 'string' ? match[0] : ''
+    const cleaned = captured.replace(/\b(i have|i am having|mujhe|मेरे|मेरी|मेरा)\b/gi, '').trim()
+    if (cleaned.length >= 4) return cleaned.slice(0, 48)
+  }
+
+  return normalizedText.split(/[,.!?]/)[0]?.trim().slice(0, 48) || normalizedText.slice(0, 48)
+}
+
+const guidanceToEnglishQuestion = (guidance: string, fallback: string): string => {
+  const cleaned = String(guidance || '')
+    .replace(/^ask\s+/i, '')
+    .replace(/\.$/, '')
+    .trim()
+
+  if (!cleaned) return fallback
+  if (/^(when|what|which|how|is|are|do|did|does|have|has|can|could|would|will)\b/i.test(cleaned)) {
+    return `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}?`
+  }
+  return `Can you tell me ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}?`
+}
+
+const buildDoctorLikeQuestion = (args: {
+  profile: ConcernTriageProfile
+  slot: TriageQuestionSlot
+  concernText?: string
+  latestMessageText?: string
+  history?: any[]
+  language: TriageReplyLanguage
+}): string => {
+  const seed = `${args.profile.id}|${args.slot}|${args.latestMessageText || ''}|${args.concernText || ''}`
+  const openerPool = TRIAGE_SLOT_OPENERS[args.slot]
+  const variantPool = TRIAGE_SLOT_VARIANTS[args.slot]
+  const opener = openerPool[getDeterministicVariantIndex(seed, openerPool.length)] || ''
+  const variant = variantPool[getDeterministicVariantIndex(`${seed}|variant`, variantPool.length)] || ''
+  const templateQuestion = getTriageQuestionTemplate(args.profile, args.slot)
+  const profileGuidance = args.profile[args.slot] || ''
+  const recentContext = extractRecentClinicalContext(args.latestMessageText || args.concernText || '')
+  const mentionContext =
+    recentContext &&
+    recentContext.length >= 4 &&
+    !normalize(variant).includes(normalize(recentContext)) &&
+    !normalize(templateQuestion).includes(normalize(recentContext))
+
+  if (args.language === 'roman_hindi') {
+    const baseQuestion = templateQuestion || variant
+    if (mentionContext) {
+      return `${opener}, aapne "${recentContext}" bataya hai, isliye ${baseQuestion}`
+    }
+    return `${opener}, ${baseQuestion}`
+  }
+
+  if (args.language === 'devanagari_hindi') {
+    const devanagariLead = {
+      onset: 'पहले समय-रेखा समझ लेते हैं',
+      severity: 'क्लिनिकल severity समझने के लिए यह बताइए',
+      associated: 'साथ के symptoms भी जानना जरूरी है',
+      medicationContext: 'सुरक्षित सलाह के लिए medicine history भी बताइए',
+    }[args.slot]
+
+    const devanagariVariant = {
+      onset: 'यह दिक्कत आपको कब से शुरू हुई है?',
+      severity: 'अभी यह तकलीफ 1 से 10 में कितनी लगेगी?',
+      associated: 'इसके साथ और कौन से symptoms हो रहे हैं?',
+      medicationContext: 'अब तक कोई medicine ली है, या allergy / पुरानी बीमारी का history है?',
+    }[args.slot]
+
+    if (mentionContext) {
+      return `${devanagariLead}, "${recentContext}" के हिसाब से ${devanagariVariant}`
+    }
+    return `${devanagariLead}, ${devanagariVariant}`
+  }
+
+  const englishLead = {
+    onset: 'To understand the timeline better',
+    severity: 'To judge the clinical severity properly',
+    associated: 'To understand the full symptom pattern',
+    medicationContext: 'To keep the advice medically safe',
+  }[args.slot]
+
+  const englishVariant = {
+    onset: 'when did this problem begin, and is it still ongoing right now?',
+    severity: 'how severe is it at the moment, roughly on a 1 to 10 scale?',
+    associated: 'what other symptoms are happening along with this?',
+    medicationContext: 'have you taken any medicines already, or do you have allergies or ongoing conditions?',
+  }[args.slot]
+  const concernSpecificEnglishQuestion = guidanceToEnglishQuestion(profileGuidance, englishVariant)
+
+  if (mentionContext) {
+    return `${englishLead}, with "${recentContext}" in mind, ${concernSpecificEnglishQuestion.charAt(0).toLowerCase()}${concernSpecificEnglishQuestion.slice(1)}`
+  }
+  return `${englishLead}, ${concernSpecificEnglishQuestion.charAt(0).toLowerCase()}${concernSpecificEnglishQuestion.slice(1)}`
+}
+
+export const getTriageQuestionTemplate = (profile: ConcernTriageProfile, slot: TriageQuestionSlot): string => {
   const profileTemplates = TRIAGE_QUESTION_TEMPLATES[profile.id]
   return profileTemplates?.[slot] || TRIAGE_DEFAULT_TEMPLATES[slot]
 }
 
-const detectTriageQuestionSlot = (text: string): TriageQuestionSlot | null => {
+export const detectTriageQuestionSlot = (text: string): TriageQuestionSlot | null => {
   const normalized = normalize(text || '')
   if (!normalized) return null
   for (const slot of TRIAGE_SLOT_ORDER) {
@@ -769,7 +942,7 @@ const detectTriageQuestionSlot = (text: string): TriageQuestionSlot | null => {
   return null
 }
 
-const getLastAssistantQuestionSlot = (history: any[]): TriageQuestionSlot | null => {
+export const getLastAssistantQuestionSlot = (history: any[]): TriageQuestionSlot | null => {
   const recentAssistantQuestions = (history || [])
     .filter((item) => item?.role === 'assistant' && typeof item?.content === 'string' && item.content.includes('?'))
     .slice(-4)
@@ -822,12 +995,32 @@ export const buildTriageFollowUpReply = (args: {
 
   const latestSlot = missingSlots[0]
   const secondSlot = args.voiceMode ? null : missingSlots[1] || null
-  const questions = [getTriageQuestionTemplate(profile, latestSlot)]
-  if (secondSlot) questions.push(getTriageQuestionTemplate(profile, secondSlot))
+  const language = detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)
+  const questions = [buildDoctorLikeQuestion({
+    profile,
+    slot: latestSlot,
+    concernText: args.concernText,
+    latestMessageText: args.latestMessageText,
+    history,
+    language,
+  })]
+  if (secondSlot) {
+    questions.push(buildDoctorLikeQuestion({
+      profile,
+      slot: secondSlot,
+      concernText: args.concernText,
+      latestMessageText: args.latestMessageText,
+      history,
+      language,
+    }))
+  }
 
-  const lead = isLikelyHinglish(`${args.concernText || ''} ${args.latestMessageText || ''}`)
-    ? 'Samajh gaya.'
-    : 'Understood.'
+  const lead =
+    language === 'devanagari_hindi'
+      ? 'समझ गया।'
+      : language === 'roman_hindi'
+        ? 'Samajh gaya.'
+        : 'Understood.'
   const reply = secondSlot
     ? `${lead} ${questions[0]} ${questions[1]}`
     : `${lead} ${questions[0]}`

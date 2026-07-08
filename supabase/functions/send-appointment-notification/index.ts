@@ -3,6 +3,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 // @ts-ignore: Remote ESM import is resolved in Deno runtime.
 import { PDFDocument, StandardFonts, degrees, rgb } from "https://esm.sh/pdf-lib@1.17.1";
+import { detectTriageQuestionSlot, getConcernTriageProfile, getTriageQuestionTemplate } from "../chat-ai/shared.ts";
 
 declare const Deno: {
   env: {
@@ -378,6 +379,17 @@ const normalizeHistory = (value: unknown): TriageHistoryItem[] => {
   const finalHistory = clinicallyRelevant.length >= 6 ? clinicallyRelevant : normalized;
 
   return finalHistory.slice(-24);
+};
+
+const choosePreferredHistory = (
+  primary: TriageHistoryItem[],
+  secondary: TriageHistoryItem[],
+): TriageHistoryItem[] => {
+  const primaryUserTurns = primary.filter((item) => item.role === "user").length;
+  const secondaryUserTurns = secondary.filter((item) => item.role === "user").length;
+  if (secondaryUserTurns > primaryUserTurns) return secondary;
+  if (secondary.length > primary.length + 2) return secondary;
+  return primary.length > 0 ? primary : secondary;
 };
 
 const toDisplayText = (value: unknown, fallback = "Not available"): string => {
@@ -1480,6 +1492,22 @@ const isClinicalValueMissing = (value: string): boolean => {
   );
 };
 
+const normalizeTranscriptNoise = (value: string): string =>
+  String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[_*#`~]+/g, " ")
+    .replace(/[|/]+/g, " ")
+    .replace(/\b(umm+|uhh+|hmm+|matlab|like|you know)\b/gi, " ")
+    .replace(/([a-z])\1{2,}/gi, "$1$1")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const splitClinicalClauses = (value: string): string[] =>
+  normalizeTranscriptNoise(value)
+    .split(/\s*(?:[,.!?;]+|\band\b|\baur\b|\blekin\b|\bbut\b)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3);
+
 const matchFirstPattern = (text: string, patterns: RegExp[]): string | null => {
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -1487,6 +1515,16 @@ const matchFirstPattern = (text: string, patterns: RegExp[]): string | null => {
     const raw = typeof match[1] === "string" && match[1].trim() ? match[1] : match[0];
     const normalized = normalizeInlineText(raw);
     if (normalized) return normalized;
+  }
+  return null;
+};
+
+const matchFirstPatternAcrossSegments = (text: string, patterns: RegExp[]): string | null => {
+  const direct = matchFirstPattern(text, patterns);
+  if (direct) return direct;
+  for (const segment of splitClinicalClauses(text)) {
+    const match = matchFirstPattern(segment, patterns);
+    if (match) return match;
   }
   return null;
 };
@@ -1508,17 +1546,57 @@ const CLINICAL_SYMPTOM_RULES: Array<{ regex: RegExp; label: string }> = [
   { regex: /\b(dizziness|vertigo|faint)\b/i, label: "Dizziness" },
 ];
 
+const NEGATION_PATTERN = /\b(no|not|denies?|without|never|nahin|nahi|na|mat|none)\b/i;
+
+const hasNegatedMatch = (text: string, regex: RegExp): boolean => {
+  const source = String(text || "");
+  const flags = regex.flags.includes("g") ? regex.flags : `${regex.flags}g`;
+  const matcher = new RegExp(regex.source, flags);
+  let match: RegExpExecArray | null = null;
+
+  while ((match = matcher.exec(source)) !== null) {
+    const start = Math.max(0, match.index - 28);
+    const context = source.slice(start, match.index);
+    if (NEGATION_PATTERN.test(context)) return true;
+  }
+
+  return false;
+};
+
 const extractAssociatedSymptoms = (text: string): string[] => {
-  const combined = (text || "").toLowerCase();
+  const combined = normalizeTranscriptNoise(text).toLowerCase();
   if (!combined.trim()) return [];
-  return CLINICAL_SYMPTOM_RULES
-    .filter((entry) => entry.regex.test(combined))
+  const labels = CLINICAL_SYMPTOM_RULES
+    .filter((entry) => entry.regex.test(combined) && !hasNegatedMatch(combined, entry.regex))
     .map((entry) => entry.label)
     .slice(0, 8);
+  return Array.from(new Set(labels));
+};
+
+const extractMedicationMentions = (text: string): string[] => {
+  const combined = normalizeTranscriptNoise(text).toLowerCase();
+  const patterns = [
+    /\b(?:tab|tablet|cap|capsule|syrup|drops|spray|inhaler|insulin|injection)\s+([a-z][a-z0-9+\/ -]{2,60})\b/gi,
+    /\b([a-z][a-z0-9-]{2,40}(?:\s+[a-z0-9-]{1,20}){0,2})\s+(?:\d{2,4}\s*(?:mg|mcg|ml)|dose|tablet|tab|capsule|cap|syrup)\b/gi,
+    /\b([a-z][a-z0-9-]{2,40})\s+(?:li hai|liya hai|le raha|le rahi|use kiya|use ki hai|started|continue kar raha)\b/gi,
+  ];
+
+  const found: string[] = [];
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null = null;
+    while ((match = pattern.exec(combined)) !== null) {
+      const candidate = normalizeInlineText(match[1] || "", 80);
+      if (!candidate) continue;
+      if (/\b(no|not|nahi|nahin|none)\b/i.test(candidate)) continue;
+      found.push(candidate);
+    }
+  }
+
+  return Array.from(new Set(found)).slice(0, 3);
 };
 
 const extractMedicationContext = (text: string): string => {
-  const combined = (text || "").toLowerCase();
+  const combined = normalizeTranscriptNoise(text).toLowerCase();
   if (!combined.trim()) return "Not captured from chat.";
   const explicitNoMeds =
     matchFirstPattern(combined, [
@@ -1530,9 +1608,18 @@ const extractMedicationContext = (text: string): string => {
     /\b(taking|using|on)\s+([a-z0-9,\s-]{3,80})/i,
     /\b(medicine|medication|tablet|dawai|dava)\s*[:\-]?\s*([a-z0-9,\s-]{3,80})/i,
   ]);
-  if (medsMentioned) return `Patient mentioned medication context: ${medsMentioned}.`;
+  const deniedAllergy =
+    /\b(no allergy|not allergic|allergy nahi|allergy nahin|koi allergy nahi|drug allergy nahi)\b/i.test(combined);
+  const medicationMentions = extractMedicationMentions(combined);
+  if (medsMentioned || medicationMentions.length > 0) {
+    const medText = medsMentioned || medicationMentions.join(", ");
+    return deniedAllergy
+      ? `Patient reported medicine use (${medText}) and denied drug allergy.`
+      : `Patient reported medicine use (${medText}).`;
+  }
 
-  const allergyMentioned = /\b(allergy|allergic)\b/i.test(combined);
+  if (deniedAllergy) return "Patient denied known drug allergy.";
+  const allergyMentioned = /\b(allergy|allergic)\b/i.test(combined) && !hasNegatedMatch(combined, /\b(allergy|allergic)\b/i);
   if (allergyMentioned) return "Patient mentioned allergy context.";
 
   return "Medicine/allergy context not clearly stated.";
@@ -1545,12 +1632,12 @@ const extractTriageSnapshot = (args: {
   const history = Array.isArray(args.history) ? args.history : [];
   const userLines = history.filter((item) => item.role === "user").map((item) => item.content);
   const assistantLines = history.filter((item) => item.role === "assistant").map((item) => item.content);
-  const combinedUser = userLines.join(" ");
+  const combinedUser = normalizeTranscriptNoise(userLines.join(" "));
   const combinedAssistant = assistantLines.join(" ").toLowerCase();
   const combinedLower = combinedUser.toLowerCase();
 
   const duration =
-    matchFirstPattern(combinedUser, [
+    matchFirstPatternAcrossSegments(combinedUser, [
       /\b((?:for|since)\s+[a-z0-9\s]{1,30})\b/i,
       /\b(last\s+\d+\s*(?:hour|hours|hr|hrs|day|days|week|weeks|month|months|year|years))\b/i,
       /\b(\d+\s*(?:day|days|week|weeks|month|months|year|years|din|hafte|hafta|mahina|mahine|saal))\b/i,
@@ -1560,12 +1647,13 @@ const extractTriageSnapshot = (args: {
     ]) || "Not clearly stated";
 
   const severity =
-    matchFirstPattern(combinedUser, [
+    matchFirstPatternAcrossSegments(combinedUser, [
       /\b(([1-9]|10)\s*\/\s*10)\b/i,
       /\b(mild|moderate|severe)\b/i,
       /\b([1-9]|10)\s*(?:out of|\/)\s*10\b/i,
       /\b(bahut zyada|zyada|high|intense)\b/i,
       /\b(light|kam|thoda)\b/i,
+      /\b(unbearable|worst|getting worse|bohot zyada)\b/i,
     ]) || "Not clearly stated";
 
   const associatedSymptoms = extractAssociatedSymptoms(combinedUser);
@@ -1607,7 +1695,7 @@ const extractTriageSnapshot = (args: {
   if (/(associated symptom|any other symptom|fever|cough|itching|aur koi symptom)/.test(combinedAssistant) && answeredTopics[2].value === "Not clearly stated") {
     answeredTopics[2].value = "Question asked, but answer not clearly captured.";
   }
-  if (/(medicine|medication|tablet|allergy|dawai|dava)/.test(combinedAssistant) && medicationContext === "Medicine/allergy context not clearly stated.") {
+  if (/(medicine|medication|tablet|allergy|dawai|dava)/.test(combinedAssistant) && isClinicalValueMissing(medicationContext)) {
     answeredTopics[3].value = "Question asked, but answer not clearly captured.";
   }
 
@@ -1692,12 +1780,19 @@ const buildCaptureCompletenessBadge = (snapshot: TriageSnapshot): ReportBadge =>
   return { label: "Capture Status", value: "Limited data", tone: "danger" };
 };
 
-const QA_PRIORITY_RULES: Array<{ label: string; pattern: RegExp }> = [
-  { label: "Onset / Duration", pattern: /\b(when did|how long|since when|duration|kab se|kitne din|kitni der)\b/i },
-  { label: "Severity", pattern: /\b(severity|severe|pain scale|scale of|1-10|1\/10|10\/10|kitna severe|kitni severity)\b/i },
-  { label: "Associated Symptoms", pattern: /\b(other symptom|associated symptom|aur koi symptom|fever|cough|itching|nausea|vomit)\b/i },
-  { label: "Medicine / Allergy Context", pattern: /\b(medicine|medication|tablet|allergy|dawai|dava)\b/i },
-];
+const TRIAGE_SLOT_LABELS: Record<"onset" | "severity" | "associated" | "medicationContext", string> = {
+  onset: "Onset / Duration",
+  severity: "Severity",
+  associated: "Associated Symptoms",
+  medicationContext: "Medicine / Allergy Context",
+};
+
+const ENGLISH_TRIAGE_SLOT_QUESTIONS: Record<"onset" | "severity" | "associated" | "medicationContext", string> = {
+  onset: "When did the main symptom begin, and is it still ongoing?",
+  severity: "How severe is the problem right now?",
+  associated: "What other symptoms are happening along with this?",
+  medicationContext: "What medicines have been taken already, and are there any allergies or relevant conditions?",
+};
 
 const QUESTION_PROMPT_PATTERNS: RegExp[] = [
   /\?/,
@@ -1733,6 +1828,44 @@ const cleanQuestionCandidate = (value: string, maxLength: number = 180): string 
       .trim(),
     maxLength,
   );
+
+const toProfessionalEnglishAnswer = (value: string): string => {
+  let text = normalizeInlineText(normalizeTranscriptNoise(value), 220);
+  if (!text) return "Answer not clearly captured before booking.";
+
+  const replacements: Array<[RegExp, string]> = [
+    [/\bhaan\b/gi, "yes"],
+    [/\bhan\b/gi, "yes"],
+    [/\bnahi\b/gi, "no"],
+    [/\bnahin\b/gi, "no"],
+    [/\bbukhar\b/gi, "fever"],
+    [/\bkhansi\b/gi, "cough"],
+    [/\bsaans\b/gi, "breathing"],
+    [/\bpet dard\b/gi, "stomach pain"],
+    [/\bpait dard\b/gi, "stomach pain"],
+    [/\bdard\b/gi, "pain"],
+    [/\bulti\b/gi, "vomiting"],
+    [/\bsubah se\b/gi, "since morning"],
+    [/\bkal raat se\b/gi, "since last night"],
+    [/\baaj se\b/gi, "since today"],
+    [/\bzyada\b/gi, "more"],
+    [/\bthoda\b/gi, "mild"],
+    [/\bbaar baar urine\b/gi, "frequent urination"],
+    [/\bpyaas\b/gi, "thirst"],
+    [/\bpet\b/gi, "stomach"],
+    [/\bsaath me\b/gi, "along with"],
+    [/\bchal raha hai\b/gi, "has been continuing"],
+    [/\bho raha hai\b/gi, "is happening"],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    text = text.replace(pattern, replacement);
+  }
+
+  text = text.replace(/\s+/g, " ").trim();
+  if (!/[.?!]$/.test(text)) text = `${text}.`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
 
 const extractPromptSegment = (value: string): string => {
   const match = cleanQuestionCandidate(value, 300).match(
@@ -1775,6 +1908,7 @@ const findNearestUserAnswer = (
   questionIndex: number,
   maxLookAhead: number = 6,
 ): string => {
+  const fragments: string[] = [];
   for (
     let index = questionIndex + 1;
     index < history.length && index <= questionIndex + maxLookAhead;
@@ -1784,41 +1918,52 @@ const findNearestUserAnswer = (
     if (!item || typeof item.content !== "string") continue;
 
     if (item.role === "user" && item.content.trim()) {
-      return normalizeInlineText(item.content, 220);
+      fragments.push(normalizeInlineText(item.content, 120));
+      const joined = fragments.join(" ");
+      if (joined.split(/\s+/).length >= 5 || /[.?!]|\/10\b|\b(no|yes|nahi|haan)\b/i.test(joined)) {
+        return toProfessionalEnglishAnswer(joined);
+      }
+      continue;
     }
 
     if (item.role === "assistant" && index > questionIndex + 1 && /\?/.test(item.content)) {
       break;
     }
   }
-  return "Answer not clearly captured before booking.";
+  return fragments.length
+    ? toProfessionalEnglishAnswer(fragments.join(" "))
+    : "Answer not clearly captured before booking.";
 };
 
-const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], maxPairs: number = 6): string[] => {
+const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concernText: string, maxPairs: number = 6): string[] => {
   const history = Array.isArray(historyInput) ? historyInput : [];
   if (!history.length) {
     return ["No AI/voice chat transcript attached for this booking."];
   }
 
+  const profile = getConcernTriageProfile(concernText);
   const pairs: ChatQaPair[] = [];
   const seen = new Set<string>();
+  const seenSlots = new Set<string>();
 
-  for (const rule of QA_PRIORITY_RULES) {
-    const questionIndex = history.findIndex(
-      (item) => item.role === "assistant" && rule.pattern.test(item.content || ""),
-    );
-    if (questionIndex < 0) continue;
+  for (let questionIndex = 0; questionIndex < history.length && pairs.length < maxPairs; questionIndex += 1) {
+    const item = history[questionIndex];
+    if (item.role !== "assistant" || typeof item.content !== "string" || !item.content.includes("?")) continue;
 
-    const rawQuestion = extractQuestionText(history[questionIndex].content || "");
+    const slot = detectTriageQuestionSlot(item.content || "");
+    if (!slot || seenSlots.has(slot)) continue;
+
+    const rawQuestion = ENGLISH_TRIAGE_SLOT_QUESTIONS[slot] || extractQuestionText(item.content || "") || getTriageQuestionTemplate(profile, slot);
     if (!rawQuestion) continue;
     const answer = findNearestUserAnswer(history, questionIndex);
     if (!isHealthQaPair(rawQuestion, answer)) continue;
-    const fingerprint = buildQuestionFingerprint(rawQuestion);
+    const fingerprint = buildQuestionFingerprint(`${slot}:${rawQuestion}`);
     if (!fingerprint || seen.has(fingerprint)) continue;
 
     seen.add(fingerprint);
+    seenSlots.add(slot);
     pairs.push({
-      question: `${rule.label}: ${rawQuestion}`,
+      question: `${TRIAGE_SLOT_LABELS[slot]}: ${rawQuestion}`,
       answer,
       source: "priority",
     });
@@ -1851,7 +1996,7 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], maxPai
         return HEALTH_QA_PATTERN.test(text) && !isBookingOrSelectionText(text);
       })
       .slice(-4)
-      .map((item, idx) => `Patient note ${idx + 1}: ${normalizeInlineText(item.content, 120)}`);
+      .map((item, idx) => `Patient note ${idx + 1}: ${toProfessionalEnglishAnswer(item.content)}`);
 
     return patientNotes.length
       ? patientNotes
@@ -2107,7 +2252,7 @@ const ensureAppointmentTriageReport = async (args: {
       : null;
 
   let concern = payloadConcern || normalizeConcern(existingReport?.concern);
-  let history = payloadHistory.length ? payloadHistory : existingReportHistory;
+  let history = choosePreferredHistory(payloadHistory, existingReportHistory);
 
   if (
     payloadHistory.length > 0 &&
@@ -2124,7 +2269,7 @@ const ensureAppointmentTriageReport = async (args: {
       conversationId: payloadConversationId,
     });
     if (fromConversation.history.length) {
-      history = fromConversation.history;
+      history = choosePreferredHistory(history, fromConversation.history);
     }
     if (!concern && fromConversation.concern) {
       concern = normalizeConcern(fromConversation.concern);
@@ -2137,7 +2282,7 @@ const ensureAppointmentTriageReport = async (args: {
       userId: args.appointment.patient_id,
     });
     if (fromLatest.history.length) {
-      history = fromLatest.history;
+      history = choosePreferredHistory(history, fromLatest.history);
     }
     if (!concern && fromLatest.concern) {
       concern = normalizeConcern(fromLatest.concern);
@@ -2176,7 +2321,7 @@ const ensureAppointmentTriageReport = async (args: {
   const slot = args.appointment?.slot as { date?: string | null; start_time?: string | null; end_time?: string | null } | null;
   const slotLabel = formatSlotLabel(slot?.date || null, slot?.start_time || null);
   const triageSnapshot = extractTriageSnapshot({ concern, history });
-  const qaSnapshotLines = buildVoiceChatQaSnapshotLines(history, 4);
+  const qaSnapshotLines = buildVoiceChatQaSnapshotLines(history, concern, 4);
   const aiChatTimelineLines = buildAiChatTimelineLines(history, 6);
 
   let pdfBytes: Uint8Array | null = null;
@@ -2773,4 +2918,3 @@ Deno.serve(async (req: Request) => {
     });
   }
 });
-

@@ -1070,6 +1070,9 @@ export const runAutonomousToolLoop = async (args: any) => {
     const pendingProposalSlotOptions = Array.isArray(args.pendingBookingProposal?.slotOptions)
       ? args.pendingBookingProposal.slotOptions
       : []
+    const pendingProposalDoctorId = typeof args.pendingBookingProposal?.doctorId === 'string'
+      ? args.pendingBookingProposal.doctorId
+      : ''
     const pendingProposalSelectedSlotId = typeof args.pendingBookingProposal?.selectedSlotId === 'string'
       ? args.pendingBookingProposal.selectedSlotId
       : ''
@@ -1137,6 +1140,12 @@ export const runAutonomousToolLoop = async (args: any) => {
       }
     }
 
+    const pendingProposalMatchesTargetDoctor = Boolean(
+      pendingProposalDoctorId &&
+      targetDoctorId &&
+      pendingProposalDoctorId === targetDoctorId
+    )
+
     if (!targetDoctorId) {
       bookingPrep = { status: 'incomplete', message: 'Please tell me which doctor you want to book with.' }
     } else {
@@ -1164,10 +1173,13 @@ export const runAutonomousToolLoop = async (args: any) => {
       }
       // Resolve specific slot or list options
       const slots = await fetchAvailableSlots({ doctorId: targetDoctorId, serviceClient: args.serviceClient })
-      const slotHistoryPool = Array.isArray(args.historyBookingSlotOptions) && args.historyBookingSlotOptions.length > 0
+      const slotHistoryPool = pendingProposalMatchesTargetDoctor && Array.isArray(args.historyBookingSlotOptions) && args.historyBookingSlotOptions.length > 0
         ? args.historyBookingSlotOptions
-        : pendingProposalSlotOptions
+        : pendingProposalMatchesTargetDoctor
+          ? pendingProposalSlotOptions
+          : []
       const hasPriorSlotContext = slotHistoryPool.length > 0 || Boolean(pendingProposalSelectedSlotId)
+      const hasExplicitFirstSlotSignal = /\b(first|1st|earliest|pehla|pahla|sabse pehla|pehle wala)\b/.test(normalizedLatestMessage)
 
       if (slots.length === 0) {
         bookingPrep = { status: 'no_slots' }
@@ -1211,8 +1223,8 @@ export const runAutonomousToolLoop = async (args: any) => {
           }
         }
 
-        // If the user confirms/requests booking and no specific slot was resolved, auto-pick the first available slot.
-        if (!mentionedSlotId && confirmationLike && slots.length > 0) {
+        // Only auto-pick the first slot when the user explicitly asks for the first/earliest option.
+        if (!mentionedSlotId && confirmationLike && hasExplicitFirstSlotSignal && slots.length > 0) {
           mentionedSlotId = slots[0]._id
         }
 
@@ -1774,24 +1786,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     }
   }
 
-  // Step 2: City-only fallback.
-  // If the exact city+specialty search is empty, stay within the same city before widening scope.
-  if (doctors.length === 0 && city) {
-    recommendationMode = 'local_any'
-    const { data } = await args.serviceClient
-      .from('doctors')
-      .select('*, profiles(first_name, last_name, profile_picture)')
-      .ilike('city', cityLike!)
-      .order('is_verified', { ascending: false })
-      .limit(6)
-
-    if (data && data.length > 0) {
-      doctors = data
-      meta.localCityVisible = true
-    }
-  }
-
-  // Step 3: Related Specialty fallback inside the same city.
+  // Step 2: Related Specialty fallback inside the same city.
   // If the exact specialty is unavailable locally, try the closest related local specialists next.
   if (doctors.length === 0 && city && resolvedDepartment?.id) {
     const relatedIds = RELATED_DEPARTMENT_IDS[resolvedDepartment.id] || ['kayachikitsa']
@@ -1819,8 +1814,9 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     }
   }
 
-  // Step 4: Specialty-only fallback across the app.
-  // Only widen to the whole app after local options are exhausted.
+  // Step 3: Specialty-only fallback across the app.
+  // If the requested specialist is not available in this city, prefer the same
+  // specialty from another city over unrelated local doctors.
   if (doctors.length === 0 && specialty) {
     const specialtyFilter = buildSpecializationOrFilter(exactDepartmentTerms)
     let query = args.serviceClient
@@ -1843,7 +1839,24 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     }
   }
 
-  // Step 5: Global App Fallback (if nothing local or specialty-matched exists, show all verified doctors).
+  // Step 4: City-only fallback.
+  // Only if there is still no exact/related/app-wide specialist match, show other local doctors.
+  if (doctors.length === 0 && city) {
+    recommendationMode = 'local_any'
+    const { data } = await args.serviceClient
+      .from('doctors')
+      .select('*, profiles(first_name, last_name, profile_picture)')
+      .ilike('city', cityLike!)
+      .order('is_verified', { ascending: false })
+      .limit(6)
+
+    if (data && data.length > 0) {
+      doctors = data
+      meta.localCityVisible = true
+    }
+  }
+
+  // Step 5: Global App Fallback (if nothing specialty-matched or local exists, show all verified doctors).
   if (doctors.length === 0) {
     recommendationMode = 'all_app'
     const { data } = await args.serviceClient

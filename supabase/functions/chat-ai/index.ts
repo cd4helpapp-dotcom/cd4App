@@ -47,6 +47,7 @@ import {
   hasSmartBookingPrepareSignal,
   hasSmartBookingConfirmationSignal,
   buildTriageFollowUpReply,
+  getLastAssistantQuestionSlot,
   BOOKING_PREPARE_INTENT_TERMS,
   BOOKING_CONFIRMATION_TERMS,
   BOOKING_DECLINE_TERMS,
@@ -138,6 +139,34 @@ const buildRollingSummary = (
   const latestTurn = `Latest turn:\nUser: ${userLine}\nAssistant: ${aiLine}`
   const merged = prev ? `${prev}\n${latestTurn}` : latestTurn
   return keepLastChars(merged, summaryLimit)
+}
+
+const hasDurationAnswerSignal = (text: string): boolean =>
+  /\b\d+\s*(minute|minutes|min|mins|hour|hours|hr|hrs|day|days|week|weeks|month|months|din|dino|dinon|ghanta|ghante|hafta|hafte|mahina|mahine)\b/.test(
+    normalize(text || ''),
+  ) || hasAnyTerm(normalize(text || ''), ['kab se', 'since', 'started', 'aaj se', 'kal se', 'subah se', 'shaam se', 'raat se'])
+
+const hasSeverityAnswerSignal = (text: string): boolean => {
+  const normalizedText = normalize(text || '')
+  return (
+    hasAnyTerm(normalizedText, ['mild', 'moderate', 'severe', 'zyada', 'bahut', 'bohot', 'unbearable']) ||
+    /\b([1-9]|10)\s*\/\s*10\b/.test(normalizedText) ||
+    /\b(temperature|temp|fever)\s*(is|:)?\s*\d{2,3}(\.\d)?\b/.test(normalizedText) ||
+    /\b([1-9]|10)\b/.test(normalizedText)
+  )
+}
+
+const enrichCoverageFromLatestTurn = (coverage: any, history: any[], latestMessageText: string): any => {
+  const nextCoverage = { ...(coverage || {}) }
+  const lastAssistantSlot = getLastAssistantQuestionSlot(Array.isArray(history) ? history : [])
+  if (lastAssistantSlot === 'onset' && hasDurationAnswerSignal(latestMessageText)) {
+    nextCoverage.onset = true
+  }
+  if (lastAssistantSlot === 'severity' && hasSeverityAnswerSignal(latestMessageText)) {
+    nextCoverage.severity = true
+  }
+  nextCoverage.covered = [nextCoverage.onset, nextCoverage.severity, nextCoverage.associated, nextCoverage.medicationContext].filter(Boolean).length
+  return nextCoverage
 }
 
 const CONSULT_FOLLOWUP_INTENT_REGEX =
@@ -486,7 +515,7 @@ Deno.serve(async (req) => {
       scope_reason: null,
       scope_model: null,
     }
-    const historyHasBookingContext = Array.isArray(payload?.history)
+    let historyHasBookingContext = Array.isArray(payload?.history)
       ? payload.history.some((item: any) =>
           item?.role === 'assistant' && (
             (Array.isArray(item?.bookingSlotOptions) && item.bookingSlotOptions.length > 0) ||
@@ -563,7 +592,11 @@ Deno.serve(async (req) => {
     }
     const messageDepartmentMatch = resolveMessageDepartmentMatch(messageText)
     const concernDepartmentMatch = likelyDoctorSearchFromText ? null : resolveMessageDepartmentMatch(concernText)
-    const heuristicDepartmentMatch = messageDepartmentMatch || concernDepartmentMatch
+    const symptomDrivenDepartmentMatch =
+      likelyDoctorSearchFromText && hasSymptomSignal(messageText)
+        ? resolveMessageDepartmentMatch(`${messageText} ${concernText}`)
+        : null
+    const heuristicDepartmentMatch = messageDepartmentMatch || symptomDrivenDepartmentMatch || concernDepartmentMatch
     const hasExplicitSpecialtyInLatestMessage = Boolean(messageDepartmentMatch)
     const genericDoctorDirectoryQueryHint =
       explicitAppWideDoctorDirectoryIntent ||
@@ -648,8 +681,8 @@ Deno.serve(async (req) => {
     const memoryRecord = fastResponseRequested
       ? { summary: '', keyFacts: [] as any[] }
       : await readConversationMemory({ serviceClient, conversationId, userId })
-    const pendingBookingProposal = readPendingBookingProposal(memoryRecord.keyFacts || [])
-    let triageCoverage = getTriageCoverage(combinedUserText)
+    let pendingBookingProposal = readPendingBookingProposal(memoryRecord.keyFacts || [])
+    let triageCoverage = enrichCoverageFromLatestTurn(getTriageCoverage(combinedUserText), history, messageText)
     if (!fastResponseRequested) {
       const storedCoverageCount = extractStoredCoverageCount(memoryRecord.summary || '')
       const mergedCoverage = mergeTriageCoverage(triageCoverage, getTriageCoverage(memoryRecord.summary || ''))
@@ -703,6 +736,20 @@ Deno.serve(async (req) => {
       isFollowupBookingConfirmation ||
       (aiIntent === null && hasAnyTerm(latestUserText, BOOKING_CONFIRMATION_TERMS))
     const bookingIntent = bookingPrepareIntent || bookingConfirmIntent
+    const sameDoctorReferenceSignal = /\b(same doctor|this doctor|that doctor|selected doctor|wahi doctor|isi doctor|is doctor|ye doctor|unhi doctor|doctor hi)\b/.test(
+      latestUserText || '',
+    )
+    const freshSymptomDoctorRedirect =
+      doctorSearchIntent &&
+      !bookingIntent &&
+      hasSymptomSignal(messageText) &&
+      !sameDoctorReferenceSignal &&
+      !hasAnyTerm(latestUserText, GENERIC_SEARCH_FOLLOWUP_TERMS)
+
+    if (freshSymptomDoctorRedirect) {
+      historyHasBookingContext = false
+      pendingBookingProposal = null
+    }
     
     const toolIntent = { 
       records: recordToolIntent, 
@@ -800,8 +847,12 @@ Deno.serve(async (req) => {
     let bookingConfirmation = null
     let autonomousResult = null
 
-    const historyDoctorRecommendations = getLatestAssistantContextArray(payload?.history, 'doctorRecommendations')
-    const historyBookingSlotOptions = getLatestAssistantContextArray(payload?.history, 'bookingSlotOptions')
+    const historyDoctorRecommendations = freshSymptomDoctorRedirect
+      ? []
+      : getLatestAssistantContextArray(payload?.history, 'doctorRecommendations')
+    const historyBookingSlotOptions = freshSymptomDoctorRedirect
+      ? []
+      : getLatestAssistantContextArray(payload?.history, 'bookingSlotOptions')
 
     const shouldRunAutonomousTools = AUTONOMOUS_AGENT_ENABLED && (
       !fastResponseRequested ||

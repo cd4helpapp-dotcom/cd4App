@@ -1,8 +1,7 @@
 import React from 'react';
-import { ScrollView, StyleSheet, useColorScheme } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
-import { HomeTabSkeleton } from './TabLoadingSkeletons';
 
 type RouteLoadingScreenProps = {
   message?: string;
@@ -19,18 +18,21 @@ export default function RouteLoadingScreen({ message = 'Preparing your workspace
       accessibilityLabel={message}
       style={[styles.container, { backgroundColor: theme.background }]}
     >
-      <ScrollView
-        contentContainerStyle={[
-          styles.skeletonWrap,
-          {
-            paddingTop: 8,
-            paddingBottom: Math.max(12, insets.bottom),
-          },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        <HomeTabSkeleton theme={theme} />
-      </ScrollView>
+      <View style={styles.centerWrap}>
+        <ActivityIndicator size="large" color={theme.tint} />
+        <Text
+          style={[
+            styles.message,
+            {
+              color: theme.textSecondary,
+              marginTop: 14,
+              marginBottom: Math.max(6, insets.bottom * 0.35),
+            },
+          ]}
+        >
+          {message}
+        </Text>
+      </View>
     </SafeAreaView>
   );
 }
@@ -39,7 +41,14 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  skeletonWrap: {
-    flexGrow: 1,
+  centerWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  message: {
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

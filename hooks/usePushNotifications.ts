@@ -117,6 +117,7 @@ export const usePushNotifications = () => {
     const handledResponseKeysRef = useRef<Set<string>>(new Set());
     const appStateRef = useRef<AppStateStatus>(AppState.currentState);
     const syncInFlightRef = useRef(false);
+    const bootSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastTokenSyncAtRef = useRef(0);
     const lastRegisteredTokenRef = useRef<string | undefined>(undefined);
 
@@ -485,6 +486,10 @@ export const usePushNotifications = () => {
     useEffect(() => {
         if (!user) {
             _activeAuthUserId = null;
+            if (bootSyncTimerRef.current) {
+                clearTimeout(bootSyncTimerRef.current);
+                bootSyncTimerRef.current = null;
+            }
             return;
         }
         _activeAuthUserId = user.id;
@@ -495,9 +500,15 @@ export const usePushNotifications = () => {
         });
 
         void configureNotificationCategories();
-        void syncPushTokenForUser(user.id, isPushEnabled, true);
+        bootSyncTimerRef.current = setTimeout(() => {
+            void syncPushTokenForUser(user.id, isPushEnabled, true);
+        }, 2200);
 
         return () => {
+            if (bootSyncTimerRef.current) {
+                clearTimeout(bootSyncTimerRef.current);
+                bootSyncTimerRef.current = null;
+            }
             if (_activeAuthUserId === user.id) {
                 _activeAuthUserId = null;
             }
@@ -636,4 +647,3 @@ async function registerForPushNotificationsAsync() {
 
     return token;
 }
-

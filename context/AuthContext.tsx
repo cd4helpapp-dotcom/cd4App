@@ -48,6 +48,7 @@ const buildFallbackUserFromSession = (
   const phoneNumber =
     (typeof metadata.phone_number === 'string' ? metadata.phone_number.trim() : '') ||
     (typeof metadata.phoneNumber === 'string' ? metadata.phoneNumber.trim() : '') ||
+    (typeof metadata.phone === 'string' ? metadata.phone.trim() : '') ||
     '';
   const profilePicture =
     typeof metadata.profile_picture === 'string'
@@ -81,6 +82,20 @@ const bootstrapE2EE = async (userId?: string | null) => {
   }
 };
 
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race<T>([
+      promise,
+      new Promise<T>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+};
+
 // Fetch profile first, then optional relations separately (safer across schema variants).
 const fetchUserProfile = async (userId: string, retries = 3): Promise<User | null> => {
   const PROFILE_SELECT = `
@@ -109,32 +124,34 @@ const fetchUserProfile = async (userId: string, retries = 3): Promise<User | nul
         continue;
       }
 
-      let roleSlug: User['role'] = 'Patient';
-      try {
-        if (profile.role_id) {
-          const { data: roleRow } = await supabase
-            .from('roles')
-            .select('slug')
-            .eq('id', profile.role_id)
-            .single();
-          roleSlug = normalizeRoleSlug(roleRow?.slug);
-        }
-      } catch {
-        roleSlug = 'Patient';
-      }
-
-      let subRow: any = null;
-      try {
-        const { data: subRows } = await supabase
-          .from('user_subscriptions')
-          .select('id, plan_code, billing_cycle, status, expires_at, next_billing_at, payment_id, amount_paid, currency, created_at')
-          .eq('user_id', userId)
-          .order('created_at', { ascending: false })
-          .limit(1);
-        subRow = Array.isArray(subRows) ? subRows[0] ?? null : null;
-      } catch {
-        subRow = null;
-      }
+      const [roleSlug, subRow] = await Promise.all([
+        (async (): Promise<User['role']> => {
+          try {
+            if (!profile.role_id) return 'Patient';
+            const { data: roleRow } = await supabase
+              .from('roles')
+              .select('slug')
+              .eq('id', profile.role_id)
+              .single();
+            return normalizeRoleSlug(roleRow?.slug);
+          } catch {
+            return 'Patient';
+          }
+        })(),
+        (async () => {
+          try {
+            const { data: subRows } = await supabase
+              .from('user_subscriptions')
+              .select('id, plan_code, billing_cycle, status, expires_at, next_billing_at, payment_id, amount_paid, currency, created_at')
+              .eq('user_id', userId)
+              .order('created_at', { ascending: false })
+              .limit(1);
+            return Array.isArray(subRows) ? subRows[0] ?? null : null;
+          } catch {
+            return null;
+          }
+        })(),
+      ]);
 
       let mappedSubscription: User['subscription'] | undefined;
       if (subRow) {
@@ -179,11 +196,15 @@ const fetchUserProfile = async (userId: string, retries = 3): Promise<User | nul
         updatedAt: profile.updated_at,
       };
 
-      mappedUser.profilePicture = await resolveStorageSignedUrl({
-        bucket: SUPABASE_PROFILE_MEDIA_BUCKET,
-        value: mappedUser.profilePicture,
-        ttlSeconds: 60 * 60 * 24 * 7,
-      });
+      mappedUser.profilePicture = await withTimeout(
+        resolveStorageSignedUrl({
+          bucket: SUPABASE_PROFILE_MEDIA_BUCKET,
+          value: mappedUser.profilePicture,
+          ttlSeconds: 60 * 60 * 24 * 7,
+        }),
+        450,
+        mappedUser.profilePicture
+      );
 
       return mappedUser;
     } catch (e) {

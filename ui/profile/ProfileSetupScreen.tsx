@@ -34,7 +34,13 @@ const splitName = (fullName: string): { firstName: string; lastName: string } =>
 };
 
 const ProfileSetupScreen: React.FC = () => {
-  const params = useLocalSearchParams<{ mode?: string | string[]; phone?: string | string[]; mobile?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    mode?: string | string[];
+    phone?: string | string[];
+    mobile?: string | string[];
+    phone_number?: string | string[];
+    phoneNumber?: string | string[];
+  }>();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'] as typeof Colors.light;
   const insets = useSafeAreaInsets();
@@ -46,6 +52,8 @@ const ProfileSetupScreen: React.FC = () => {
   const signupPhoneParam =
     (Array.isArray(params.phone) ? params.phone[0] : params.phone) ||
     (Array.isArray(params.mobile) ? params.mobile[0] : params.mobile) ||
+    (Array.isArray(params.phone_number) ? params.phone_number[0] : params.phone_number) ||
+    (Array.isArray(params.phoneNumber) ? params.phoneNumber[0] : params.phoneNumber) ||
     '';
 
   const [fullName, setFullName] = useState('');

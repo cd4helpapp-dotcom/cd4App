@@ -1,6 +1,6 @@
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState, useCallback } from 'react';
-import { View } from 'react-native';
+import { InteractionManager, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Stack, useRouter } from 'expo-router';
 import AnimatedSplash from '../ui/AnimatedSplash';
@@ -32,6 +32,7 @@ export default function RootLayout() {
   const router = useRouter();
   const [appReady, setAppReady] = useState(false);
   const [splashAnimationFinished, setSplashAnimationFinished] = useState(false);
+  const [heavyProvidersReady, setHeavyProvidersReady] = useState(false);
 
   useEffect(() => {
     async function prepare() {
@@ -47,10 +48,24 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (appReady) {
-      void requestLocationPermissionOnce();
-    }
-  }, [appReady]);
+    if (!appReady || !splashAnimationFinished) return;
+
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      setHeavyProvidersReady(true);
+      const timer = setTimeout(() => {
+        if (cancelled) return;
+        void requestLocationPermissionOnce();
+      }, 1200);
+
+      return () => clearTimeout(timer);
+    });
+
+    return () => {
+      cancelled = true;
+      task.cancel();
+    };
+  }, [appReady, splashAnimationFinished]);
 
 
   const onLayoutRootView = useCallback(async () => {
@@ -97,9 +112,13 @@ export default function RootLayout() {
                           <Stack.Screen name="(tabs)" />
                         </Stack>
                         <Toast />
-                        <GlobalCallObserver />
-                        <OngoingCallBanner />
-                        <GlobalCallPiP />
+                        {heavyProvidersReady && (
+                          <>
+                            <GlobalCallObserver />
+                            <OngoingCallBanner />
+                            <GlobalCallPiP />
+                          </>
+                        )}
                       </View>
                     </AppModeProvider>
                   </CallProvider>

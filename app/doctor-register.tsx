@@ -194,6 +194,7 @@ export default function DoctorRegisterScreen() {
           data: {
             first_name: formData.firstName.trim(),
             last_name: formData.lastName.trim(),
+            phone_number: formData.phoneNumber.trim(),
             phone: formData.phoneNumber.trim(),
             role: 'doctor', // Trigger will use this
             city: formData.city.trim(),
