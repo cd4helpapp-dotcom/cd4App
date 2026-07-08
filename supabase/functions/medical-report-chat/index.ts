@@ -11,8 +11,8 @@ function parseEnvInt(key: string, fallback: number): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback
 }
 
-const DEFAULT_OPENAI_MODEL = "gpt-5.4"
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4.1"
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o"
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 const AI_MESSAGE_LIMIT_PER_WINDOW = Math.max(10, Math.min(1000, parseEnvInt("CHAT_AI_MESSAGE_LIMIT_PER_WINDOW", 40)))
 const AI_BURST_LIMIT_MESSAGES = Math.max(2, Math.min(50, parseEnvInt("CHAT_AI_BURST_LIMIT_MESSAGES", 6)))

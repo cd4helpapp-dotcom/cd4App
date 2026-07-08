@@ -6,10 +6,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "gpt-4o-mini-tts"
-const DEFAULT_TTS_FALLBACK_MODEL = Deno.env.get("VOICE_MODEL_FALLBACK")?.trim() || "gpt-4o-mini-tts"
-const DEFAULT_STT_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL")?.trim() || "gpt-4o-transcribe"
-const DEFAULT_STT_FALLBACK_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL_FALLBACK")?.trim() || "gpt-4o-mini-transcribe"
+const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "tts-1"
+const DEFAULT_TTS_FALLBACK_MODEL = Deno.env.get("VOICE_MODEL_FALLBACK")?.trim() || "tts-1-hd"
+const DEFAULT_STT_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL")?.trim() || "whisper-1"
+const DEFAULT_STT_FALLBACK_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL_FALLBACK")?.trim() || "whisper-1"
 const DEFAULT_SCOPE_MODEL = Deno.env.get("VOICE_SCOPE_MODEL")?.trim() || "gpt-4o-mini"
 const DEFAULT_SCOPE_FALLBACK_MODEL = Deno.env.get("VOICE_SCOPE_MODEL_FALLBACK")?.trim() || "gpt-4o"
 const DEFAULT_AUDIO_MIME_TYPE = Deno.env.get("VOICE_AUDIO_MIME_TYPE")?.trim() || "audio/mpeg"
@@ -29,8 +29,8 @@ const FEMALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_FEMALE_VOICE") || "nova").trim
 const MALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_MALE_VOICE") || "onyx").trim() || "onyx"
 const VOICE_TTS_SPEED = Math.max(0.85, Math.min(1.25, Number(Deno.env.get("VOICE_TTS_SPEED") || "0.98")))
 const VOICE_TTS_STYLE = (Deno.env.get("VOICE_TTS_STYLE") || "Warm, natural, human conversational telemedicine tone. Speak clearly with gentle pacing, subtle pauses, and expressive but calm delivery. Avoid robotic cadence. Keep explanations clinically sensible and easy to understand.").trim()
-const VOICE_CHAT_TIMEOUT_MS = Math.max(2000, Math.min(15000, parseEnvInt("VOICE_CHAT_TIMEOUT_MS", 6500)))
-const VOICE_TTS_TIMEOUT_MS = Math.max(2000, Math.min(15000, parseEnvInt("VOICE_TTS_TIMEOUT_MS", 9000)))
+const VOICE_CHAT_TIMEOUT_MS = Math.max(2000, Math.min(45000, parseEnvInt("VOICE_CHAT_TIMEOUT_MS", 20000)))
+const VOICE_TTS_TIMEOUT_MS = Math.max(2000, Math.min(30000, parseEnvInt("VOICE_TTS_TIMEOUT_MS", 15000)))
 const VOICE_TTS_MAX_INPUT_CHARS = Math.max(180, Math.min(2200, parseEnvInt("VOICE_TTS_MAX_INPUT_CHARS", 1200)))
 const VOICE_TTS_FAST_MAX_INPUT_CHARS = Math.max(80, Math.min(900, parseEnvInt("VOICE_TTS_FAST_MAX_INPUT_CHARS", 520)))
 

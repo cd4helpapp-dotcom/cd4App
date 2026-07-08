@@ -331,10 +331,7 @@ const parseAiRateLimitState = (value: any): AiRateLimitState | null => {
 const nowIso = (): string => new Date().toISOString();
 
 const AGENT_PROGRESS_HINTS = [
-  'Analyzing your symptoms...',
-  'Checking medical context...',
-  'Searching doctors if needed...',
-  'Preparing safe guidance...',
+  'Thinking...',
 ];
 
 const VOICE_STAGE_FLOW: Array<{ key: Exclude<VoiceLiveStage, 'idle'>; label: string }> = [
@@ -624,23 +621,38 @@ const getConcernStarterFollowUp = (concern: string): string => {
   return 'Understood. Please share your top symptoms, when they started, and whether they are getting worse.';
 };
 
-const getInitialMessages = (concern: string, isAssistantMode: boolean): ChatMessage[] => {
-  if (isAssistantMode) {
-    return [
-      {
-        id: 'ai-1',
-        sender: 'ai',
-        text: 'Hello! I am your CD4 Health Assistant. Please describe your symptoms or any health concerns you have today, and I will help guide you.',
-        createdAt: nowIso(),
-      },
-    ];
-  }
+const getTimeOfDayGreeting = (): string => {
+  const hr = new Date().getHours();
+  if (hr < 12) return 'Good morning';
+  if (hr < 17) return 'Good afternoon';
+  return 'Good evening';
+};
+
+const getInitialMessages = (concern: string, isAssistantMode: boolean, user?: any): ChatMessage[] => {
+  const name = user?.firstName ? `, ${user.firstName}` : '';
+  const timeGreeting = getTimeOfDayGreeting();
+  const capitalizedConcern = concern.charAt(0).toUpperCase() + concern.slice(1).toLowerCase();
+
+  const assistantTemplates = [
+    `👋 Hello${name}! ${timeGreeting}. I am your **CD4 Health Assistant** 🩺. Please feel free to describe your symptoms or any health concerns you have today, and I will guide you step-by-step. Let me know how you are feeling! 😊`,
+    `🌸 Welcome${name}! ${timeGreeting}. I am your **CD4 Health Assistant** 🩺. Let's record your symptoms or discuss any health concerns you have today. Just type how you are feeling below to begin! 😊`,
+    `✨ Hi${name}! ${timeGreeting}. I'm your **CD4 Health Assistant** 🩺. I am here to help you note down your concerns and direct you to the right care. Please describe what is happening, and let's get started! 😊`
+  ];
+
+  const concernTemplates = [
+    `👋 Hello${name}! ${timeGreeting}. I'm here to help you note down all details regarding your **${capitalizedConcern} concern** 🩺.\n\nI will guide you step-by-step to gather relevant information so we can prepare a structured clinical snapshot for the doctor. 📝\n\nWhen you're ready, please share what symptoms you are experiencing, or just say 'hi' to start! 😊`,
+    `🌸 Welcome${name}! ${timeGreeting}. Let's take a look at your **${capitalizedConcern} concern** 🩺 together.\n\nI will ask you a few quick questions to create a clear clinical summary for the doctor. 📝\n\nWhenever you're ready, please tell me what you're experiencing! 😊`,
+    `✨ Hi${name}! ${timeGreeting}. Let's record your symptoms and create a clinical snapshot for your **${capitalizedConcern} concern** 🩺.\n\nI will guide you step-by-step through a warm triage conversation to make sure the doctor has all the details. 📝\n\nJust type what's happening to begin! 😊`
+  ];
+
+  const idx = Math.floor(Math.random() * 3);
+  const text = isAssistantMode ? assistantTemplates[idx] : concernTemplates[idx];
 
   return [
     {
       id: 'ai-1',
       sender: 'ai',
-      text: `I can help with your ${concern.toLowerCase()} concern. ${getConcernStarterFollowUp(concern)}`,
+      text,
       createdAt: nowIso(),
     },
   ];
@@ -1084,7 +1096,7 @@ export default function AiGuidanceScreen() {
   const screenSubTitle = isAssistantMode ? 'Describe your symptoms' : concern;
   const sessionSeed = `${concern}|${isAssistantMode ? 'assistant' : 'guided'}`;
 
-  const [messages, setMessages] = useState<ChatMessage[]>(() => getInitialMessages(concern, isAssistantMode));
+  const [messages, setMessages] = useState<ChatMessage[]>(() => getInitialMessages(concern, isAssistantMode, user));
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -2550,7 +2562,7 @@ export default function AiGuidanceScreen() {
 
       if (messagesError) throw messagesError;
 
-      const starterMessages = getInitialMessages(concern, isAssistantMode);
+      const starterMessages = getInitialMessages(concern, isAssistantMode, user);
       const mappedMessages =
         storedMessages && storedMessages.length > 0
           ? (storedMessages as PersistedMessageRow[]).map(mapPersistedMessageRow)
@@ -2587,7 +2599,7 @@ export default function AiGuidanceScreen() {
       return;
     }
 
-    const starterMessages = getInitialMessages(concern, isAssistantMode);
+    const starterMessages = getInitialMessages(concern, isAssistantMode, user);
     setConversationId(null);
     conversationIdRef.current = null;
     setMessages(starterMessages);
@@ -2640,7 +2652,7 @@ export default function AiGuidanceScreen() {
     let cancelled = false;
 
     const bootstrapConversation = async () => {
-      const starterMessages = getInitialMessages(concern, isAssistantMode);
+      const starterMessages = getInitialMessages(concern, isAssistantMode, user);
       resetContinuousChatSession();
       initialMessageConsumedRef.current = false;
       draftMessageKeyRef.current = null;
@@ -4717,7 +4729,6 @@ export default function AiGuidanceScreen() {
           ) : isStreamingDraft ? (
             <Text style={[styles.messageText, { color: palette.aiBubbleText }]}>
               {msg.text}
-              <Text style={{ color: theme.tint }}>▍</Text>
             </Text>
           ) : (
             <Markdown style={aiMarkdownStyles}>

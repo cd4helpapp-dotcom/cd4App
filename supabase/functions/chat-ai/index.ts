@@ -683,9 +683,24 @@ Deno.serve(async (req) => {
       aiIntent === 'book' ||
       hasSmartBookingPrepareSignal(messageText) ||
       (aiIntent === null && hasAnyTerm(latestUserText, BOOKING_PREPARE_INTENT_TERMS))
+    const hasSimpleAffirmativeOrSelection = (text: string): boolean => {
+      const norm = normalize(text)
+      const affirmatives = /\b(yes|ok|okay|sure|confirm|y|go ahead|proceed|done|haan|han|hanji|thik|theek|kar do|kardo|kr do|krdo|book)\b/i.test(norm)
+      const selections = /\b(1|2|3|4|5|first|second|third|fourth|fifth|one|two|three|four|five|pehla|pahla|dusra|doosra|teesra|tisra)\b/i.test(norm)
+      return affirmatives || selections
+    }
+
+    const userDeclined = hasAnyTerm(latestUserText, BOOKING_DECLINE_TERMS)
+    const isFollowupBookingConfirmation = Boolean(
+      historyHasBookingContext &&
+      !userDeclined &&
+      hasSimpleAffirmativeOrSelection(messageText)
+    )
+
     const bookingConfirmIntent =
       aiIntent === 'confirm' ||
       hasSmartBookingConfirmationSignal(messageText) ||
+      isFollowupBookingConfirmation ||
       (aiIntent === null && hasAnyTerm(latestUserText, BOOKING_CONFIRMATION_TERMS))
     const bookingIntent = bookingPrepareIntent || bookingConfirmIntent
     
@@ -924,9 +939,9 @@ Deno.serve(async (req) => {
           messageText,
           maxTokens: generationMaxTokens,
           preferredModels: voiceReplyRequested
-            ? ['gpt-4o-mini', 'gpt-5-mini']
+            ? ['gpt-4o-mini', 'gpt-4o']
             : fastResponseRequested
-                ? ['gpt-4o-mini', 'gpt-5-mini']
+                ? ['gpt-4o-mini', 'gpt-4o']
                 : undefined,
         })
       } catch (openAiError) {

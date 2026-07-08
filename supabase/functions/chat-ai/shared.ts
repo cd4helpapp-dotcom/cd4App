@@ -30,8 +30,8 @@ export const parseEnvFloat = (key: string, fallback: number): number => {
   return Number.isFinite(raw) ? raw : fallback
 }
 
-export const DEFAULT_OPENAI_MODEL = (Deno.env.get('CHAT_AI_OPENAI_MODEL') || 'gpt-5.4').trim() || 'gpt-5.4'
-export const DEFAULT_OPENAI_FALLBACK_MODEL = (Deno.env.get('CHAT_AI_OPENAI_FALLBACK_MODEL') || 'gpt-5-mini').trim() || 'gpt-5-mini'
+export const DEFAULT_OPENAI_MODEL = (Deno.env.get('CHAT_AI_OPENAI_MODEL') || 'gpt-4o-mini').trim() || 'gpt-4o-mini'
+export const DEFAULT_OPENAI_FALLBACK_MODEL = (Deno.env.get('CHAT_AI_OPENAI_FALLBACK_MODEL') || 'gpt-4o').trim() || 'gpt-4o'
 export const GEMINI_TIMEOUT_MS = Math.max(8_000, parseEnvInt('CHAT_AI_GEMINI_TIMEOUT_MS', 12_000))
 export const GEMINI_MAX_ATTEMPTS = Math.max(1, Math.min(2, parseEnvInt('CHAT_AI_GEMINI_MAX_ATTEMPTS', 1)))
 export const GEMINI_MAX_OUTPUT_TOKENS = Math.max(180, Math.min(900, parseEnvInt('CHAT_AI_GEMINI_MAX_OUTPUT_TOKENS', 420)))
@@ -1136,7 +1136,7 @@ export const formatDoctorContext = (doctors: any[], mode: string | null, booking
 
   if (bookingPrep?.status === 'confirm_pending' && bookingPrep?.proposal?.slotLabel) {
     const pendingSlotLabel = String(bookingPrep.proposal.slotLabel || '').trim()
-    context += `\n\nSELECTED SLOT PENDING FINAL CONFIRMATION:\n- ${pendingSlotLabel}\n\nINSTRUCTION: The user has already picked this slot. Ask only for final confirmation to proceed. DO NOT ask them to choose the doctor again and DO NOT relist all slot options unless they ask to change the slot.`
+    context += `\n\nSELECTED SLOT PENDING FINAL CONFIRMATION:\n- ${pendingSlotLabel}\n\nINSTRUCTION: The user has already picked this slot. If all triage questions are answered, ask only for final confirmation to proceed. If triage questions are still missing (listed in Missing Info), you must ask the next missing triage question first before finalizing the booking. DO NOT ask them to choose the doctor again and DO NOT relist all slot options unless they ask to change the slot.`
   } else if (bookingPrep?.status === 'ready' && bookingPrep.slotOptions?.length) {
     const slotsList = bookingPrep.slotOptions.map(s => `- ${s.label} (Slot ID: ${s.id})`).join('\n')
     context += `\n\nAVAILABLE SLOTS for the selected doctor:\n${slotsList}\n\nINSTRUCTION: Present these specific slots to the user and ask which one they would like to book. DO NOT guess times; only use the IDs provided.`

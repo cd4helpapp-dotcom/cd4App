@@ -2275,10 +2275,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [isCityPickerVisible]);
 
     const filteredCityOptions = React.useMemo(() => {
-        const query = normalizeText(debouncedCitySearchQuery);
+        const query = normalizeText(citySearchQuery);
         if (!query) return cityOptions;
         return cityOptions.filter((city) => normalizeText(city).includes(query));
-    }, [cityOptions, debouncedCitySearchQuery]);
+    }, [cityOptions, citySearchQuery]);
 
 
 
@@ -5524,7 +5524,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             </Text>
                                         </View>
                                     ) : null}
-                                    {isVoiceAutoSending ? (
+                                    {/* {isVoiceAutoSending ? (
                                         <View style={[styles.voiceAutoSendCountdownWrap, { borderColor: doctorVoiceAccent + '66', backgroundColor: doctorVoiceAura }]}>
                                             <Text style={[styles.voiceAutoSendCountdownText, { color: doctorVoiceAccent }]}>
                                                 Pause detected. Auto-send in {voiceSilenceCountdownSeconds?.toFixed(1)}s
@@ -5538,7 +5538,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                 />
                                             </View>
                                         </View>
-                                    ) : null}
+                                    ) : null} */}
                                     <Text style={[styles.voiceRobotHint, { color: theme.textSecondary }]}>
                                         Tap for text message to view full chat history.
                                     </Text>
@@ -6792,7 +6792,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 animationType="slide"
                 onRequestClose={() => setIsCityPickerVisible(false)}
             >
-                <View style={styles.modalOverlay}>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    enabled={Platform.OS === 'ios'}
+                    style={styles.modalOverlay}
+                >
                     <TouchableOpacity
                         style={styles.modalBackdrop}
                         activeOpacity={1}
@@ -6900,7 +6904,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             ) : null}
                         </ScrollView>
                     </View>
-                </View>
+                </KeyboardAvoidingView>
             </Modal>
         </ScrollView>
     );

@@ -93,13 +93,32 @@ Deno.serve(async (req: Request) => {
       const slotId = String(body?.slotId || "").trim();
       if (!doctorId || !slotId) return jsonResponse({ success: false, message: "doctorId_and_slotId_required" }, 400);
 
+      // Fetch the doctor's fee from the doctors_public table
+      const { data: doctorRow, error: doctorError } = await serviceClient
+        .from("doctors_public")
+        .select("fee")
+        .eq("id", doctorId)
+        .maybeSingle();
+
+      if (doctorError) {
+        return jsonResponse({ success: false, message: doctorError.message || "doctor_not_found" }, 400);
+      }
+
+      let docFee = APPOINTMENT_FEE_INR; // fallback 500
+      if (doctorRow?.fee) {
+        const numeric = Number(String(doctorRow.fee).replace(/[^\d.]/g, ""));
+        if (Number.isFinite(numeric) && numeric > 0) {
+          docFee = numeric;
+        }
+      }
+
       const orderPayload =
         IS_RAZORPAY_LIVE
-          ? await createRazorpayOrder(APPOINTMENT_FEE_INR * 100, `apt_${Date.now()}`)
+          ? await createRazorpayOrder(docFee * 100, `apt_${Date.now()}`)
           : { id: makeTestToken("order"), testMode: true };
       const orderId = String(orderPayload.id);
-      const doctorShare = Number((APPOINTMENT_FEE_INR * DOCTOR_SHARE_RATIO).toFixed(2));
-      const platformShare = Number((APPOINTMENT_FEE_INR * PLATFORM_SHARE_RATIO).toFixed(2));
+      const doctorShare = Number((docFee * DOCTOR_SHARE_RATIO).toFixed(2));
+      const platformShare = Number((docFee * PLATFORM_SHARE_RATIO).toFixed(2));
 
       const { data: paymentRow, error: paymentError } = await serviceClient
         .from("appointment_payments")
@@ -110,7 +129,7 @@ Deno.serve(async (req: Request) => {
           provider: "razorpay",
           order_id: orderId,
           status: "created",
-          gross_amount: APPOINTMENT_FEE_INR,
+          gross_amount: docFee,
           doctor_share: doctorShare,
           platform_commission: platformShare,
           currency: "INR",
@@ -126,7 +145,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         success: true,
         payment: paymentRow,
-        amountPaise: APPOINTMENT_FEE_INR * 100,
+        amountPaise: docFee * 100,
         keyId: RAZORPAY_KEY_ID || null,
         mode: IS_RAZORPAY_LIVE ? "live" : "test",
       });

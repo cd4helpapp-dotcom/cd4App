@@ -19,8 +19,8 @@ const parseEnvBool = (key: string, fallback: boolean): boolean => {
   return fallback
 }
 
-const DEFAULT_OPENAI_MODEL = "gpt-5.4"
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4.1"
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o"
 const DEFAULT_OPENAI_VISION_MODEL = "gpt-4o-mini"
 const DEFAULT_OPENAI_VISION_FALLBACK_MODEL = "gpt-4o"
 const FORCE_OPENAI_ONLY = true

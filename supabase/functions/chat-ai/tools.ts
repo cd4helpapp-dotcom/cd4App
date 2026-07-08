@@ -258,7 +258,7 @@ export const getAuthenticatedUser = async (req: Request) => {
   const client = createClient(supabaseUrl, anonKey)
   const { data: { user }, error } = await client.auth.getUser(token)
   if (error || !user) return { userId: null, profile: null, error: error?.message || 'Invalid user' }
-  
+
   // Fetch profile for automated booking details
   const { data: profile } = await client
     .from('profiles')
@@ -273,15 +273,15 @@ export const getAuthenticatedUser = async (req: Request) => {
     (typeof meta.phoneNumber === 'string' ? meta.phoneNumber : '') ||
     (typeof meta.mobile === 'string' ? meta.mobile : '')
 
-  return { 
-    userId: user.id, 
+  return {
+    userId: user.id,
     profile: {
       firstName: profile?.first_name || '',
       lastName: profile?.last_name || '',
       phone: profile?.phone_number || fallbackPhone || '',
       fullName: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim()
     },
-    error: null 
+    error: null
   }
 }
 
@@ -373,7 +373,7 @@ export const extractEntitiesWithAI = async (args: {
     {"city": "CityName"|null, "specialty": "Specialty"|null, "intent": "search"|"book"|"confirm"|"triage"|"casual", "urgency": "urgent"|"routine", "scope": "medical"|"greeting"|"non_medical", "scope_reason": "short_reason"}
     Do not include any other text.
     NOTE: Be very smart about typos. Even if the user types "sinoatna" or "inpatna", extract "Patna".`
-    
+
     const result = await invokeOpenAIWithRetry({
       apiKey: args.apiKey,
       messages: [{ role: 'system', content: 'You are a precise medical intent classifier.' }, { role: 'user', content: prompt }],
@@ -381,7 +381,7 @@ export const extractEntitiesWithAI = async (args: {
       maxTokens: args.fastMode ? 120 : 220,
       temperature: 0.1,
     })
-    
+
     const cleaned = result?.reply?.replace(/```json|```/g, '').trim() || '{}'
     const parsed = JSON.parse(cleaned)
     return {
@@ -502,14 +502,14 @@ export const evaluateAiMessageRateLimit = async (args: { serviceClient: any, use
   })
   const limit = tier.isPro ? PRO_AI_MESSAGE_LIMIT_PER_WINDOW : AI_MESSAGE_LIMIT_PER_WINDOW
   const burstLimit = tier.isPro ? PRO_AI_BURST_LIMIT_MESSAGES : AI_BURST_LIMIT_MESSAGES
-  
+
   const { data: usage, error: fetchError } = await args.serviceClient
     .from('ai_usage_stats')
     .select('*')
     .eq('user_id', args.userId)
     .eq('day_key', dayKey)
     .maybeSingle()
-  
+
   if (fetchError) {
     console.error("Rate limit fetch error:", fetchError)
     return {
@@ -537,11 +537,11 @@ export const evaluateAiMessageRateLimit = async (args: { serviceClient: any, use
   const used = usage?.message_count || 0
   const burstUsed = usage?.burst_count || 0
   const burstWindowStartedAt = usage?.burst_window_started_at || now.toISOString()
-  
+
   // Apply higher quota for active Pro users while keeping free-tier defaults.
   const isDailyLimitReached = used >= limit
   const isBurstLimitReached = burstUsed >= burstLimit && (nowMs - new Date(burstWindowStartedAt).getTime()) < AI_BURST_WINDOW_MS
-  
+
   const blocked = isDailyLimitReached || isBurstLimitReached
   const blockType = isBurstLimitReached ? 'burst' : isDailyLimitReached ? 'daily' : 'none'
   const retryAfterMs = isBurstLimitReached
@@ -551,7 +551,7 @@ export const evaluateAiMessageRateLimit = async (args: { serviceClient: any, use
       : 0
   const blockHours = retryAfterMs > 0 ? Math.ceil(retryAfterMs / (60 * 60 * 1000)) : 0
   const blockUntil = retryAfterMs > 0 ? new Date(nowMs + retryAfterMs).toISOString() : null
-  
+
   // Update the count for the next time (moved to persistence step in index.ts normally, 
   // but here we just return the current state for evaluation)
   // Actually index.ts handles the persistence if the request is NOT blocked.
@@ -676,65 +676,116 @@ Triage Blueprint: ${buildTriageQuestionBlueprint(triageQuestionBasis, args.triag
 Missing Info: ${getMissingTriageQuestions(args.triageCoverage || {}, triageQuestionBasis).join(', ')}
 
 Guidelines:
-1. Be empathetic but clinical. Tone: Medical Boutique.
-2. Mirror the user's language (Hindi/Hinglish/English).
-3. **PREMIUM MARKDOWN**: Use ### Headers, **Bold important terms**, and clean bullet points only for explanations, doctor lists, slots, reports, or longer guidance. When you are asking triage/follow-up questions, do NOT use a header or bullet checklist.
+1. Be empathetic but clinical. Tone: Medical Boutique. EVERY response must feel premium and luxurious to read.
+2. **LANGUAGE MIRRORING (CRITICAL)**: You MUST respond in the SAME language the user is typing in. If user writes in English, respond fully in English. If user writes in Hindi, respond in Hindi. If user writes in Hinglish, respond in Hinglish. NEVER default to any fixed language. Always detect and match the user's language automatically.
+3. **MANDATORY RICH TEXT IN EVERY RESPONSE (CRITICAL)**: You MUST format EVERY single response with rich markdown. NEVER send plain text. Every response MUST include:
+   - **Bold** important medical terms, symptoms, conditions, and action items
+   - Relevant medical/supportive emojis (🩺, 😊, 🌡️, 💊, 🩹, 🌸, ✅, 📝, 👍, 🤔, ❤️‍🩹) — minimum 3-4 emojis per response
+   - Clean spacing with line breaks between paragraphs
+   - Bullet points (•) or numbered lists when presenting multiple items
+   - Short headers (### or **bold lines**) for longer explanations
+   EXAMPLE (English user): "Got it! 😊 You're experiencing **cough** 🗣️.\n\nLet me gather some details to prepare your **clinical snapshot** 📝:\n\n• How long have you had the **cough**? 🤔\n• Any **fever** 🌡️ or **breathing difficulty**?\n• Are you taking any **medicine** 💊?\n\nDon't worry, I'll guide you through this! ❤️‍🩹"
+   EXAMPLE (Hinglish user): "Samajh gaya! 😊 Aapko **cough** 🗣️ ki problem ho rahi hai.\n\n• **Cough** kab se hai? 🤔\n• Kya **fever** 🌡️ ya **breathing difficulty** bhi hai?\n• Koi **medicine** 💊 le rahe ho?\n\nBilkul pareshan mat hoiye! ❤️‍🩹"
+   PLAIN TEXT responses are STRICTLY FORBIDDEN. If you send plain text without bold, emojis, and formatting, you have FAILED.
 4. **HEALTH-ONLY SCOPE**: Only answer health, symptoms, reports, medicines, wellness, doctor discovery, appointments, slots, and teleconsultation-related questions. If the user asks unrelated things like geography, politics, coding, or trivia, politely refuse and redirect them to medical/health help only.
-5. **SLOT LISTING**: ${isListingSlots 
-    ? 'You MUST list each available slot EXACTLY as provided in the label. Do NOT remove the Day/Date part. Example: "- **📅 Monday, 19 Apr [10:00 AM - 10:30 AM]**"' 
-    : args.bookingPrep?.status === 'no_slots' 
-      ? 'STRICT: No slots found in DB. Tell user no future slots are available for this specific doctor currently. DO NOT hallucinate times.' 
-      : 'Focus on the current query.'}
+5. **SLOT LISTING**: ${isListingSlots
+      ? 'You MUST list each available slot EXACTLY as provided in the label. Do NOT remove the Day/Date part. Example: "- **📅 Monday, 19 Apr [10:00 AM - 10:30 AM]**"'
+      : args.bookingPrep?.status === 'no_slots'
+        ? 'STRICT: No slots found in DB. Tell user no future slots are available for this specific doctor currently. DO NOT hallucinate times.'
+        : 'Focus on the current query.'}
 6. **CONFIRMATION**: ${isBookingSuccess ? `Warmly confirm the booking. Use emojis like 🎉. Do NOT offer to book again. **STRICT FORMAT**: In the "Appointment Details" section, you MUST use the exact Date and Time provided in the Slot Info (${args.bookingConfirmation?.slotLabel}). Do NOT use relative terms like "Today", "Tomorrow", or "Kal"; always use the actual date string provided.` : 'Follow standard medical guidance.'}
 7. **IDENTITY DETAILS**: We automatically have the user's details: ${userIdentity || 'None'}. Use these details to complete the booking. DO NOT ask the user for their name or phone if we already have them.
 8. **DOCTOR LISTS**: Ensure lists are numbered clearly (1, 2, 3) and do NOT cut off descriptions. Use bolding for doctor names.
 9. **TIME INTEGRITY**: Always use the exact 12-hour (AM/PM) format provided in slot labels. If a slot says 10:00 PM, do NOT say 10:00 AM.
 10. **STRICT NO PLACEHOLDERS**: NEVER use bracketed text like "[Name]", "[Doctor]", or "[Specialty]". If you do not have a piece of information, use a natural fallback like "the specialist" or "the selected time".
 11. **APP-ONLY DOCTOR POLICY**: Recommend ONLY doctors provided in Tool Context from the CD4 app database. NEVER invent names and NEVER use web/external doctors. If no doctor is available in Tool Context, explicitly say no verified CD4 doctor is currently available.
-12. **DOCTOR-LIKE TRIAGE QUESTIONS**: Any medical follow-up question must sound like a real doctor talking to the patient, not a form or checklist. Ask naturally in one short paragraph, in the user's language. Example Hinglish style: "Samajh gaya. Bukhar kab se hai, aur temperature kitna gaya tha? Saath me khansi, saans me dikkat, ya body pain bhi hai kya?" Avoid titles like "Fever Symptoms", avoid decorative emojis, and avoid listing 3-4 bullet questions unless the user explicitly asks for a checklist.
+12. **ENGAGING & EMPATHETIC CONVERSATION (DOCTOR TONE - CRITICAL)**: Talk to the patient like a warm, highly empathetic real-world doctor who genuinely cares. Make the conversation feel like a premium healthcare experience. EVERY response must:
+   - Start or end with a warm, caring sentence using emojis (😊, 🌸, ❤️‍🩹, 🩺)
+   - **Bold** all medical terms, symptoms, and conditions mentioned
+   - Use emojis next to key terms (e.g., **fever** 🌡️, **cough** 🗣️, **medicine** 💊, **pain** 🤕, **doctor** 🩺)
+   - Feel interactive and conversational, not clinical or robotic
+   - Use line breaks and spacing for readability
+   - ALWAYS match the user's language — do NOT default to Hindi/Hinglish if the user writes in English
 13. **DYNAMIC TRIAGE QUESTIONS**: The question must match the user's active concern. Example: cough asks about breathlessness/phlegm/fever; headache asks sudden onset/vision/vomiting/weakness; chest pain asks radiation/sweating/breathlessness; injury/fracture asks about swelling, deformity, bleeding, numbness, and movement. Never reuse a fixed generic question when the concern needs a more specific one.
-14. **NO REPETITIVE QUESTIONS**: Use the provided history. If a triage or booking question was already asked and answered in this session, acknowledge it and move to the next missing detail. Do not repeat the same question unless the user asks for repetition.
-15. **BOOKING SAFETY**: Never claim booking success unless Booking Confirmation says confirmed. If multiple slots are shown and the user only says "yes" or "go ahead", ask for the exact slot number/time; do not pick the first slot yourself.`
+14. **NO REPETITIVE QUESTIONS (STRICT)**: Never ask for the same information twice. This is especially critical for booking slots, appointment confirmations, and clinical/AI snapshot details. If the user has already selected a slot, or if the clinical details for the triage snapshot (symptoms, duration, severity, medicines) are already present in the history, do NOT re-ask or re-prompt for confirmation. Immediately perform the requested action (such as booking the slot or proceeding to final confirmation).
+15. **BOOKING SAFETY**: Never claim booking success unless Booking Confirmation says confirmed. If multiple slots are shown and the user only says "yes" or "go ahead", ask for the exact slot number/time; do not pick the first slot yourself.
+16. **MANDATORY TRIAGE BEFORE BOOKING**: Before booking any slot or appointment, you MUST complete all triage questions to populate the AI snapshot. If there is missing info (listed in Missing Info), do NOT book the slot or confirm booking yet. Acknowledge the booking request warmly, but immediately ask the next missing triage question (symptoms, duration, severity, medicines) in a highly natural, doctor-like way to gather the necessary details first.`
+}
+
+/**
+ * Helper to safely extract and normalize first, last, and full names of a doctor
+ */
+export const getDoctorNameObj = (doc: any) => {
+  const profile = Array.isArray(doc?.profiles) ? doc.profiles[0] : doc?.profiles
+  const firstName = doc?.firstName || doc?.first_name || profile?.first_name || ''
+  const lastName = doc?.lastName || doc?.last_name || profile?.last_name || ''
+  return {
+    firstName: normalize(firstName),
+    lastName: normalize(lastName),
+    fullName: normalize(`${firstName} ${lastName}`.trim())
+  }
 }
 
 /**
  * Tries to find a doctor ID from a name mentioned in the message text.
  */
-export const resolveDoctorIdByText = async (args: { serviceClient: any, text: string }) => {
+export const resolveDoctorIdByText = async (args: { serviceClient: any, text: string, pool?: any[] }) => {
   const normalized = normalize(args.text);
-  // Remove "Dr" prefix for better matching
-  const queryText = normalized.replace(/^dr\.?\s+/, '').trim();
-  if (queryText.length < 3) return null;
+  if (normalized.length < 3) return null;
 
   const { data, error } = await args.serviceClient
     .from('doctors')
-    .select('id, profiles(first_name, last_name)')
-    .limit(80);
+    .select('id, city, specialization, profiles(first_name, last_name)')
+    .limit(100);
 
   if (error || !data) return null;
 
-  const candidateTokens = queryText
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 2)
-    .slice(0, 4);
+  const matches: any[] = [];
 
   for (const doctor of data) {
-    const profile = Array.isArray(doctor?.profiles) ? doctor.profiles[0] : doctor?.profiles
-    const firstName = normalize(profile?.first_name || '')
-    const lastName = normalize(profile?.last_name || '')
-    const fullName = normalize(`${firstName} ${lastName}`)
-    if (!fullName) continue
+    const names = getDoctorNameObj(doctor);
+    if (!names.firstName) continue;
 
-    if (fullName.includes(queryText)) {
-      return doctor.id
+    // 1. Check full name match
+    if (names.fullName && names.fullName.length >= 4 && normalized.includes(names.fullName)) {
+      matches.push(doctor);
+      continue;
     }
-    if (candidateTokens.length > 0 && candidateTokens.every((token) => fullName.includes(token))) {
-      return doctor.id
+
+    // 2. Check first name + last name match (even if not contiguous, e.g. "Amit ... Sharma")
+    if (names.firstName.length >= 3 && names.lastName.length >= 3) {
+      if (normalized.includes(names.firstName) && normalized.includes(names.lastName)) {
+        matches.push(doctor);
+        continue;
+      }
+    }
+
+    // 3. Check first name match only (if it is distinct and not a common stop word)
+    const commonWords = new Set([
+      'doctor', 'doc', 'dr', 'karo', 'kardo', 'appointment', 'slot', 'book', 'yes', 'haan', 'han', 'ok', 'okay',
+      'fever', 'cough', 'pain', 'city', 'delhi', 'patna', 'mumbai', 'hospital', 'clinic', 'care'
+    ]);
+    if (names.firstName.length >= 3 && !commonWords.has(names.firstName)) {
+      const regex = new RegExp(`\\b${names.firstName}\\b`);
+      if (regex.test(normalized)) {
+        matches.push(doctor);
+      }
     }
   }
 
-  return null
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0].id;
+
+  // If there are multiple matches, prioritize the one in the recommendation pool
+  if (Array.isArray(args.pool) && args.pool.length > 0) {
+    const poolIds = new Set(args.pool.map(d => d.id || d._id).filter(Boolean));
+    const poolMatches = matches.filter(d => poolIds.has(d.id));
+    if (poolMatches.length === 1) {
+      return poolMatches[0].id;
+    }
+  }
+
+  return matches[0].id;
 }
 
 /**
@@ -754,15 +805,20 @@ export const identifyDoctorFromResults = (text: string, recommendations: any[]) 
     return orderedRecommendations[2]?.id || orderedRecommendations[2]?._id || null
   }
   if (/\b(last|latest|final)\b/.test(normalized)) {
-    const lastDoctor = orderedRecommendations[orderedRecommendations.length - 1]
-    return lastDoctor?.id || lastDoctor?._id || null
+    return orderedRecommendations[orderedRecommendations.length - 1]?.id || orderedRecommendations[orderedRecommendations.length - 1]?._id || null
   }
 
   for (const doc of recommendations) {
-    const firstName = normalize(doc.first_name || doc.firstName || '');
-    const lastName = normalize(doc.last_name || doc.lastName || '');
-    if (firstName && normalized.includes(firstName)) return doc.id || doc._id;
-    if (lastName && normalized.includes(lastName)) return doc.id || doc._id;
+    const names = getDoctorNameObj(doc);
+    if (names.fullName && names.fullName.length >= 4 && normalized.includes(names.fullName)) {
+      return doc.id || doc._id;
+    }
+    if (names.firstName && names.firstName.length >= 3 && normalized.includes(names.firstName)) {
+      return doc.id || doc._id;
+    }
+    if (names.lastName && names.lastName.length >= 3 && normalized.includes(names.lastName)) {
+      return doc.id || doc._id;
+    }
   }
   return null;
 }
@@ -815,9 +871,9 @@ const resolveSlotByHeuristics = (args: { text: string, slots: any[], historyBook
   if (/\b(third|3rd|teesra|tisra)\b/.test(normalizedText)) return pool[2]?._id || null
   if (/\b(last|latest|final)\b/.test(normalizedText)) return pool[pool.length - 1]?._id || null
 
-  // "this slot", "is slot", "ye slot", "same slot" should map to most recent suggested option.
-  if (/\b(this|that|is|ye|wahi|isi|same)\b.*\b(slot|time|one)\b/.test(normalizedText) && historicalOrderedSlots.length === 1) {
-    return historicalOrderedSlots[0]?._id || null
+  // "this slot", "is slot", "ye slot", "same slot" should map to most recent suggested option (default first).
+  if (/\b(this|that|is|ye|wahi|isi|same)\b.*\b(slot|time|one)\b/.test(normalizedText)) {
+    return pool[0]?._id || null
   }
 
   const nowInIst = new Date(Date.now() + (330 * 60 * 1000))
@@ -962,7 +1018,7 @@ export const runAutonomousToolLoop = async (args: any) => {
         specialty: args.departmentSuggestion?.label || 'General Specialist',
         messageText: args.latestMessageText
       })
-      
+
       if (webResults && webResults.length > 0) {
         search = {
           doctors: webResults,
@@ -988,6 +1044,9 @@ export const runAutonomousToolLoop = async (args: any) => {
     recommendationMode = search.recommendationMode
     doctorSearchMeta = search.meta
   }
+
+  const missingTriage = getMissingTriageQuestions(args.triageCoverage || {}, args.concernText || args.latestMessageText || '')
+  const isTriageComplete = missingTriage.length === 0
 
   if (args.hasBookingIntent) {
     steps.push({
@@ -1032,15 +1091,35 @@ export const runAutonomousToolLoop = async (args: any) => {
     }
 
     if (!targetDoctorId) {
-       // SMART MATCH: Try database lookup by name
-       targetDoctorId = await resolveDoctorIdByText({ serviceClient: args.serviceClient, text: args.latestMessageText })
+      // SMART MATCH: Try database lookup by name
+      targetDoctorId = await resolveDoctorIdByText({ serviceClient: args.serviceClient, text: args.latestMessageText, pool: recommendationPool })
     }
 
-    if (!targetDoctorId && recommendationPool.length === 1) {
-      targetDoctorId = recommendationPool[0].id || recommendationPool[0]._id
+    const userWantsChange = /\b(change|different|other|another|dusra|doosra|badlo|change doctor|dusra doctor|other doctor)\b/.test(normalizedLatestMessage)
+
+    // Check if user mentioned another name that we failed to resolve (to avoid wrong doctor fallback)
+    const mentionsOtherName = () => {
+      if (recommendationPool.length === 1) {
+        const recNames = getDoctorNameObj(recommendationPool[0])
+        const words = normalizedLatestMessage.split(/\s+/)
+        const drIndex = words.findIndex(w => w === 'dr' || w === 'doctor')
+        if (drIndex !== -1 && drIndex + 1 < words.length) {
+          const nextWord = words[drIndex + 1]
+          if (nextWord !== recNames.firstName && nextWord !== recNames.lastName) {
+            return true
+          }
+        }
+      }
+      return false
     }
 
-    if (!targetDoctorId) {
+    if (!targetDoctorId && !userWantsChange && !mentionsOtherName()) {
+      if (recommendationPool.length === 1) {
+        targetDoctorId = recommendationPool[0].id || recommendationPool[0]._id
+      }
+    }
+
+    if (!targetDoctorId && !userWantsChange && !mentionsOtherName()) {
       const pendingProposalDoctorId = typeof args.pendingBookingProposal?.doctorId === 'string'
         ? args.pendingBookingProposal.doctorId
         : ''
@@ -1049,7 +1128,7 @@ export const runAutonomousToolLoop = async (args: any) => {
       }
     }
 
-    if (!targetDoctorId && hasSameDoctorReferenceSignal(normalizedLatestMessage)) {
+    if (!targetDoctorId && !userWantsChange && hasSameDoctorReferenceSignal(normalizedLatestMessage)) {
       // Try to find in memory
       const memory = await readConversationMemory({ serviceClient: args.serviceClient, conversationId: args.conversationId, userId: args.userId })
       const lastDoctorFact = (memory.keyFacts || []).find((f: any) => f.key === 'last_doctor_recommended')
@@ -1062,12 +1141,26 @@ export const runAutonomousToolLoop = async (args: any) => {
       bookingPrep = { status: 'incomplete', message: 'Please tell me which doctor you want to book with.' }
     } else {
       resolvedDoctorId = targetDoctorId
-      const selectedDoctor =
+      let selectedDoctor =
         recommendationPool.find((doctor: any) => (doctor?.id || doctor?._id) === targetDoctorId) ||
         doctorRecommendations.find((doctor: any) => (doctor?.id || doctor?._id) === targetDoctorId) ||
         null
+
+      if (!selectedDoctor) {
+        const { data, error } = await args.serviceClient
+          .from('doctors')
+          .select('*, profiles(first_name, last_name, profile_picture)')
+          .eq('id', targetDoctorId)
+          .maybeSingle()
+        if (!error && data) {
+          selectedDoctor = data
+        }
+      }
+
       if (selectedDoctor) {
         doctorRecommendations = [selectedDoctor]
+      } else {
+        doctorRecommendations = []
       }
       // Resolve specific slot or list options
       const slots = await fetchAvailableSlots({ doctorId: targetDoctorId, serviceClient: args.serviceClient })
@@ -1075,7 +1168,7 @@ export const runAutonomousToolLoop = async (args: any) => {
         ? args.historyBookingSlotOptions
         : pendingProposalSlotOptions
       const hasPriorSlotContext = slotHistoryPool.length > 0 || Boolean(pendingProposalSelectedSlotId)
-      
+
       if (slots.length === 0) {
         bookingPrep = { status: 'no_slots' }
       } else {
@@ -1118,8 +1211,8 @@ export const runAutonomousToolLoop = async (args: any) => {
           }
         }
 
-        // If exactly one slot is available and user confirms booking, auto-pick it.
-        if (!mentionedSlotId && confirmationLike && slots.length === 1) {
+        // If the user confirms/requests booking and no specific slot was resolved, auto-pick the first available slot.
+        if (!mentionedSlotId && confirmationLike && slots.length > 0) {
           mentionedSlotId = slots[0]._id
         }
 
@@ -1130,6 +1223,7 @@ export const runAutonomousToolLoop = async (args: any) => {
           mentionedSlotId === pendingProposalSelectedSlotId
         )
         const canExecuteBooking = Boolean(
+          isTriageComplete &&
           mentionedSlotId &&
           confirmationLike &&
           (
@@ -1246,7 +1340,7 @@ export const fetchAvailableSlots = async (args: { doctorId: string, serviceClien
     .order('date', { ascending: true })
     .order('start_time', { ascending: true })
     .limit(5)
-  
+
   if (error) return []
   return (data || [])
     .filter((s: any) => isFutureAvailableSlotTime({ date: s.date, start_time: s.start_time }, 5))
@@ -1278,23 +1372,24 @@ const extractSlotIdFromText = async (
     historyBookingSlotOptions
   })
   if (heuristicMatch) return heuristicMatch
-  
+
   // 3. AI Smart Match (fallback)
   if (openAiApiKey && slots.length > 0) {
     const matchedId = await matchSlotWithAI(text, slots, openAiApiKey)
     if (matchedId) return matchedId
   }
-  
+
   return null
 }
 
 export const matchSlotWithAI = async (text: string, slots: any[], apiKey: string) => {
   try {
     const slotContext = slots.map(s => `ID: ${s._id}, Time: ${s.startTime}, Date: ${s.date}`).join(' | ')
-    const prompt = `Given the user message: "${text}" and available slots: [${slotContext}], which slot ID is the user referring to?
-    Consider phrases like "tomorrow morning", "afternoon", "around 10", etc.
-    If no clear match, respond with "null".
-    Respond with ONLY the Slot ID or "null".`
+    const prompt = `Given the user message: "${text}" and the list of available doctor slots: [${slotContext}].
+    Analyze the user's intent to find if they specified a day, date, or time (including Hinglish/Hindi terms like 'kal', 'parso', 'somvar', 'mangalvar', 'subah', 'dopahar', 'shaam', 'aaj', 'tarikh', or numbers like '10 baje', '2 o'clock').
+    Identify which slot ID they are referring to.
+    If they did not specify any date/time and just said 'book the slot' or 'yes confirm' or 'slots book kr do', respond with "null".
+    Respond with ONLY the matching Slot ID or "null".`
 
     const result = await invokeOpenAIWithRetry({
       apiKey,
@@ -1310,10 +1405,10 @@ export const matchSlotWithAI = async (text: string, slots: any[], apiKey: string
   }
 }
 
-export const executeSlotBooking = async (args: { 
-  serviceClient: any, 
-  userId: string, 
-  doctorId: string, 
+export const executeSlotBooking = async (args: {
+  serviceClient: any,
+  userId: string,
+  doctorId: string,
   slotId: string,
   accessToken: string,
   concern?: string,
@@ -1333,7 +1428,7 @@ export const executeSlotBooking = async (args: {
       .eq('id', args.slotId)
       .eq('doctor_id', args.doctorId)
       .maybeSingle()
-    
+
     if (slotFetchError || !slot || slot.is_booked) {
       return { status: 'conflict', message: 'This slot is no longer available.' }
     }
@@ -1362,10 +1457,10 @@ export const executeSlotBooking = async (args: {
       const nextBookingMs = new Date(recentAppointment.created_at).getTime() + BOOKING_COOLDOWN_WINDOW_MS
       const nextBookingLabel = Number.isFinite(nextBookingMs)
         ? new Date(nextBookingMs).toLocaleDateString('en-IN', {
-            day: 'numeric',
-            month: 'short',
-            year: 'numeric',
-          })
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })
         : `after ${BOOKING_COOLDOWN_DAYS} days`
 
       return {
@@ -1399,7 +1494,7 @@ export const executeSlotBooking = async (args: {
       })
       .select()
       .single()
-    
+
     if (aptError) {
       // Best-effort rollback if appointment creation fails after slot claim.
       await args.serviceClient
@@ -1423,7 +1518,7 @@ export const executeSlotBooking = async (args: {
       .select('profiles(first_name, last_name)')
       .eq('id', args.doctorId)
       .single()
-    
+
     const profiles = Array.isArray(docData?.profiles) ? docData.profiles[0] : docData?.profiles
     const doctorName = profiles ? `Dr. ${profiles.first_name} ${profiles.last_name}` : 'the doctor'
 
@@ -1527,8 +1622,8 @@ export const executeSlotBooking = async (args: {
       notificationErrorMessage = 'missing_access_token_for_notification'
     }
 
-    return { 
-      status: 'confirmed', 
+    return {
+      status: 'confirmed',
       appointmentId: appointment.id,
       doctorName,
       slotLabel: formatBookingSlotLabel(claimedSlot.date, claimedSlot.start_time, claimedSlot.end_time),
@@ -1580,16 +1675,16 @@ export const logAgentAction = async (args: any) => {
 export const extractAndValidateCityFromText = async (text: string, serviceClient: any): Promise<string | null> => {
   if (!text) return null
   const normalized = normalize(text)
-  
+
   // Fuzzy discovery for major cities (handles typos and concatenation like 'inpatna' or 'dinpatna')
   const cities = ['patna', 'chandigarh', 'delhi', 'mumbai', 'lucknow', 'bangalore', 'jaipur', 'ahmedabad', 'pune', 'hyderabad', 'chennai', 'kolkata', 'guwahati', 'bhopal', 'indore', 'surat', 'kanpur', 'nagpur', 'kochi', 'rosera', 'samastipur'];
-  
+
   for (const c of cities) {
     if (normalized.includes(c)) {
       return toTitleCase(c)
     }
   }
-  
+
   return null
 }
 
@@ -1607,7 +1702,7 @@ export const incrementAiUsageStats = async (args: { serviceClient: any, userId: 
       .eq('user_id', args.userId)
       .eq('day_key', args.dayKey)
       .maybeSingle()
-    
+
     const nextCount = (current?.message_count || 0) + 1
     const existingBurstCount = Math.max(0, Number(current?.burst_count || 0))
     const burstWindowStartedAtRaw =
@@ -1619,7 +1714,7 @@ export const incrementAiUsageStats = async (args: { serviceClient: any, userId: 
       nowMs - burstWindowStartedMs < AI_BURST_WINDOW_MS
     const nextBurstCount = isWithinBurstWindow ? existingBurstCount + 1 : 1
     const nextBurstWindowStartedAt = isWithinBurstWindow ? burstWindowStartedAtRaw || nowIso : nowIso
-    
+
     await args.serviceClient
       .from('ai_usage_stats')
       .upsert({
@@ -1630,18 +1725,18 @@ export const incrementAiUsageStats = async (args: { serviceClient: any, userId: 
         burst_window_started_at: nextBurstWindowStartedAt,
         updated_at: nowIso
       }, { onConflict: 'user_id,day_key' })
-      
+
   } catch (e) {
     console.error("Failed to increment usage stats", e)
   }
 }
 
-export const resolveDoctorRecommendationsWithFallback = async (args: { 
-  serviceClient: any, 
-  departmentSuggestion: any, 
-  locationCity: string | null, 
+export const resolveDoctorRecommendationsWithFallback = async (args: {
+  serviceClient: any,
+  departmentSuggestion: any,
+  locationCity: string | null,
   searchAreaCity: string | null,
-  latestMessageText: string 
+  latestMessageText: string
 }) => {
   const resolvedDepartment = resolveDepartmentFromSuggestion(args.departmentSuggestion, args.latestMessageText)
   const specialty = resolvedDepartment?.label || args.departmentSuggestion?.label || null
@@ -1650,7 +1745,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
   // to the current city (for example Patna) even when the user did not ask for local results.
   const city = normalizeCityInput(args.searchAreaCity || null)
   const cityLike = city ? `%${escapePostgrestLike(city)}%` : null
-  
+
   let doctors = []
   let recommendationMode = 'exact'
   const meta: DoctorSearchMeta = { source: 'database', localCity: city }
@@ -1673,7 +1768,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     }
 
     const { data } = await query
-    
+
     if (data && data.length > 0) {
       doctors = data
     }
@@ -1689,7 +1784,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
       .ilike('city', cityLike!)
       .order('is_verified', { ascending: false })
       .limit(6)
-    
+
     if (data && data.length > 0) {
       doctors = data
       meta.localCityVisible = true
@@ -1756,7 +1851,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
       .select('*, profiles(first_name, last_name, profile_picture)')
       .order('is_verified', { ascending: false })
       .limit(6)
-    
+
     if (data && data.length > 0) {
       doctors = data
       meta.usedAppWideFallback = true

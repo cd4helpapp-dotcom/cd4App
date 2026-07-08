@@ -7,8 +7,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const DEFAULT_OPENAI_MODEL = "gpt-5.4";
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4.1";
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o";
 const MAX_TRANSCRIPT_LENGTH = 12000;
 const AI_REPORTS_BUCKET = "ai-reports";
 
@@ -652,7 +652,6 @@ Interaction Rules:
 
     const intakeId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
-    const hospitalName = onboardingRow.display_name || onboardingRow.registered_name || "CD4 partner hospital";
     const pdfPath = `${user.id}/hospital-intakes/${intakeId}.pdf`;
     const pdfBytes = await buildHospitalIntakePdfBytes({
       hospitalName,

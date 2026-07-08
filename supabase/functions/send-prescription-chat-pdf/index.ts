@@ -7,8 +7,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const DEFAULT_OPENAI_MODEL = "gpt-5.4";
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4.1";
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o";
 const APP_BRAND_NAME = "CD4";
 const APP_EMAIL_DOMAIN = "cd4.app";
 const APP_EMAIL_FROM = `${APP_BRAND_NAME} <no-reply@${APP_EMAIL_DOMAIN}>`;
