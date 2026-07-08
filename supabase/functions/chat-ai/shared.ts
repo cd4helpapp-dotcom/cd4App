@@ -596,23 +596,53 @@ export const getTriageCoverage = (combinedUserText: string): any => {
     'chills', 'rash', 'itch', 'diarrhea', 'loose motion', 'constipation', 'dizziness',
     'sweating', 'chest pain', 'throat', 'sore throat', 'weakness', 'body ache',
   ])
+  const trigger = hasAnyTerm(text, [
+    'after', 'before', 'during', 'on eating', 'after eating', 'with food', 'after food',
+    'exercise', 'walking', 'running', 'movement', 'rest', 'sleep', 'stress', 'cold weather',
+    'heat', 'touch', 'pressure', 'change in posture', 'standing up',
+    'ke baad', 'se pehle', 'ke time', 'khane ke baad', 'chalne par', 'sone par', 'stress me',
+  ]) || /\b(worse|better)\s+(with|when|after|before)\b/.test(text)
+  const impact = hasAnyTerm(text, [
+    'work', 'sleep', 'walk', 'walking', 'eat', 'eating', 'drink', 'drinking', 'talk', 'talking',
+    'breathless', 'can not', "can't", 'unable', 'difficulty', 'impact', 'affect', 'daily',
+    'school', 'office', 'exercise', 'feed', 'feeding', 'move', 'moving',
+    'kaam', 'neend', 'chalna', 'khana', 'paani', 'rozmarra', 'roz marra',
+  ]) || /\b(can'?t|cannot|unable to|difficulty in|hard to|problem in)\b/.test(text)
   const medicationContext = hasAnyTerm(text, [
     'medicine', 'medication', 'tablet', 'allergy', 'dawai', 'paracetamol', 'inhaler',
     'insulin', 'antibiotic', 'bp medicine', 'blood pressure medicine',
   ])
-  return { onset, severity, associated, medicationContext, covered: [onset, severity, associated, medicationContext].filter(Boolean).length }
+  return {
+    onset,
+    severity,
+    associated,
+    trigger,
+    impact,
+    medicationContext,
+    covered: [onset, severity, associated, trigger, impact, medicationContext].filter(Boolean).length,
+  }
 }
 
 export const mergeTriageCoverage = (primary: any, secondary: any): any => {
   const onset = primary.onset || secondary.onset
   const severity = primary.severity || secondary.severity
   const associated = primary.associated || secondary.associated
+  const trigger = primary.trigger || secondary.trigger
+  const impact = primary.impact || secondary.impact
   const medicationContext = primary.medicationContext || secondary.medicationContext
-  return { onset, severity, associated, medicationContext, covered: [onset, severity, associated, medicationContext].filter(Boolean).length }
+  return {
+    onset,
+    severity,
+    associated,
+    trigger,
+    impact,
+    medicationContext,
+    covered: [onset, severity, associated, trigger, impact, medicationContext].filter(Boolean).length,
+  }
 }
 
 export const extractStoredCoverageCount = (summary: string): number => {
-  const match = (summary || '').match(/triage coverage:\s*([0-4])\s*\/\s*4/i)
+  const match = (summary || '').match(/triage coverage:\s*([0-6])\s*\/\s*6/i)
   return match?.[1] ? Number(match[1]) : 0
 }
 
@@ -633,13 +663,15 @@ type ConcernTriageProfile = {
   onset: string
   severity: string
   associated: string
+  trigger: string
+  impact: string
   medicationContext: string
   redFlags: string
 }
 
-type TriageQuestionSlot = 'onset' | 'severity' | 'associated' | 'medicationContext'
+type TriageQuestionSlot = 'onset' | 'severity' | 'associated' | 'trigger' | 'impact' | 'medicationContext'
 
-const TRIAGE_SLOT_ORDER: TriageQuestionSlot[] = ['onset', 'severity', 'associated', 'medicationContext']
+const TRIAGE_SLOT_ORDER: TriageQuestionSlot[] = ['onset', 'severity', 'associated', 'trigger', 'impact', 'medicationContext']
 
 const TRIAGE_GENERIC_PATTERNS = [
   /\btell me more\b/i,
@@ -661,6 +693,8 @@ const TRIAGE_SLOT_KEYWORDS: Record<TriageQuestionSlot, string[]> = {
   onset: ['kab se', 'since when', 'when did', 'how long', 'started', 'start hua', 'start hui', 'start huye', 'begin', 'began', 'ongoing', 'shuruaat'],
   severity: ['kitna', 'severity', '1-10', '1 to 10', 'pressure', 'tightness', 'sharp', 'burning', 'constant', 'cramping', 'worse', 'mild', 'moderate', 'severe', 'intensity'],
   associated: ['saath', 'also', 'along with', 'other symptoms', 'aur kya', 'aur kaun se', 'fever', 'cough', 'breath', 'breathing', 'wheezing', 'vomit', 'nausea', 'weakness', 'numbness', 'swelling', 'bleeding', 'rash', 'urine', 'dizziness', 'sweating', 'vision'],
+  trigger: ['trigger', 'after', 'before', 'during', 'with food', 'exercise', 'walking', 'movement', 'stress', 'sleep', 'worse with', 'better with', 'khane ke baad', 'chalne par'],
+  impact: ['impact', 'affect', 'work', 'sleep', 'walk', 'daily', 'routine', 'unable', 'difficulty', 'school', 'office', 'feeding', 'moving', 'breathing difficulty'],
   medicationContext: ['medicine', 'medication', 'tablet', 'allergy', 'inhaler', 'paracetamol', 'bp', 'blood pressure', 'diabetes', 'pregnancy', 'history', 'taken any medicines', 'ongoing conditions', 'regular medicine', 'purani bimari'],
 }
 
@@ -669,72 +703,96 @@ const TRIAGE_QUESTION_TEMPLATES: Record<string, Record<TriageQuestionSlot, strin
     onset: 'Chest pain kab se start hua, aur kya abhi bhi ho raha hai?',
     severity: 'Dard 1-10 me kitna hai, aur pressure/tightness jaisa lagta hai ya sharp?',
     associated: 'Saath me saans phoolna, pasina, chakkar, nausea, ya dard arm/jaw/back me ja raha hai kya?',
+    trigger: 'Kya ye dard chalne, stress, khane, ya rest me badhta ya kam hota hai?',
+    impact: 'Kya is pain ki wajah se aap normal kaam, chalna, ya saans lena mushkil mehsoos kar rahe hain?',
     medicationContext: 'BP ya heart ki history hai, ya koi heart/BP medicine chal rahi hai?',
   },
   breathing_cough: {
     onset: 'Khansi ya saans ki problem kab se hai?',
     severity: 'Kya saans rest me bhi phool rahi hai, ya chalne par?',
     associated: 'Fever, wheezing, chest pain, ya phlegm ka rang badla hua hai kya?',
+    trigger: 'Kya ye raat me, walking me, dust me, ya cold air me zyada badhta hai?',
+    impact: 'Kya is wajah se aapko bolne, chalne, ya sone me problem ho rahi hai?',
     medicationContext: 'Inhaler, allergy, asthma history, ya koi medicine li hai kya?',
   },
   fever: {
     onset: 'Bukhar kab se hai, aur kya continuous hai ya aata-jata?',
     severity: 'Highest temperature kitna gaya tha?',
     associated: 'Khansi, gala dard, body pain, chills, rash, vomiting, ya loose motion bhi hai kya?',
+    trigger: 'Kya bukhar ke saath koi infection exposure, travel, ya kisi bimar person ka contact tha?',
+    impact: 'Kya bukhar ki wajah se aapko kaam, khana, ya neend me dikkat ho rahi hai?',
     medicationContext: 'Paracetamol ya koi aur medicine li hai, aur allergy to nahi?',
   },
   headache: {
     onset: 'Headache kab se hai, aur kya achanak start hua tha?',
     severity: 'Dard kitna severe hai aur exact kahan feel ho raha hai?',
     associated: 'Vomiting, vision change, weakness, numbness, fever, ya neck stiffness hai kya?',
+    trigger: 'Kya screen time, stress, kam neend, ya khane skip karne se badhta hai?',
+    impact: 'Kya ye aapke kaam, padhai, ya normal routine ko affect kar raha hai?',
     medicationContext: 'BP ya migraine history hai, aur koi painkiller liya hai kya?',
   },
   abdomen: {
     onset: 'Pet dard kab se hai aur exactly kahan hai?',
     severity: 'Dard constant hai, cramping hai, burning jaisa hai, ya khane ke baad badhta hai?',
     associated: 'Vomiting, loose motion, blood, fever, dehydration, ya urine me problem bhi hai kya?',
+    trigger: 'Kya ye khane, stool, movement, ya kisi particular food ke baad badhta hai?',
+    impact: 'Kya is wajah se aap khana, chalna, ya seedha khade rehna mushkil feel kar rahe hain?',
     medicationContext: 'Koi acidity medicine, painkiller, ya allergy issue hai kya? Pregnancy possibility ho to batayein.',
   },
   skin: {
     onset: 'Rash ya itching kab se hai aur kya spread ho rahi hai?',
     severity: 'Itching, pain, ya swelling kitni severe hai?',
     associated: 'Fever, pus, facial swelling, ya breathing issue hua hai kya?',
+    trigger: 'Kya naya soap, cream, food, medicine, ya insect bite ke baad hua?',
+    impact: 'Kya itching se neend, kaam, ya day-to-day comfort affect ho raha hai?',
     medicationContext: 'Koi cream, allergy medicine, ya naya product/food use kiya hai kya?',
   },
   urinary: {
     onset: 'Urine ki problem kab se hai, aur kitni baar ho rahi hai?',
     severity: 'Burning ya pain kitna hai, aur lower abdomen ya side/back me bhi dard hai kya?',
     associated: 'Fever, blood in urine, vomiting, pregnancy, ya urine kam aa raha hai kya?',
+    trigger: 'Kya pani kam peene, travel, ya intercourse ke baad symptoms badhe hain?',
+    impact: 'Kya isse aapko raat me baar-baar uthna, ya normal routine me dikkat ho rahi hai?',
     medicationContext: 'Koi antibiotic, kidney stone history, diabetes medicine, ya allergy hai kya?',
   },
   gyne_pregnancy: {
     onset: 'Last period kab aaya tha, aur symptom kab start hua?',
     severity: 'Bleeding ya pain kitna hai, aur pads kitne use ho rahe hain?',
     associated: 'Dizziness, fever, foul discharge, severe lower abdomen pain, ya vomiting hai kya?',
+    trigger: 'Kya ye period timing, relation, stress, ya kisi medicine ke baad notice hua?',
+    impact: 'Kya ye aapki daily activity, sleep, ya walking ko affect kar raha hai?',
     medicationContext: 'Contraceptive/hormonal medicine, pregnancy test, ya allergy hai kya?',
   },
   child: {
     onset: 'Bachche ki age kya hai, aur symptoms kab se hain?',
     severity: 'Fever/pain kitna hai, aur kya baccha feed, drink, aur active hai?',
     associated: 'Breathing issue, rash, vomiting, diarrhea, ya kam urine/wet diapers hain kya?',
+    trigger: 'Kya school, food, vaccination, ya kisi sick contact ke baad symptoms aaye?',
+    impact: 'Kya baccha play, feed, sleep, ya drink theek se kar pa raha hai?',
     medicationContext: 'Koi medicine di hai, aur allergy history hai kya?',
   },
   mental_health: {
     onset: 'Ye problem kab se ho rahi hai aur koi trigger tha kya?',
     severity: 'Sleep ya work kitna affect ho raha hai, aur panic attacks hote hain kya?',
     associated: 'Low mood, appetite change, substance use, ya unsafe feel hota hai kya?',
+    trigger: 'Kya koi recent stress, loss, conflict, ya life change hua tha?',
+    impact: 'Kya isse padhai, kaam, rishte, ya self-care disturb ho raha hai?',
     medicationContext: 'Koi psychiatry medicine, therapy, alcohol/drug use, ya aur medicines hain kya?',
   },
   metabolic: {
     onset: 'Reading kab check ki thi aur ye naya hai ya purana?',
     severity: 'Reading kitni high/low hai aur saath me dizziness, sweating, headache, chest pain, ya weakness hai kya?',
     associated: 'Thirst, frequent urine, weight change, palpitations, swelling, ya vision changes hain kya?',
+    trigger: 'Kya medicine miss hui, diet change hua, illness hua, ya exercise me change aaya?',
+    impact: 'Kya reading ki wajah se aapko normal activity me dikkat, weakness, ya confusion feel ho raha hai?',
     medicationContext: 'Current medicines, missed doses, diet change, ya allergy hai kya?',
   },
   injury_ortho: {
     onset: 'Problem kab start hui aur kya fall, twist, ya injury hui thi?',
     severity: 'Dard 1-10 me kitna hai, aur limb move/use kar pa rahe hain kya?',
     associated: 'Swelling, deformity, numbness, weakness, fever, ya pain arm/leg me ja raha hai kya?',
+    trigger: 'Kya injury kisi fall, sports, lifting, ya sudden movement ke baad hui?',
+    impact: 'Kya chalne, pakadne, uthne, ya normal movement me problem ho rahi hai?',
     medicationContext: 'Painkiller, blood thinner, bone/joint history, ya allergy hai kya?',
   },
 }
@@ -743,6 +801,8 @@ const TRIAGE_DEFAULT_TEMPLATES: Record<TriageQuestionSlot, string> = {
   onset: 'Main symptom kab se hai?',
   severity: 'Ye kitna severe hai aur kya better ya worse karta hai?',
   associated: 'Koi aur related symptom bhi hai kya?',
+  trigger: 'Kis cheez se ye badhta ya trigger hota hai?',
+  impact: 'Isse aapki daily life, sleep, ya kaam kitna affect ho raha hai?',
   medicationContext: 'Koi medicine li hai, allergy hai, ya chronic illness hai kya?',
 }
 
@@ -761,6 +821,16 @@ const TRIAGE_SLOT_OPENERS: Record<TriageQuestionSlot, string[]> = {
     'Saath ke symptoms bhi important hain',
     'Ye bhi dekhna hoga ki aur kya saath me ho raha hai',
     'Associated symptoms se diagnosis narrow hota hai',
+  ],
+  trigger: [
+    'Trigger samajh lena clinically helpful hoga',
+    'Ye jaanna zaroori hai ki kya cheez isse badhati hai',
+    'Pattern aur trigger clear kar lete hain',
+  ],
+  impact: [
+    'Iska daily life par effect samajhna important hai',
+    'Functional impact dekhna bhi zaroori hai',
+    'Ye jaanna useful hoga ki routine kitna affect ho raha hai',
   ],
   medicationContext: [
     'Treatment safety ke liye ye bhi batayein',
@@ -784,6 +854,16 @@ const TRIAGE_SLOT_VARIANTS: Record<TriageQuestionSlot, string[]> = {
     'Iske saath aur kya symptoms aa rahe hain?',
     'Saath me fever, nausea, breathing issue, ya koi aur complaint bhi hai kya?',
     'Kya iske alawa koi aur related symptom notice hua hai?',
+  ],
+  trigger: [
+    'Kya ye kisi trigger, food, activity, ya stress ke baad badhta hai?',
+    'Kya koi specific cheez isse worse ya better karti hai?',
+    'Kya aapne koi pattern notice kiya hai, jaise walk, food, ya rest ke baad?',
+  ],
+  impact: [
+    'Kya isse aapka routine, sleep, ya kaam affect ho raha hai?',
+    'Kya is wajah se normal daily activity karna mushkil ho raha hai?',
+    'Ye problem aapki life ko kitna interrupt kar rahi hai?',
   ],
   medicationContext: [
     'Ab tak iske liye koi medicine li hai kya?',
@@ -959,14 +1039,51 @@ const getTriageMissingSlots = (coverage: any): TriageQuestionSlot[] => {
   if (!coverage?.onset) missing.push('onset')
   if (!coverage?.severity) missing.push('severity')
   if (!coverage?.associated) missing.push('associated')
+  if (!coverage?.trigger) missing.push('trigger')
+  if (!coverage?.impact) missing.push('impact')
   if (!coverage?.medicationContext) missing.push('medicationContext')
   return missing
+}
+
+const getRecentlyAskedTriageSlots = (history: any[], lookback = 6): TriageQuestionSlot[] => {
+  const recentAssistantQuestions = (history || [])
+    .filter((item) => item?.role === 'assistant' && typeof item?.content === 'string' && item.content.includes('?'))
+    .slice(-lookback)
+
+  const slots: TriageQuestionSlot[] = []
+  for (const item of recentAssistantQuestions) {
+    const slot = detectTriageQuestionSlot(item?.content || '')
+    if (slot) slots.push(slot)
+  }
+  return slots
+}
+
+const countRecentSlotOccurrences = (slots: TriageQuestionSlot[], target: TriageQuestionSlot | null): number => {
+  if (!target) return 0
+  return slots.filter((slot) => slot === target).length
+}
+
+const pickNextTriageSlots = (args: {
+  missingSlots: TriageQuestionSlot[]
+  history?: any[]
+  voiceMode?: boolean
+}): TriageQuestionSlot[] => {
+  const missingSlots = args.missingSlots || []
+  if (missingSlots.length === 0) return []
+  const recentSlots = getRecentlyAskedTriageSlots(Array.isArray(args.history) ? args.history : [])
+  const lastRecentSlot = recentSlots[recentSlots.length - 1] || null
+  const secondRecentSlot = recentSlots[recentSlots.length - 2] || null
+  const preferred = missingSlots.filter((slot) => slot !== lastRecentSlot && slot !== secondRecentSlot)
+  if (preferred.length > 0) {
+    return args.voiceMode ? [preferred[0]] : preferred.slice(0, 2)
+  }
+  return args.voiceMode ? [missingSlots[0]] : missingSlots.slice(0, 2)
 }
 
 export const buildTriageQuestionBlueprint = (concernText: string, coverage: any = {}): string => {
   const profile = getConcernTriageProfile(concernText)
   const missingSlots = getTriageMissingSlots(coverage)
-  const nextSlots = missingSlots.slice(0, 2).map((slot) => getTriageQuestionTemplate(profile, slot))
+  const nextSlots = missingSlots.slice(0, 3).map((slot) => getTriageQuestionTemplate(profile, slot))
   if (nextSlots.length === 0) {
     return `Concern focus: ${profile.label}. Enough history appears present; move to guidance or doctor recommendation if the user is asking for next steps.`
   }
@@ -993,8 +1110,32 @@ export const buildTriageFollowUpReply = (args: {
     }
   }
 
-  const latestSlot = missingSlots[0]
-  const secondSlot = args.voiceMode ? null : missingSlots[1] || null
+  const selectedSlots = pickNextTriageSlots({
+    missingSlots,
+    history,
+    voiceMode: Boolean(args.voiceMode),
+  })
+  const recentSlots = getRecentlyAskedTriageSlots(history, 8)
+  const lastAskedSlot = recentSlots[recentSlots.length - 1] || null
+  const repeatedLastAskedSlotCount = countRecentSlotOccurrences(recentSlots, lastAskedSlot)
+
+  if (
+    lastAskedSlot &&
+    repeatedLastAskedSlotCount >= 2 &&
+    missingSlots.includes(lastAskedSlot) &&
+    selectedSlots.length > 0 &&
+    selectedSlots[0] === lastAskedSlot
+  ) {
+    return {
+      valid: true,
+      reply: 'Samajh gaya. Main ab doctor recommendation ya next-step guidance de raha hoon.',
+      profileId: profile.id,
+      missingSlots,
+    }
+  }
+
+  const latestSlot = selectedSlots[0] || missingSlots[0]
+  const secondSlot = args.voiceMode ? null : selectedSlots[1] || null
   const language = detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)
   const questions = [buildDoctorLikeQuestion({
     profile,
@@ -1062,7 +1203,7 @@ export const validateTriageQuestionReply = (reply: string, args: {
   if (missingSlots.length > 0 && !slot) reasons.push('vague_or_untyped_question')
   if (lastAssistantSlot && slot && lastAssistantSlot === slot && missingSlots.length > 0) reasons.push('repetitive')
 
-  const questionWordAnchors = ['?', 'kab se', 'since when', 'how long', 'kitna', '1-10', 'saath', 'fever', 'cough', 'pain', 'breath', 'vomit', 'nausea', 'medicine', 'allergy']
+  const questionWordAnchors = ['?', 'kab se', 'since when', 'how long', 'kitna', '1-10', 'saath', 'fever', 'cough', 'pain', 'breath', 'vomit', 'nausea', 'medicine', 'allergy', 'trigger', 'daily', 'routine']
   const hasQuestionAnchor = questionWordAnchors.some((anchor) => normalizedReply.includes(normalize(anchor)))
   if (missingSlots.length > 0 && !hasQuestionAnchor) reasons.push('not_medical_enough')
 
@@ -1085,6 +1226,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when the chest pain started, whether it began suddenly, and if it is still happening.',
     severity: 'Ask pain intensity from 1-10 and whether it feels like pressure, tightness, burning, or sharp pain.',
     associated: 'Ask about breathlessness, sweating, dizziness, nausea, or pain going to left arm/jaw/back.',
+    trigger: 'Ask whether it gets worse with walking, stress, stairs, or after meals.',
+    impact: 'Ask whether it is limiting movement, work, or normal breathing.',
     medicationContext: 'Ask about BP/heart/diabetes history and current heart/BP medicines.',
     redFlags: 'Severe chest pressure, breathlessness, sweating, fainting, or pain radiating to arm/jaw needs urgent care.',
   },
@@ -1095,6 +1238,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask how many days the cough/cold/breathing issue has been present.',
     severity: 'Ask whether breathing is difficult at rest, with walking, or only mild.',
     associated: 'Ask about fever, wheezing, chest pain, phlegm color, sore throat, and oxygen level if available.',
+    trigger: 'Ask whether it worsens at night, with dust, cold air, exercise, or lying down.',
+    impact: 'Ask whether it is affecting sleep, speaking, walking, or daily activity.',
     medicationContext: 'Ask about inhaler use, allergies, asthma history, and medicines already taken.',
     redFlags: 'Breathlessness at rest, blue lips, chest pain, low oxygen, or high fever needs urgent care.',
   },
@@ -1105,6 +1250,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when the fever started and whether it is continuous or coming and going.',
     severity: 'Ask the highest temperature reading and whether it crossed 102 F.',
     associated: 'Ask about chills, cough, sore throat, body pain, rash, burning urine, vomiting, or diarrhea.',
+    trigger: 'Ask about travel, sick contact, or recent infection exposure.',
+    impact: 'Ask whether fever is affecting eating, sleeping, hydration, or work.',
     medicationContext: 'Ask whether they took paracetamol/other medicines and any drug allergy.',
     redFlags: 'Very high fever, confusion, breathing difficulty, stiff neck, dehydration, or rash needs urgent care.',
   },
@@ -1115,6 +1262,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when the headache started and whether it was sudden or the worst-ever headache.',
     severity: 'Ask severity from 1-10 and exact location of pain.',
     associated: 'Ask about vomiting, vision changes, weakness/numbness, fever, neck stiffness, or dizziness.',
+    trigger: 'Ask whether screen time, stress, lack of sleep, skipping meals, or noise makes it worse.',
+    impact: 'Ask whether it is affecting concentration, work, study, or daily routine.',
     medicationContext: 'Ask about BP, migraine history, painkillers taken, and medicine allergies.',
     redFlags: 'Sudden worst headache, weakness, confusion, seizure, fever with stiff neck, or vision loss needs urgent care.',
   },
@@ -1125,6 +1274,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when it started and where exactly the pain/problem is located.',
     severity: 'Ask severity from 1-10 and whether pain is constant, cramping, burning, or after food.',
     associated: 'Ask about vomiting, diarrhea, blood in stool/vomit, fever, dehydration, or urinary symptoms.',
+    trigger: 'Ask whether food, fasting, movement, bowel motion, or stress makes it better or worse.',
+    impact: 'Ask whether it is affecting eating, walking, sleep, or ability to work.',
     medicationContext: 'Ask medicines taken, food trigger, acidity medicines, allergies, and pregnancy possibility where relevant.',
     redFlags: 'Severe worsening pain, blood, persistent vomiting, dehydration, fainting, or pregnancy with pain needs urgent care.',
   },
@@ -1135,6 +1286,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when the rash/itching started and whether it is spreading.',
     severity: 'Ask how severe the itching/pain/swelling is and which body area is involved.',
     associated: 'Ask about fever, pus, facial/lip swelling, breathing difficulty, or new food/product exposure.',
+    trigger: 'Ask about new soap, cream, food, medicine, sweat, or insect bite exposure.',
+    impact: 'Ask whether it is disturbing sleep, work, or daily comfort.',
     medicationContext: 'Ask about allergy medicines, creams used, known allergies, and recent antibiotics.',
     redFlags: 'Lip/face swelling, breathing difficulty, rapidly spreading rash, fever with rash, or pus needs urgent care.',
   },
@@ -1145,6 +1298,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when urinary symptoms started and how often they are passing urine.',
     severity: 'Ask burning/pain severity and whether there is lower abdomen or side/back pain.',
     associated: 'Ask about fever, chills, blood in urine, vomiting, pregnancy, diabetes, or reduced urine.',
+    trigger: 'Ask whether dehydration, sex, travel, or holding urine makes it worse.',
+    impact: 'Ask whether it is disturbing sleep or normal daily routine.',
     medicationContext: 'Ask about antibiotics taken, kidney stone history, diabetes medicines, and allergies.',
     redFlags: 'Fever with back pain, blood in urine, vomiting, pregnancy, or very low urine needs urgent care.',
   },
@@ -1155,6 +1310,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask last period date, pregnancy possibility, and when the symptom started.',
     severity: 'Ask bleeding/pain severity and number of pads used if bleeding is present.',
     associated: 'Ask about dizziness, fever, foul discharge, severe lower abdomen pain, or vomiting.',
+    trigger: 'Ask whether it is linked to periods, sex, stress, or a new medicine.',
+    impact: 'Ask whether it is affecting walking, sleep, or normal activity.',
     medicationContext: 'Ask about contraceptive/hormonal medicines, pregnancy test result, and allergies.',
     redFlags: 'Pregnancy with pain/bleeding, heavy bleeding, fainting, fever, or severe one-sided pain needs urgent care.',
   },
@@ -1165,6 +1322,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask child age, weight if known, and when symptoms started.',
     severity: 'Ask temperature/pain severity and whether the child is feeding, drinking, and active.',
     associated: 'Ask about breathing difficulty, rash, vomiting, diarrhea, fewer wet diapers/urine, or sleepiness.',
+    trigger: 'Ask about vaccination, school contact, food, or sick contact exposure.',
+    impact: 'Ask whether the child is playing, feeding, or sleeping normally.',
     medicationContext: 'Ask medicines/dose already given and allergy history.',
     redFlags: 'Infant under 3 months with fever, breathing difficulty, dehydration, seizure, or extreme sleepiness needs urgent care.',
   },
@@ -1175,6 +1334,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask how long this has been happening and any trigger or recent change.',
     severity: 'Ask how much it affects sleep/work and whether there are panic attacks.',
     associated: 'Ask about low mood, appetite change, substance use, self-harm thoughts, or feeling unsafe.',
+    trigger: 'Ask about recent stress, loss, conflict, overwork, or sleep disruption.',
+    impact: 'Ask whether it is affecting studies, work, relationships, or self-care.',
     medicationContext: 'Ask about psychiatric medicines, therapy, alcohol/drug use, and other medicines.',
     redFlags: 'Self-harm thoughts, feeling unsafe, severe agitation, or confusion needs urgent human help immediately.',
   },
@@ -1185,6 +1346,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask recent reading value, when it was checked, and whether this is new or ongoing.',
     severity: 'Ask how high/low the reading is and symptoms like dizziness, sweating, headache, chest pain, or weakness.',
     associated: 'Ask about thirst/urination, weight change, palpitations, swelling, or vision changes depending on the condition.',
+    trigger: 'Ask about missed medicines, diet change, recent illness, or extra exercise.',
+    impact: 'Ask whether it is causing confusion, faintness, weakness, or difficulty in routine work.',
     medicationContext: 'Ask current medicines, missed doses, recent diet/illness changes, and allergies.',
     redFlags: 'Very high BP with chest pain/headache/weakness, very low sugar, confusion, or fainting needs urgent care.',
   },
@@ -1195,6 +1358,8 @@ const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
     onset: 'Ask when it started and whether there was a fall, twist, or injury.',
     severity: 'Ask pain severity from 1-10 and whether they can move/use the limb.',
     associated: 'Ask about swelling, deformity, numbness, weakness, fever, or pain going down the leg/arm.',
+    trigger: 'Ask whether movement, walking, lifting, or a specific accident triggered it.',
+    impact: 'Ask whether they can bear weight, grip, or do normal daily movement.',
     medicationContext: 'Ask painkillers used, existing bone/joint conditions, blood thinners, and allergies.',
     redFlags: 'Deformity, inability to bear weight, numbness/weakness, loss of bladder control, or major trauma needs urgent care.',
   },
@@ -1207,6 +1372,8 @@ const DEFAULT_TRIAGE_PROFILE: ConcernTriageProfile = {
   onset: 'Ask when the main symptom started and whether it is improving or worsening.',
   severity: 'Ask severity from 1-10 and what makes it better or worse.',
   associated: 'Ask the most relevant associated symptoms based on the user concern, not a fixed generic list.',
+  trigger: 'Ask what makes it worse or better, such as food, activity, sleep, or stress.',
+  impact: 'Ask how much it is affecting daily routine, sleep, work, or movement.',
   medicationContext: 'Ask medicines already taken, allergies, and important conditions like pregnancy, diabetes, BP, asthma, or heart disease if relevant.',
   redFlags: 'Severe pain, breathing difficulty, fainting, confusion, uncontrolled bleeding, or rapidly worsening symptoms need urgent care.',
 }
@@ -1236,6 +1403,8 @@ export const getMissingTriageQuestions = (coverage: any, concernText = '') => {
   if (!coverage.onset) missing.push(profile.onset)
   if (!coverage.severity) missing.push(profile.severity)
   if (!coverage.associated) missing.push(profile.associated)
+  if (!coverage.trigger) missing.push(profile.trigger)
+  if (!coverage.impact) missing.push(profile.impact)
   if (!coverage.medicationContext) missing.push(profile.medicationContext)
   return missing
 }
@@ -1249,7 +1418,8 @@ export const getConcernSpecificTriageGuidance = (concernText: string, coverage: 
     'Follow-up questions must feel like a doctor speaking to the patient. Use a natural conversational paragraph, not a title plus bullet checklist.',
     `Next missing detail priority: ${nextQuestion}`,
     `Concern-specific red flags to screen when relevant: ${profile.redFlags}`,
-    'Ask only one clear follow-up question in voice mode. In text mode, ask at most two short doctor-like questions in one paragraph.',
+    'Ask a bounded sequence of concern-specific follow-ups over the conversation, usually 5 to 6 good questions max, not an endless questionnaire.',
+    'Ask only one clear follow-up question in voice mode. In text mode, ask at most two short doctor-like questions in one paragraph, and never repeat a slot that was already answered or asked.',
     'Avoid headings like "Fever Symptoms", decorative emojis, and multi-bullet questionnaires for triage follow-ups.',
     'If the user asks for doctor suggestions, slots, or booking, proceed to that flow instead of continuing triage questions.',
   ].join(' ')

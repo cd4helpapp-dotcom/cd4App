@@ -210,6 +210,21 @@ const VOICE_NON_MEDICAL_SCOPE_TERMS = [
 ]
 
 const resolveVoicePreset = (value: unknown): { persona: "male" | "female"; voice: string } => {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : ""
+  if (normalized === "male" || normalized === "man" || normalized === "onyx") {
+    return {
+      persona: "male",
+      voice: MALE_TTS_VOICE || DEFAULT_TTS_VOICE || "onyx",
+    }
+  }
+
+  if (normalized === "female" || normalized === "woman" || normalized === "nova") {
+    return {
+      persona: "female",
+      voice: FEMALE_TTS_VOICE || DEFAULT_TTS_VOICE || "nova",
+    }
+  }
+
   return {
     persona: "female",
     voice: FEMALE_TTS_VOICE || DEFAULT_TTS_VOICE || "nova",

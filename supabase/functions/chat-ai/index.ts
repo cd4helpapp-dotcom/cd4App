@@ -901,12 +901,20 @@ Deno.serve(async (req) => {
       ? formatDoctorContext(doctorRecommendations, recommendationMode, bookingPrep)
       : 'No doctor lookup required for this turn.'
     
+    const triageQuestionSetsUsed = Math.max(
+      countTriageQuestionSetsFromHistory(history),
+      extractStoredTriageSetCount(memoryRecord.summary || ''),
+    )
+    const triageQuestionSetLimitReached =
+      triageQuestionSetsUsed >= 3 ||
+      (triageQuestionSetsUsed >= 2 && (triageCoverage.covered >= 2 || bookingIntent || doctorSearchIntent))
+
     const systemPrompt = buildSystemPrompt({
       concern: concernText, assistantMode, medicineQuery, languageInstruction,
       latestMessageText: messageText,
       combinedUserText,
       memorySummary: memoryRecord.summary, toolContext, conversationDirective: "Be helpful",
-      triageQuestionMode: true, triageQuestionSetsUsed: 0, triageQuestionSetLimitReached: false,
+      triageQuestionMode: true, triageQuestionSetsUsed, triageQuestionSetLimitReached,
       bookingConfirmation,
       bookingPrep,
       userProfile // Pass profile to prompt builder

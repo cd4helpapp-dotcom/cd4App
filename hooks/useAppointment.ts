@@ -335,14 +335,38 @@ export const useBookAppointment = () => {
             }
 
             const appointment = { id: verifyData?.appointmentId };
+            const compactHistory = await fetchConversationHistoryForNotification({
+                userId: session.user.id,
+                conversationId,
+            });
+
+            let ensuredReportId = typeof aiReportId === 'string' && aiReportId.trim() ? aiReportId.trim() : '';
+            if (!ensuredReportId && session?.access_token) {
+                try {
+                    const reportPayload: Record<string, unknown> = {
+                        concern: concern || undefined,
+                        conversationId: conversationId || undefined,
+                    };
+                    if (compactHistory.length > 0) {
+                        reportPayload.history = compactHistory;
+                    }
+
+                    const { data: reportData, error: reportError } = await supabase.functions.invoke('save-ai-report', {
+                        body: reportPayload,
+                    });
+
+                    if (!reportError && reportData?.success && typeof reportData.reportId === 'string') {
+                        ensuredReportId = reportData.reportId.trim();
+                    } else if (reportError || reportData?.success === false) {
+                        console.warn('AI report generation after booking was not available:', reportError?.message || reportData?.error || 'unknown');
+                    }
+                } catch (reportError) {
+                    console.warn('AI report generation after booking failed:', reportError);
+                }
+            }
 
             // 3. Notify doctor about new appointment (non-blocking).
             void (async () => {
-                const compactHistory = await fetchConversationHistoryForNotification({
-                    userId: session.user.id,
-                    conversationId,
-                });
-
                 const notificationBody: Record<string, unknown> = {
                     appointmentId: appointment.id,
                     concern: concern || undefined,
@@ -351,6 +375,9 @@ export const useBookAppointment = () => {
 
                 if (compactHistory.length > 0) {
                     notificationBody.history = compactHistory;
+                }
+                if (ensuredReportId) {
+                    notificationBody.aiReportId = ensuredReportId;
                 }
 
                 const { data, error } = await supabase.functions.invoke('send-appointment-notification', {

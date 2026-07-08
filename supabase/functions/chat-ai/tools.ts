@@ -709,7 +709,7 @@ Guidelines:
 13. **DYNAMIC TRIAGE QUESTIONS**: The question must match the user's active concern. Example: cough asks about breathlessness/phlegm/fever; headache asks sudden onset/vision/vomiting/weakness; chest pain asks radiation/sweating/breathlessness; injury/fracture asks about swelling, deformity, bleeding, numbness, and movement. Never reuse a fixed generic question when the concern needs a more specific one.
 14. **NO REPETITIVE QUESTIONS (STRICT)**: Never ask for the same information twice. This is especially critical for booking slots, appointment confirmations, and clinical/AI snapshot details. If the user has already selected a slot, or if the clinical details for the triage snapshot (symptoms, duration, severity, medicines) are already present in the history, do NOT re-ask or re-prompt for confirmation. Immediately perform the requested action (such as booking the slot or proceeding to final confirmation).
 15. **BOOKING SAFETY**: Never claim booking success unless Booking Confirmation says confirmed. If multiple slots are shown and the user only says "yes" or "go ahead", ask for the exact slot number/time; do not pick the first slot yourself.
-16. **MANDATORY TRIAGE BEFORE BOOKING**: Before booking any slot or appointment, you MUST complete all triage questions to populate the AI snapshot. If there is missing info (listed in Missing Info), do NOT book the slot or confirm booking yet. Acknowledge the booking request warmly, but immediately ask the next missing triage question (symptoms, duration, severity, medicines) in a highly natural, doctor-like way to gather the necessary details first.`
+16. **TRIAGE-TO-BOOKING BALANCE**: Before booking a slot, gather the important clinical details needed for the concern. Usually this means 2-3 short concern-specific follow-ups, not an endless questionnaire. If the user already gave enough detail, or if the triage question limit is reached, stop repeating questions and move to a doctor recommendation, next-step guidance, or booking confirmation flow. If booking is still unsafe because a critical detail is missing, ask only the next missing question once and never repeat the same slot twice.`
 }
 
 /**
@@ -866,14 +866,31 @@ const resolveSlotByHeuristics = (args: { text: string, slots: any[], historyBook
     .filter(Boolean)
   const pool = historicalOrderedSlots.length > 0 ? historicalOrderedSlots : slots
 
+  const slotNumberMatch = normalizedText.match(/\bslot\s*(?:no\.?\s*)?([1-9])\b/)
+  if (slotNumberMatch?.[1]) {
+    const slotIndex = Number(slotNumberMatch[1]) - 1
+    if (slotIndex >= 0 && slotIndex < pool.length) {
+      return pool[slotIndex]?._id || null
+    }
+    if (slotIndex >= 0 && slotIndex < slots.length) {
+      return slots[slotIndex]?._id || null
+    }
+  }
+
   if (/\b(earliest|first|1st|pehla|pahla)\b/.test(normalizedText)) return pool[0]?._id || null
   if (/\b(second|2nd|dusra|doosra)\b/.test(normalizedText)) return pool[1]?._id || null
   if (/\b(third|3rd|teesra|tisra)\b/.test(normalizedText)) return pool[2]?._id || null
   if (/\b(last|latest|final)\b/.test(normalizedText)) return pool[pool.length - 1]?._id || null
 
-  // "this slot", "is slot", "ye slot", "same slot" should map to most recent suggested option (default first).
+  // "this slot", "is slot", "ye slot", "same slot" is only safe when there is a single prior choice.
   if (/\b(this|that|is|ye|wahi|isi|same)\b.*\b(slot|time|one)\b/.test(normalizedText)) {
-    return pool[0]?._id || null
+    if (historicalOrderedSlots.length === 1) {
+      return historicalOrderedSlots[0]?._id || null
+    }
+    if (slots.length === 1) {
+      return slots[0]?._id || null
+    }
+    return null
   }
 
   const nowInIst = new Date(Date.now() + (330 * 60 * 1000))
@@ -929,6 +946,42 @@ const resolveSlotByHeuristics = (args: { text: string, slots: any[], historyBook
   }
 
   return null
+}
+
+const getSlotOptionSignature = (slotOptions: any[]): string => {
+  if (!Array.isArray(slotOptions) || slotOptions.length === 0) return ''
+  return slotOptions
+    .map((slot: any) => {
+      const id = typeof slot?.id === 'string' ? slot.id : typeof slot?._id === 'string' ? slot._id : ''
+      const label = typeof slot?.label === 'string' ? slot.label.trim() : ''
+      return `${id || label}`
+    })
+    .filter((value: string) => value.length > 0)
+    .join('|')
+}
+
+const countRepeatedBookingSlotPrompts = (history: any[], currentSlotOptions: any[]): number => {
+  const currentSignature = getSlotOptionSignature(currentSlotOptions)
+  if (!currentSignature) return 0
+
+  let repeatedCount = 0
+  for (let index = (Array.isArray(history) ? history.length : 0) - 1; index >= 0; index -= 1) {
+    const item = history[index]
+    if (item?.role !== 'assistant') continue
+
+    const itemSignature = getSlotOptionSignature(Array.isArray(item?.bookingSlotOptions) ? item.bookingSlotOptions : [])
+    const looksLikeSlotPrompt =
+      typeof item?.bookingPrompt === 'string' && item.bookingPrompt.trim().length > 0 &&
+      /\b(slot|time|book)\b/i.test(item.bookingPrompt)
+
+    if (!itemSignature || !looksLikeSlotPrompt) continue
+    if (itemSignature !== currentSignature) continue
+
+    repeatedCount += 1
+    if (repeatedCount >= 2) break
+  }
+
+  return repeatedCount
 }
 
 const hasStrongBookingExecutionSignal = (normalizedText: string): boolean => {
@@ -1321,6 +1374,23 @@ export const runAutonomousToolLoop = async (args: any) => {
                 label: formatBookingSlotLabel(s.date, s.startTime, s.endTime)
               }))
             }
+          }
+        }
+
+        const repeatedBookingPromptCount = countRepeatedBookingSlotPrompts(
+          Array.isArray(args.history) ? args.history : [],
+          bookingPrep?.status === 'ready' ? (bookingPrep?.slotOptions || []) : [],
+        )
+
+        if (
+          bookingPrep?.status === 'ready' &&
+          repeatedBookingPromptCount >= 2 &&
+          !confirmingPendingSelectedSlot &&
+          !mentionedSlotId
+        ) {
+          bookingPrep = {
+            status: 'incomplete',
+            message: 'I already shared these slots a couple of times. Please reply with slot 1, slot 2, or ask me to suggest another verified doctor.',
           }
         }
       }

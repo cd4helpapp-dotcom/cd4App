@@ -5141,6 +5141,50 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             bookingPrompt: latestSlotMessage?.bookingPrompt || latestDoctorMessage?.bookingPrompt,
         } as AgentMessage;
     }, [agentMessages]);
+    const handleAgentSlotPress = React.useCallback((slot: AgentBookingSlotOption, index: number, sourceMessage?: AgentMessage | null) => {
+        const source = sourceMessage || latestAgentVisualMessage;
+        const doctor = source?.recommendedDoctors?.[0] || null;
+        const doctorId = typeof doctor?.id === 'string' ? doctor.id.trim() : '';
+
+        if (
+            doctorId &&
+            isVoiceSessionActive &&
+            slot.id &&
+            slot.label
+        ) {
+            const doctorFirstName = doctor?.firstName || '';
+            const doctorLastName = doctor?.lastName || '';
+            const doctorName = getDoctorDisplayName(
+                {
+                    firstName: doctorFirstName,
+                    lastName: doctorLastName,
+                    fullName: `${doctorFirstName} ${doctorLastName}`.trim(),
+                },
+                { includePrefix: true, fallbackName: 'Doctor' }
+            );
+            router.push({
+                pathname: '/confirm-consultation',
+                params: {
+                    doctorId,
+                    slotId: slot.id,
+                    doctorName,
+                    doctorSpecialization: doctor?.specialization || source?.recommendedDepartment?.label || '',
+                    doctorCity: doctor?.city || '',
+                    doctorFee: doctor?.fee || '500',
+                    concern: source?.recommendedDepartment?.label || 'General Assistant',
+                    slotDate: slot.date || '',
+                    slotStartTime: slot.startTime || '',
+                    slotEndTime: slot.endTime || '',
+                    conversationId: agentConversationIdRef.current || '',
+                },
+            });
+            return;
+        }
+
+        void callHomeAgent(`Confirm this exact slot (ID: ${slot.id}): ${slot.label}`, {
+            replyInVoice: isVoiceSessionActive,
+        });
+    }, [callHomeAgent, isVoiceSessionActive, latestAgentVisualMessage, router]);
     const showInitialHomeSkeleton = loading && doctorsData.length === 0;
     const agentSheetBottomPadding = Math.max(insets.bottom + 12, 16);
     const agentSheetEffectiveBottomPadding = isKeyboardVisible ? 0 : agentSheetBottomPadding;
@@ -5656,17 +5700,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             <Text style={[styles.agentSlotListHint, { color: theme.textSecondary }]}>{latestAgentVisualMessage.bookingPrompt}</Text>
                                         ) : null}
                                         {latestAgentVisualMessage.bookingSlotOptions.map((slot, index) => (
-                                            <TouchableOpacity
-                                                key={String(slot.id || `slot-${index}`)}
-                                                style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
-                                                activeOpacity={0.82}
-                                                disabled={isAgentSending}
-                                                onPress={() => {
-                                                    void callHomeAgent(`Book slot ${index + 1}: ${slot.label}`, {
-                                                        replyInVoice: isVoiceSessionActive,
-                                                    });
-                                                }}
-                                            >
+                                                <TouchableOpacity
+                                                    key={String(slot.id || `slot-${index}`)}
+                                                    style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
+                                                    activeOpacity={0.82}
+                                                    disabled={isAgentSending}
+                                                    onPress={() => handleAgentSlotPress(slot, index, latestAgentVisualMessage)}
+                                                >
                                                 <View style={styles.agentSlotHeaderRow}>
                                                     <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>
                                                         Slot {index + 1}
@@ -5916,11 +5956,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                             style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
                                                             activeOpacity={0.82}
                                                             disabled={isAgentSending}
-                                                            onPress={() => {
-                                                                void callHomeAgent(`Book slot ${index + 1}: ${slot.label}`, {
-                                                                    replyInVoice: isVoiceSessionActive,
-                                                                });
-                                                            }}
+                                                            onPress={() => handleAgentSlotPress(slot, index, message)}
                                                         >
                                                             <View style={styles.agentSlotHeaderRow}>
                                                                 <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>
