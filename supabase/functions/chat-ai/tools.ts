@@ -50,8 +50,9 @@ import {
   hasSmartSlotReferenceSignal
 } from "./shared.ts"
 
-const EXTERNAL_WEB_DOCTOR_SEARCH_ENABLED =
-  (Deno.env.get('CHAT_AI_EXTERNAL_DOCTOR_SEARCH_ENABLED') || 'false').trim().toLowerCase() === 'true'
+// App-only policy: doctor recommendations must stay inside the CD4 database.
+// External/web doctor search is intentionally disabled.
+const EXTERNAL_WEB_DOCTOR_SEARCH_ENABLED = false
 
 const PRO_AI_MESSAGE_LIMIT_PER_WINDOW = (() => {
   const recommendedProFloor = Math.max(60, AI_MESSAGE_LIMIT_PER_WINDOW * 3)
@@ -709,7 +710,63 @@ Guidelines:
 13. **DYNAMIC TRIAGE QUESTIONS**: The question must match the user's active concern. Example: cough asks about breathlessness/phlegm/fever; headache asks sudden onset/vision/vomiting/weakness; chest pain asks radiation/sweating/breathlessness; injury/fracture asks about swelling, deformity, bleeding, numbness, and movement. Never reuse a fixed generic question when the concern needs a more specific one.
 14. **NO REPETITIVE QUESTIONS (STRICT)**: Never ask for the same information twice. This is especially critical for booking slots, appointment confirmations, and clinical/AI snapshot details. If the user has already selected a slot, or if the clinical details for the triage snapshot (symptoms, duration, severity, medicines) are already present in the history, do NOT re-ask or re-prompt for confirmation. Immediately perform the requested action (such as booking the slot or proceeding to final confirmation).
 15. **BOOKING SAFETY**: Never claim booking success unless Booking Confirmation says confirmed. If multiple slots are shown and the user only says "yes" or "go ahead", ask for the exact slot number/time; do not pick the first slot yourself.
-16. **TRIAGE-TO-BOOKING BALANCE**: Before booking a slot, gather the important clinical details needed for the concern. Usually this means 2-3 short concern-specific follow-ups, not an endless questionnaire. If the user already gave enough detail, or if the triage question limit is reached, stop repeating questions and move to a doctor recommendation, next-step guidance, or booking confirmation flow. If booking is still unsafe because a critical detail is missing, ask only the next missing question once and never repeat the same slot twice.`
+16. **TRIAGE-TO-BOOKING BALANCE**: Before booking a slot, gather the important clinical details needed for the concern. Usually this means 2-3 short concern-specific follow-ups, not an endless questionnaire. If the user already gave enough detail, or if the triage question limit is reached, stop repeating questions and move to a doctor recommendation, next-step guidance, or booking confirmation flow. If booking is still unsafe because a critical detail is missing, ask only the next missing question once and never repeat the same slot twice.
+17. **QUESTION-ONLY MODE**: When you are asking a follow-up question, output only the short question itself. Do NOT include "What to do", "Watch for", "Next steps", home-care advice, medication suggestions, summary sections, or any explanatory bullets until the question phase is complete.`
+}
+
+const TRIAGE_ADVICE_SECTION_PATTERNS = [
+  /^\s*(what to do|watch for|next steps|key details|symptoms check|advice|plan|management)\s*:?\s*$/i,
+  /^\s*[-•]\s*(what to do|watch for|next steps|key details|symptoms check|advice|plan|management)\b/i,
+]
+
+const TRIAGE_QUESTION_HEADINGS = [
+  'next question',
+  'next question:',
+  'next question?',
+  'next question only when needed',
+  'next questions',
+]
+
+export const stripTriageAdviceSections = (reply: string): string => {
+  const text = String(reply || '').replace(/\r\n/g, '\n').trim()
+  if (!text) return text
+
+  const lines = text.split('\n')
+  const kept: string[] = []
+  let sawQuestion = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      if (kept.length > 0 && kept[kept.length - 1] !== '') kept.push('')
+      continue
+    }
+
+    if (TRIAGE_ADVICE_SECTION_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+      break
+    }
+
+    if (TRIAGE_QUESTION_HEADINGS.some((heading) => normalize(trimmed).startsWith(normalize(heading)))) {
+      kept.push(trimmed)
+      sawQuestion = true
+      continue
+    }
+
+    kept.push(trimmed)
+    if (trimmed.includes('?')) {
+      sawQuestion = true
+    }
+  }
+
+  const cleaned = kept.join('\n').trim()
+  if (!cleaned) return text
+
+  const questionSentences = cleaned.match(/[^?]{0,220}\?/g)
+  if (sawQuestion && questionSentences && questionSentences.length > 0) {
+    return questionSentences.slice(0, 2).join(' ').trim()
+  }
+
+  return cleaned
 }
 
 /**
@@ -1059,34 +1116,16 @@ export const runAutonomousToolLoop = async (args: any) => {
       })
     }
 
-    // 4. External web fallback is disabled by default.
-    // It can be enabled only via env flag for controlled experiments.
-    const normalizedText = (args.latestMessageText || '').toLowerCase();
-    const wantsWeb = normalizedText.includes('google') || normalizedText.includes('web search') || normalizedText.includes('internet search');
-
-    if (search.doctors.length === 0 && wantsWeb && EXTERNAL_WEB_DOCTOR_SEARCH_ENABLED) {
-      const webResults = await searchWebForDoctors({
-        apiKey: args.openAiApiKey,
-        city: args.searchAreaCity || 'India',
-        specialty: args.departmentSuggestion?.label || 'General Specialist',
-        messageText: args.latestMessageText
-      })
-
-      if (webResults && webResults.length > 0) {
-        search = {
-          doctors: webResults,
-          recommendationMode: 'web',
-          meta: { ...search.meta, source: 'web', externalSearchUsed: true }
-        }
-      }
-    } else if (search.doctors.length === 0 && wantsWeb && !EXTERNAL_WEB_DOCTOR_SEARCH_ENABLED) {
+    // 4. External/web doctor search is disabled by product policy.
+    // Keep the assistant inside the verified CD4 app doctor network only.
+    if (search.doctors.length === 0) {
       search = {
         ...search,
         recommendationMode: search.recommendationMode || 'all_app',
         meta: {
           ...search.meta,
           externalSearchUsed: false,
-          externalSearchObservation: 'external_search_disabled_app_only',
+          externalSearchObservation: 'app_only_doctor_search',
         },
       }
     }
@@ -1287,13 +1326,21 @@ export const runAutonomousToolLoop = async (args: any) => {
           mentionedSlotId &&
           mentionedSlotId === pendingProposalSelectedSlotId
         )
+        const hasExplicitSelectedSlotConfirmation =
+          confirmingPendingSelectedSlot ||
+          (
+            Boolean(mentionedSlotId) &&
+            Boolean(confirmationLike) &&
+            Boolean(hasPriorSlotContext) &&
+            Boolean(hasStrongBookingExecutionSignal(normalizedLatestMessage))
+          )
         const canExecuteBooking = Boolean(
-          isTriageComplete &&
           mentionedSlotId &&
           confirmationLike &&
           (
-            confirmingPendingSelectedSlot ||
+            hasExplicitSelectedSlotConfirmation ||
             (
+              isTriageComplete &&
               hasPriorSlotContext &&
               hasStrongBookingExecutionSignal(normalizedLatestMessage)
             )

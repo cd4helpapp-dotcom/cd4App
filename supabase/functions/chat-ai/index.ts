@@ -74,7 +74,8 @@ import {
   invokeGeminiWithRetry,
   buildSystemPrompt,
   getAuthenticatedUser,
-  incrementAiUsageStats
+  incrementAiUsageStats,
+  stripTriageAdviceSections
 } from "./tools.ts"
 
 const BOOKING_SUCCESS_CLAIM_REGEX =
@@ -476,6 +477,7 @@ Deno.serve(async (req) => {
     const likelyDoctorSearchFromText =
       hasSmartDoctorSearchSignal(messageText) ||
       hasAnyTerm(normalizedMessageText, DOCTOR_SEARCH_INTENT_TERMS)
+    let doctorSearchIntent = likelyDoctorSearchFromText
 
     let speculativeDoctorSearchPromise: Promise<any> | null = null;
     if (likelyDoctorSearchFromText) {
@@ -589,6 +591,9 @@ Deno.serve(async (req) => {
     const explicitAppWideDoctorDirectoryIntent = hasAppWideDoctorDirectoryIntent(messageText)
     if (explicitAppWideDoctorDirectoryIntent) {
       searchAreaCity = null
+    } else if (doctorSearchIntent && !searchAreaCity && locationCity) {
+      // Prefer patient location for doctor recommendations when the user did not specify a city.
+      searchAreaCity = locationCity
     }
     const messageDepartmentMatch = resolveMessageDepartmentMatch(messageText)
     const concernDepartmentMatch = likelyDoctorSearchFromText ? null : resolveMessageDepartmentMatch(concernText)
@@ -706,7 +711,7 @@ Deno.serve(async (req) => {
       historyHasBookingContext &&
       hasAnyTerm(latestUserText, GENERIC_SEARCH_FOLLOWUP_TERMS)
     const consultRecommendationFollowupIntent = consultRecommendationFollowupSignal
-    const doctorSearchIntent =
+    doctorSearchIntent =
       aiIntent === 'search' ||
       likelyDoctorSearchFromText ||
       doctorSearchFollowupIntent ||
@@ -1110,6 +1115,7 @@ Deno.serve(async (req) => {
       !bookingIntent
 
     if (shouldValidateTriageQuestion) {
+      reply = stripTriageAdviceSections(reply)
       const validationResult = buildTriageFollowUpReply({
         concernText: concernText || combinedUserText || messageText,
         coverage: triageCoverage,

@@ -3606,8 +3606,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     voicePersona: 'female',
                     history: historyPayload,
                     locationCity,
-                    searchAreaCity: manuallySelectedCity,
-                    preferredCity: manuallySelectedCity,
+                    searchAreaCity: manuallySelectedCity || locationCity,
+                    preferredCity: manuallySelectedCity || locationCity,
                     departmentId: selectedDepartmentKey,
                     departmentLabel: selectedDepartmentLabel,
                     fastResponse: true,
@@ -3622,8 +3622,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     voicePersona: 'female',
                     history: historyPayload,
                     locationCity,
-                    searchAreaCity: manuallySelectedCity,
-                    preferredCity: manuallySelectedCity,
+                    searchAreaCity: manuallySelectedCity || locationCity,
+                    preferredCity: manuallySelectedCity || locationCity,
                     departmentId: selectedDepartmentKey,
                     departmentLabel: selectedDepartmentLabel,
                     replyInVoice: Boolean(options?.replyInVoice),
@@ -5465,13 +5465,34 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         >
                             {shouldShowVoiceOnlyPanel ? (
                                 <>
-                                <View style={[styles.voiceRobotStageCard, { backgroundColor: theme.background, borderColor: theme.successBorder }]}>
-                                    <View style={styles.voiceRobotTopRow}>
-                                    <View style={styles.voiceRobotAvatarWrap}>
+                                <LinearGradient
+                                    colors={[theme.background, theme.cardBackground, theme.background]}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={[styles.voiceListeningCard, { borderColor: theme.successBorder }]}
+                                >
+                                    <View style={[styles.voiceListeningBadge, { backgroundColor: doctorVoiceAura, borderColor: doctorVoiceAccent + '55' }]}>
+                                        <View style={[styles.voiceListeningBadgeDot, { backgroundColor: doctorVoiceAccent }]} />
+                                        <Text style={[styles.voiceListeningBadgeText, { color: doctorVoiceAccent }]}>
+                                            {isListening ? 'Listening' : isVoiceReplyPlaying ? 'Speaking' : 'Voice Assistant'}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.voiceListeningPromptCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                                        <Text style={[styles.voiceListeningPromptText, { color: theme.text }]}>
+                                            {isListening
+                                                ? "I'm listening. Tell me what's bothering you."
+                                                : isVoiceReplyPlaying
+                                                    ? 'AI doctor is replying now.'
+                                                    : 'Speak naturally. I will guide you like a doctor.'}
+                                        </Text>
+                                    </View>
+
+                                    <View style={styles.voiceListeningCenter}>
+                                        <View style={styles.voiceRobotAvatarWrap}>
                                             <View style={[styles.voiceRobotAvatar, { borderColor: doctorVoiceAccent, backgroundColor: theme.cardBackground }]}>
                                                 <View style={styles.voiceDoctorImageFrame}>
                                                     <Doctor3DIcon
-                                                        size={66}
+                                                        size={60}
                                                         accentColor={doctorVoiceAccent}
                                                         speaking={isVoiceReplyPlaying}
                                                         mouthScale={doctorMouthScale}
@@ -5509,83 +5530,93 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                 />
                                             </View>
                                         </View>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={[styles.voiceRobotTitle, { color: theme.text }]}>Doctor Voice Mode</Text>
-                                            <View style={[styles.voiceRobotStatusPill, { borderColor: doctorVoiceAccent, backgroundColor: doctorVoiceAura }]}>
-                                                <View style={[styles.voiceRobotStatusDot, { backgroundColor: doctorVoiceAccent }]} />
-                                                <Text style={[styles.voiceRobotStatusText, { color: doctorVoiceAccent }]}>
-                                                    {shouldShowVoiceUpgradePrompt
-                                                        ? 'Upgrade Required'
-                                                        : isVoiceReplyPlaying
-                                                        ? 'Dr. AI Speaking'
+
+                                        <Text style={[styles.voiceRobotTitle, { color: theme.text, textAlign: 'center' }]}>Doctor Voice Mode</Text>
+                                        <Text style={[styles.voiceRobotSubtitle, { color: theme.textSecondary, textAlign: 'center' }]}>
+                                            {voiceRobotWaveLabel}
+                                        </Text>
+
+                                        <View
+                                            style={[
+                                                styles.voiceRobotBarsRow,
+                                                {
+                                                    opacity: isDoctorVoiceEngaged ? 1 : 0.45,
+                                                    justifyContent: 'center',
+                                                },
+                                            ]}
+                                        >
+                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
+                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoiceSecondaryBar, transform: [{ scaleY: robotBarScaleB }] }]} />
+                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
+                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoiceSecondaryBar, transform: [{ scaleY: robotBarScaleB }] }]} />
+                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
+                                        </View>
+
+                                        <View style={styles.voiceListeningStatusRow}>
+                                            <View style={[styles.voiceRobotWaveDot, { backgroundColor: doctorVoiceAccent, opacity: isDoctorVoiceEngaged ? 1 : 0.55 }]} />
+                                            <Text style={[styles.voiceRobotWaveStatusText, { color: doctorVoiceAccent }]}>
+                                                {shouldShowVoiceUpgradePrompt
+                                                    ? 'Voice limit reached'
+                                                    : isVoiceReplyPlaying
+                                                        ? 'Speaking now'
                                                         : isListening
-                                                            ? 'Dr. AI Listening'
+                                                            ? 'Live listening'
                                                             : isVoiceAwaitingResponse
-                                                                ? 'Dr. AI Analyzing'
-                                                            : isVoiceAutoSending
-                                                                ? 'Dr. AI Preparing Reply'
-                                                                : 'Dr. AI Session Live'}
+                                                                ? 'Generating response'
+                                                                : isVoiceAutoSending
+                                                                    ? 'Sending your message...'
+                                                                    : 'Standby'}
+                                            </Text>
+                                        </View>
+
+                                        {isVoiceAwaitingResponse ? (
+                                            <View style={[styles.voicePendingResponseRow, { borderColor: doctorVoiceAccent + '55', backgroundColor: doctorVoiceAura }]}>
+                                                <ActivityIndicator size="small" color={doctorVoiceAccent} />
+                                                <Text style={[styles.voicePendingResponseText, { color: doctorVoiceAccent }]}>
+                                                    Generating smart medical response...
                                                 </Text>
                                             </View>
-                                            <Text style={[styles.voiceRobotSubtitle, { color: theme.textSecondary }]}>{voiceRobotWaveLabel}</Text>
-                                        </View>
-                                    </View>
-                                    <View
-                                        style={[
-                                            styles.voiceRobotBarsRow,
-                                            {
-                                                opacity: isDoctorVoiceEngaged ? 1 : 0.45,
-                                            },
-                                        ]}
-                                    >
-                                        <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
-                                        <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoiceSecondaryBar, transform: [{ scaleY: robotBarScaleB }] }]} />
-                                        <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
-                                        <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoiceSecondaryBar, transform: [{ scaleY: robotBarScaleB }] }]} />
-                                        <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
-                                    </View>
-                                    <View style={styles.voiceRobotWaveStatusRow}>
-                                        <View style={[styles.voiceRobotWaveDot, { backgroundColor: doctorVoiceAccent, opacity: isDoctorVoiceEngaged ? 1 : 0.55 }]} />
-                                        <Text style={[styles.voiceRobotWaveStatusText, { color: doctorVoiceAccent }]}>
-                                            {shouldShowVoiceUpgradePrompt
-                                                ? 'Voice limit reached'
-                                                : isVoiceReplyPlaying
-                                                ? 'Speaking now'
-                                                : isListening
-                                                    ? 'Live listening'
-                                                    : isVoiceAwaitingResponse
-                                                        ? 'Generating response'
-                                                    : isVoiceAutoSending
-                                                        ? 'Sending your message...'
-                                                        : 'Standby'}
+                                        ) : null}
+
+                                        <Text style={[styles.voiceRobotHint, { color: theme.textSecondary, textAlign: 'center' }]}>
+                                            Tap Text to view full chat history.
                                         </Text>
                                     </View>
-                                    {isVoiceAwaitingResponse ? (
-                                        <View style={[styles.voicePendingResponseRow, { borderColor: doctorVoiceAccent + '55', backgroundColor: doctorVoiceAura }]}>
-                                            <ActivityIndicator size="small" color={doctorVoiceAccent} />
-                                            <Text style={[styles.voicePendingResponseText, { color: doctorVoiceAccent }]}>
-                                                Generating smart medical response...
-                                            </Text>
-                                        </View>
-                                    ) : null}
-                                    {/* {isVoiceAutoSending ? (
-                                        <View style={[styles.voiceAutoSendCountdownWrap, { borderColor: doctorVoiceAccent + '66', backgroundColor: doctorVoiceAura }]}>
-                                            <Text style={[styles.voiceAutoSendCountdownText, { color: doctorVoiceAccent }]}>
-                                                Pause detected. Auto-send in {voiceSilenceCountdownSeconds?.toFixed(1)}s
-                                            </Text>
-                                            <View style={[styles.voiceAutoSendCountdownTrack, { backgroundColor: doctorVoiceAccent + '28' }]}>
-                                                <View
-                                                    style={[
-                                                        styles.voiceAutoSendCountdownFill,
-                                                        { backgroundColor: doctorVoiceAccent, width: `${voiceAutoSendProgress * 100}%` },
-                                                    ]}
-                                                />
-                                            </View>
-                                        </View>
-                                    ) : null} */}
-                                    <Text style={[styles.voiceRobotHint, { color: theme.textSecondary }]}>
-                                        Tap for text message to view full chat history.
-                                    </Text>
+
+                                    <View style={styles.voiceListeningActionRow}>
+                                        <TouchableOpacity
+                                            style={[styles.voiceListeningActionBtn, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
+                                            onPress={() => {
+                                                if (voiceSessionActiveRef.current) {
+                                                    void stopContinuousVoiceSession(false);
+                                                }
+                                                setIsChatInputActive(true);
+                                            }}
+                                            activeOpacity={0.8}
+                                        >
+                                            <Text style={[styles.voiceListeningActionBtnText, { color: theme.textSecondary }]}>Text</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.voiceListeningMicBtn,
+                                                { backgroundColor: isVoiceSessionActive ? theme.error : theme.tint },
+                                            ]}
+                                            onPress={() => {
+                                                void handleMicPress(true);
+                                            }}
+                                            activeOpacity={0.88}
+                                        >
+                                            <Mic size={22} color="#fff" />
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.voiceListeningActionBtn, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
+                                            onPress={handleCloseAgentPanel}
+                                            activeOpacity={0.8}
+                                        >
+                                            <X size={16} color={theme.textSecondary} />
+                                        </TouchableOpacity>
+                                    </View>
+
                                     {shouldShowVoiceUpgradePrompt ? (
                                         <View style={[styles.voiceLimitCard, { backgroundColor: theme.tint + '16', borderColor: theme.tint + '66' }]}>
                                             <View style={styles.voiceLimitHeaderRow}>
@@ -5623,7 +5654,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             ) : null}
                                         </View>
                                     ) : null}
-                                </View>
+                                </LinearGradient>
                                 {latestAgentVisualMessage?.recommendedDoctors && latestAgentVisualMessage.recommendedDoctors.length > 0 ? (
                                     <>
                                         <Text style={[styles.voiceRobotCardsTitle, { color: theme.textSecondary }]}>
@@ -6082,37 +6113,66 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 </>
                                 )
                             ) : (
-                                <>
-                                    <View style={[styles.bottomSheetTextInputWrap, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                                        <TextInput
-                                            style={[styles.bottomSheetTextInput, { color: theme.text }]}
-                                            placeholder={t('home.typeMessage')}
-                                            placeholderTextColor={theme.textSecondary}
-                                            value={modalTextInput}
-                                            onChangeText={setModalTextInput}
-                                            onSubmitEditing={handleModalTextSubmit}
-                                            returnKeyType="send"
-                                            autoFocus
-                                        />
+                                <View style={[styles.bottomSheetComposerCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                                    <View style={styles.bottomSheetComposerHeader}>
+                                        <View style={styles.bottomSheetComposerTitleWrap}>
+                                            <Text style={[styles.bottomSheetComposerTitle, { color: theme.text }]}>Chat with AI Doctor</Text>
+                                            <Text style={[styles.bottomSheetComposerSubtitle, { color: theme.textSecondary }]}>
+                                                Describe symptoms naturally or ask for the next step.
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            style={[styles.bottomSheetComposerModeBtn, { borderColor: theme.borderColor }]}
+                                            onPress={() => {
+                                                Keyboard.dismiss();
+                                                setIsChatInputActive(false);
+                                            }}
+                                            activeOpacity={0.75}
+                                        >
+                                            <X size={14} color={theme.textSecondary} />
+                                        </TouchableOpacity>
                                     </View>
-                                    <TouchableOpacity
-                                        style={[
-                                            styles.bottomSheetMicBtn,
-                                            { backgroundColor: modalTextInput.trim() ? theme.tint : theme.cardBackground, borderColor: theme.borderColor, borderWidth: modalTextInput.trim() ? 0 : 1 },
-                                        ]}
-                                        onPress={() => {
-                                            if (modalTextInput.trim()) {
-                                                handleModalTextSubmit();
-                                                return;
-                                            }
-                                            Keyboard.dismiss();
-                                            setIsChatInputActive(false);
-                                        }}
-                                        activeOpacity={0.85}
-                                    >
-                                        {modalTextInput.trim() ? <Send size={18} color="#fff" /> : <Mic size={20} color={theme.textSecondary} />}
-                                    </TouchableOpacity>
-                                </>
+                                    <View style={styles.bottomSheetComposerRow}>
+                                        <View style={[styles.bottomSheetTextInputWrap, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
+                                            <TextInput
+                                                style={[styles.bottomSheetTextInput, { color: theme.text }]}
+                                                placeholder="Type symptoms, doctor name, city..."
+                                                placeholderTextColor={theme.textSecondary}
+                                                value={modalTextInput}
+                                                onChangeText={setModalTextInput}
+                                                onSubmitEditing={handleModalTextSubmit}
+                                                returnKeyType="send"
+                                                autoFocus
+                                                multiline
+                                            />
+                                        </View>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.bottomSheetMicBtn,
+                                                {
+                                                    backgroundColor: modalTextInput.trim() ? theme.tint : theme.background,
+                                                    borderColor: theme.borderColor,
+                                                    borderWidth: modalTextInput.trim() ? 0 : 1,
+                                                },
+                                            ]}
+                                            onPress={() => {
+                                                if (modalTextInput.trim()) {
+                                                    handleModalTextSubmit();
+                                                    return;
+                                                }
+                                                Keyboard.dismiss();
+                                                setIsChatInputActive(false);
+                                            }}
+                                            activeOpacity={0.85}
+                                        >
+                                            {modalTextInput.trim() ? (
+                                                <Send size={18} color="#fff" />
+                                            ) : (
+                                                <Mic size={20} color={theme.textSecondary} />
+                                            )}
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
                             )}
                         </View>
                     </View>
@@ -8394,9 +8454,17 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginHorizontal: 16,
-        marginTop: 8,
+        marginTop: 10,
         marginBottom: 0,
         gap: 10,
+        borderWidth: 1,
+        borderRadius: 24,
+        padding: 10,
+        shadowColor: '#081510',
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 14,
+        elevation: 8,
     },
     bottomSheetUpgradeButton: {
         flex: 1,
@@ -8427,22 +8495,24 @@ const styles = StyleSheet.create({
     },
     bottomSheetTextInputWrap: {
         flex: 1,
-        height: 50,
-        borderRadius: 14,
+        minHeight: 54,
+        borderRadius: 18,
         borderWidth: 1,
-        paddingHorizontal: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
         justifyContent: 'center',
         overflow: 'hidden',
     },
     bottomSheetTextInput: {
-        fontSize: 14,
+        fontSize: 15,
         fontWeight: '500',
         paddingVertical: 0,
+        lineHeight: 20,
     },
     bottomSheetMicBtn: {
-        width: 50,
-        height: 50,
-        borderRadius: 25,
+        width: 54,
+        height: 54,
+        borderRadius: 27,
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#000',
@@ -8450,6 +8520,47 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.1,
         shadowRadius: 4,
         elevation: 3,
+    },
+    bottomSheetComposerCard: {
+        flex: 1,
+        borderRadius: 22,
+        borderWidth: 1,
+        padding: 12,
+    },
+    bottomSheetComposerHeader: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        justifyContent: 'space-between',
+        gap: 10,
+        marginBottom: 10,
+    },
+    bottomSheetComposerTitleWrap: {
+        flex: 1,
+    },
+    bottomSheetComposerTitle: {
+        fontSize: 15,
+        fontWeight: '800',
+        letterSpacing: -0.2,
+    },
+    bottomSheetComposerSubtitle: {
+        marginTop: 3,
+        fontSize: 11,
+        fontWeight: '500',
+        lineHeight: 16,
+    },
+    bottomSheetComposerModeBtn: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.03)',
+    },
+    bottomSheetComposerRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: 10,
     },
     bottomSheetVoiceMeta: {
         marginLeft: 14,
@@ -8550,6 +8661,66 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         paddingHorizontal: 14,
         paddingVertical: 14,
+    },
+    voiceListeningCard: {
+        marginTop: 8,
+        marginHorizontal: 2,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderRadius: 22,
+        paddingHorizontal: 14,
+        paddingTop: 14,
+        paddingBottom: 12,
+        alignSelf: 'center',
+        width: '100%',
+        maxWidth: 560,
+        shadowColor: '#0A2218',
+        shadowOpacity: 0.16,
+        shadowOffset: { width: 0, height: 8 },
+        shadowRadius: 18,
+        elevation: 8,
+        overflow: 'hidden',
+    },
+    voiceListeningBadge: {
+        alignSelf: 'center',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        marginBottom: 12,
+    },
+    voiceListeningBadgeDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+    },
+    voiceListeningBadgeText: {
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 0.25,
+    },
+    voiceListeningPromptCard: {
+        borderWidth: 1,
+        borderRadius: 18,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        marginBottom: 14,
+        maxWidth: 420,
+        alignSelf: 'center',
+    },
+    voiceListeningPromptText: {
+        fontSize: 13,
+        lineHeight: 19,
+        fontWeight: '700',
+        fontStyle: 'italic',
+        textAlign: 'center',
+    },
+    voiceListeningCenter: {
+        alignItems: 'center',
+        gap: 4,
     },
     voiceRobotTopRow: {
         flexDirection: 'row',
@@ -8697,6 +8868,13 @@ const styles = StyleSheet.create({
         alignItems: 'flex-end',
         gap: 6,
     },
+    voiceListeningStatusRow: {
+        marginTop: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+    },
     voiceRobotBar: {
         width: 7,
         height: 22,
@@ -8757,6 +8935,39 @@ const styles = StyleSheet.create({
         fontSize: 12,
         lineHeight: 17,
         fontWeight: '500',
+    },
+    voiceListeningActionRow: {
+        marginTop: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+    },
+    voiceListeningActionBtn: {
+        minWidth: 58,
+        height: 40,
+        paddingHorizontal: 14,
+        borderRadius: 20,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    voiceListeningActionBtnText: {
+        fontSize: 12,
+        fontWeight: '800',
+        letterSpacing: 0.2,
+    },
+    voiceListeningMicBtn: {
+        width: 58,
+        height: 58,
+        borderRadius: 29,
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.14,
+        shadowRadius: 8,
+        elevation: 5,
     },
     voiceLimitCard: {
         marginTop: 12,
