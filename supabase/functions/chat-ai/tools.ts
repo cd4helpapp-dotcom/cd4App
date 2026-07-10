@@ -50,9 +50,7 @@ import {
   hasSmartSlotReferenceSignal
 } from "./shared.ts"
 
-// App-only policy: doctor recommendations must stay inside the CD4 database.
-// External/web doctor search is intentionally disabled.
-const EXTERNAL_WEB_DOCTOR_SEARCH_ENABLED = false
+// App-only policy: doctor recommendations must stay inside the verified CD4 database.
 
 const PRO_AI_MESSAGE_LIMIT_PER_WINDOW = (() => {
   const recommendedProFloor = Math.max(60, AI_MESSAGE_LIMIT_PER_WINDOW * 3)
@@ -600,18 +598,27 @@ export const invokeOpenAIWithRetry = async (args: {
   const temperature = Number.isFinite(Number(args.temperature)) ? Math.max(0, Math.min(1.2, Number(args.temperature))) : 0.7
   for (const model of models) {
     try {
+      const isGpt56 = /^gpt-5\.6(?:-|$)/i.test(model)
+      const requestBody = isGpt56
+        ? {
+            model,
+            messages: args.messages,
+            reasoning_effort: 'none',
+            max_completion_tokens: maxTokens,
+          }
+        : {
+            model,
+            messages: args.messages,
+            temperature,
+            max_tokens: maxTokens,
+          }
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${args.apiKey}`
         },
-        body: JSON.stringify({
-          model,
-          messages: args.messages,
-          temperature,
-          max_tokens: maxTokens
-        })
+        body: JSON.stringify(requestBody)
       })
       if (res.ok) {
         const data = await res.json()
@@ -677,17 +684,9 @@ Triage Blueprint: ${buildTriageQuestionBlueprint(triageQuestionBasis, args.triag
 Missing Info: ${getMissingTriageQuestions(args.triageCoverage || {}, triageQuestionBasis).join(', ')}
 
 Guidelines:
-1. Be empathetic but clinical. Tone: Medical Boutique. EVERY response must feel premium and luxurious to read.
+1. Be warm, calm, and clinically precise, like a careful junior doctor taking history before senior review.
 2. **LANGUAGE MIRRORING (CRITICAL)**: You MUST respond in the SAME language the user is typing in. If user writes in English, respond fully in English. If user writes in Hindi, respond in Hindi. If user writes in Hinglish, respond in Hinglish. NEVER default to any fixed language. Always detect and match the user's language automatically.
-3. **MANDATORY RICH TEXT IN EVERY RESPONSE (CRITICAL)**: You MUST format EVERY single response with rich markdown. NEVER send plain text. Every response MUST include:
-   - **Bold** important medical terms, symptoms, conditions, and action items
-   - Relevant medical/supportive emojis (🩺, 😊, 🌡️, 💊, 🩹, 🌸, ✅, 📝, 👍, 🤔, ❤️‍🩹) — minimum 3-4 emojis per response
-   - Clean spacing with line breaks between paragraphs
-   - Bullet points (•) or numbered lists when presenting multiple items
-   - Short headers (### or **bold lines**) for longer explanations
-   EXAMPLE (English user): "Got it! 😊 You're experiencing **cough** 🗣️.\n\nLet me gather some details to prepare your **clinical snapshot** 📝:\n\n• How long have you had the **cough**? 🤔\n• Any **fever** 🌡️ or **breathing difficulty**?\n• Are you taking any **medicine** 💊?\n\nDon't worry, I'll guide you through this! ❤️‍🩹"
-   EXAMPLE (Hinglish user): "Samajh gaya! 😊 Aapko **cough** 🗣️ ki problem ho rahi hai.\n\n• **Cough** kab se hai? 🤔\n• Kya **fever** 🌡️ ya **breathing difficulty** bhi hai?\n• Koi **medicine** 💊 le rahe ho?\n\nBilkul pareshan mat hoiye! ❤️‍🩹"
-   PLAIN TEXT responses are STRICTLY FORBIDDEN. If you send plain text without bold, emojis, and formatting, you have FAILED.
+3. **CLINICAL INTAKE FORMAT**: While triage is active, return exactly one clinically focused question and nothing else. Do not add acknowledgement, empathy, advice, diagnosis, treatment, warning, recap, heading, bullet, numbered list, emoji, or extra sentence.
 4. **HEALTH-ONLY SCOPE**: Only answer health, symptoms, reports, medicines, wellness, doctor discovery, appointments, slots, and teleconsultation-related questions. If the user asks unrelated things like geography, politics, coding, or trivia, politely refuse and redirect them to medical/health help only.
 5. **SLOT LISTING**: ${isListingSlots
       ? 'You MUST list each available slot EXACTLY as provided in the label. Do NOT remove the Day/Date part. Example: "- **📅 Monday, 19 Apr [10:00 AM - 10:30 AM]**"'
@@ -700,17 +699,11 @@ Guidelines:
 9. **TIME INTEGRITY**: Always use the exact 12-hour (AM/PM) format provided in slot labels. If a slot says 10:00 PM, do NOT say 10:00 AM.
 10. **STRICT NO PLACEHOLDERS**: NEVER use bracketed text like "[Name]", "[Doctor]", or "[Specialty]". If you do not have a piece of information, use a natural fallback like "the specialist" or "the selected time".
 11. **APP-ONLY DOCTOR POLICY**: Recommend ONLY doctors provided in Tool Context from the CD4 app database. NEVER invent names and NEVER use web/external doctors. If no doctor is available in Tool Context, explicitly say no verified CD4 doctor is currently available.
-12. **ENGAGING & EMPATHETIC CONVERSATION (DOCTOR TONE - CRITICAL)**: Talk to the patient like a warm, highly empathetic real-world doctor who genuinely cares. Make the conversation feel like a premium healthcare experience. EVERY response must:
-   - Start or end with a warm, caring sentence using emojis (😊, 🌸, ❤️‍🩹, 🩺)
-   - **Bold** all medical terms, symptoms, and conditions mentioned
-   - Use emojis next to key terms (e.g., **fever** 🌡️, **cough** 🗣️, **medicine** 💊, **pain** 🤕, **doctor** 🩺)
-   - Feel interactive and conversational, not clinical or robotic
-   - Use line breaks and spacing for readability
-   - ALWAYS match the user's language — do NOT default to Hindi/Hinglish if the user writes in English
+12. **DOCTOR TONE**: Be empathetic and natural without sounding casual, robotic, decorative, or alarmist. Acknowledge the specific symptom briefly, then ask the next clinically useful question in the user's language.
 13. **DYNAMIC TRIAGE QUESTIONS**: The question must match the user's active concern. Example: cough asks about breathlessness/phlegm/fever; headache asks sudden onset/vision/vomiting/weakness; chest pain asks radiation/sweating/breathlessness; injury/fracture asks about swelling, deformity, bleeding, numbness, and movement. Never reuse a fixed generic question when the concern needs a more specific one.
 14. **NO REPETITIVE QUESTIONS (STRICT)**: Never ask for the same information twice. This is especially critical for booking slots, appointment confirmations, and clinical/AI snapshot details. If the user has already selected a slot, or if the clinical details for the triage snapshot (symptoms, duration, severity, medicines) are already present in the history, do NOT re-ask or re-prompt for confirmation. Immediately perform the requested action (such as booking the slot or proceeding to final confirmation).
 15. **BOOKING SAFETY**: Never claim booking success unless Booking Confirmation says confirmed. If multiple slots are shown and the user only says "yes" or "go ahead", ask for the exact slot number/time; do not pick the first slot yourself.
-16. **TRIAGE-TO-BOOKING BALANCE**: Before booking a slot, gather the important clinical details needed for the concern. Usually this means 2-3 short concern-specific follow-ups, not an endless questionnaire. If the user already gave enough detail, or if the triage question limit is reached, stop repeating questions and move to a doctor recommendation, next-step guidance, or booking confirmation flow. If booking is still unsafe because a critical detail is missing, ask only the next missing question once and never repeat the same slot twice.
+16. **TRIAGE COMPLETION**: For any concern, gather the clinically relevant missing domains: onset/progression, severity, associated symptoms and red flags, triggers/pattern, functional impact, and medicine/allergy/relevant history. Ask only one domain per turn and skip anything already answered. Stop when the history is clinically adequate or six distinct domains have been covered, then provide a short objective recap suitable for the AI snapshot or continue to doctor search/booking when requested.
 17. **QUESTION-ONLY MODE**: When you are asking a follow-up question, output only the short question itself. Do NOT include "What to do", "Watch for", "Next steps", home-care advice, medication suggestions, summary sections, or any explanatory bullets until the question phase is complete.`
 }
 
@@ -793,6 +786,7 @@ export const resolveDoctorIdByText = async (args: { serviceClient: any, text: st
   const { data, error } = await args.serviceClient
     .from('doctors')
     .select('id, city, specialization, profiles(first_name, last_name)')
+    .eq('is_verified', true)
     .limit(100);
 
   if (error || !data) return null;
@@ -1116,9 +1110,21 @@ export const runAutonomousToolLoop = async (args: any) => {
       })
     }
 
-    // 4. External/web doctor search is disabled by product policy.
-    // Keep the assistant inside the verified CD4 app doctor network only.
-    if (search.doctors.length === 0) {
+    // Hard boundary: only verified doctors returned from the CD4 database may
+    // enter the response or booking flow. Reject legacy web-shaped results.
+    if (search.recommendationMode === 'web' || search.meta?.source !== 'database') {
+      search = {
+        ...search,
+        doctors: [],
+        recommendationMode: 'none',
+        meta: {
+          ...search.meta,
+          source: 'database',
+          externalSearchUsed: false,
+          externalSearchBlocked: true,
+        },
+      }
+    } else if (search.doctors.length === 0) {
       search = {
         ...search,
         recommendationMode: search.recommendationMode || 'all_app',
@@ -1252,6 +1258,7 @@ export const runAutonomousToolLoop = async (args: any) => {
           .from('doctors')
           .select('*, profiles(first_name, last_name, profile_picture)')
           .eq('id', targetDoctorId)
+          .eq('is_verified', true)
           .maybeSingle()
         if (!error && data) {
           selectedDoctor = data
@@ -1348,36 +1355,23 @@ export const runAutonomousToolLoop = async (args: any) => {
         )
 
         if (canExecuteBooking && mentionedSlotId) {
-          bookingConfirmation = await executeSlotBooking({
-            serviceClient: args.serviceClient,
-            userId: args.userId,
+          const selectedSlot = slots.find((slot: any) => slot._id === mentionedSlotId)
+          const doctorNameParts = selectedDoctor ? getDoctorNameObj(selectedDoctor) : null
+          bookingConfirmation = {
+            status: 'payment_required',
+            message: 'Your slot is selected. Continue on the secure payment screen to complete the appointment.',
             doctorId: targetDoctorId,
             slotId: mentionedSlotId,
-            accessToken: args.accessToken,
-            concern: args.concernText,
-            conversationId: args.conversationId,
-            history: Array.isArray(args.history) ? args.history : [],
-            patientName: applicantName,
-            patientPhone: applicantPhone
-          })
-
-          if (bookingConfirmation?.status === 'conflict') {
-            bookingPrep = {
-              status: 'ready',
-              message: bookingConfirmation.message || 'That slot is no longer available. Please choose another slot.',
-              slotOptions: slots.map(s => ({
-                id: s._id,
-                date: s.date,
-                startTime: s.startTime,
-                endTime: s.endTime,
-                label: formatBookingSlotLabel(s.date, s.startTime, s.endTime)
-              }))
-            }
-          } else if (bookingConfirmation?.status && bookingConfirmation.status !== 'confirmed') {
-            bookingPrep = {
-              status: 'error',
-              message: bookingConfirmation.message || 'Booking could not be completed. Please try again.',
-            }
+            doctorName: doctorNameParts?.fullName ? `Dr. ${doctorNameParts.fullName}` : 'Selected Doctor',
+            doctorSpecialization: selectedDoctor?.specialization || '',
+            doctorCity: selectedDoctor?.city || '',
+            doctorFee: selectedDoctor?.fee || '',
+            slotDate: selectedSlot?.date || '',
+            slotStartTime: selectedSlot?.startTime || '',
+            slotEndTime: selectedSlot?.endTime || '',
+            slotLabel: selectedSlot
+              ? formatBookingSlotLabel(selectedSlot.date, selectedSlot.startTime, selectedSlot.endTime)
+              : pendingProposalSelectedSlotLabel,
           }
         } else if (mentionedSlotId) {
           const selectedSlot = slots.find((slot: any) => slot._id === mentionedSlotId)
@@ -1397,15 +1391,8 @@ export const runAutonomousToolLoop = async (args: any) => {
           }
         } else if (confirmationLike && hasPriorSlotContext) {
           bookingPrep = {
-            status: 'ready',
-            message: 'Please choose the exact slot number or time before I book it.',
-            slotOptions: slots.map(s => ({
-              id: s._id,
-              date: s.date,
-              startTime: s.startTime,
-              endTime: s.endTime,
-              label: formatBookingSlotLabel(s.date, s.startTime, s.endTime)
-            }))
+            status: 'incomplete',
+            message: 'I still need the exact slot before booking. Please reply with the slot number already shown (for example, slot 1 or slot 2) or its exact time.',
           }
         }
 
@@ -1765,31 +1752,6 @@ export const executeSlotBooking = async (args: {
   }
 }
 
-export const searchWebForDoctors = async (args: { apiKey: string, city: string, specialty: string, messageText: string }) => {
-  if (!args.apiKey) return []
-  try {
-    const prompt = `Perform a high-quality simulated web search. 
-Find the top-rated hospitals or medical specialists for "${args.specialty}" in "${args.city}".
-User Context: "${args.messageText}"
-
-Respond with a valid JSON array of up to 3 doctor/hospital objects:
-[{"name": "Hospital/Doctor Name", "specialty": "Specialty", "location": "City Area", "experience": "Optional info", "rating": "Optional rating"}]
-Return ONLY JSON.`
-
-    const result = await invokeOpenAIWithRetry({
-      apiKey: args.apiKey,
-      messages: [{ role: 'system', content: 'You are a real-time medical search assistant.' }, { role: 'user', content: prompt }],
-      messageText: args.messageText
-    })
-
-    const cleaned = result?.reply?.replace(/```json|```/g, '').trim() || '[]'
-    return JSON.parse(cleaned)
-  } catch (e) {
-    console.error("AI Web Search fallback failed", e)
-    return []
-  }
-}
-
 export const logAgentAction = async (args: any) => {
   await args.serviceClient.from('ai_agent_logs').insert({
     user_id: args.userId,
@@ -1886,6 +1848,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     let query = args.serviceClient
       .from('doctors')
       .select('*, profiles(first_name, last_name, profile_picture)')
+      .eq('is_verified', true)
       .ilike('city', cityLike!)
       .order('is_verified', { ascending: false })
       .limit(6)
@@ -1919,6 +1882,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
       const { data } = await args.serviceClient
         .from('doctors')
         .select('*, profiles(first_name, last_name, profile_picture)')
+        .eq('is_verified', true)
         .ilike('city', cityLike!)
         .or(relatedFilter)
         .order('is_verified', { ascending: false })
@@ -1939,6 +1903,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     let query = args.serviceClient
       .from('doctors')
       .select('*, profiles(first_name, last_name, profile_picture)')
+      .eq('is_verified', true)
       .order('is_verified', { ascending: false })
       .limit(6)
 
@@ -1963,6 +1928,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     const { data } = await args.serviceClient
       .from('doctors')
       .select('*, profiles(first_name, last_name, profile_picture)')
+      .eq('is_verified', true)
       .ilike('city', cityLike!)
       .order('is_verified', { ascending: false })
       .limit(6)
@@ -1979,6 +1945,7 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     const { data } = await args.serviceClient
       .from('doctors')
       .select('*, profiles(first_name, last_name, profile_picture)')
+      .eq('is_verified', true)
       .order('is_verified', { ascending: false })
       .limit(6)
 
@@ -1999,7 +1966,15 @@ export const resolveDoctorRecommendationsWithFallback = async (args: {
     };
   });
 
-  return { doctors: flattenedDoctors, recommendationMode, meta }
+  return {
+    doctors: flattenedDoctors,
+    recommendationMode,
+    meta: {
+      ...meta,
+      source: 'database',
+      externalSearchUsed: false,
+    },
+  }
 }
 
 export const readConversationMemory = async (args: any) => {

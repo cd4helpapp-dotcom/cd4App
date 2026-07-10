@@ -6,12 +6,12 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "gpt-4o-mini-tts"
-const DEFAULT_TTS_FALLBACK_MODEL = Deno.env.get("VOICE_MODEL_FALLBACK")?.trim() || "tts-1-hd"
-const DEFAULT_STT_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL")?.trim() || "whisper-1"
+const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "gpt-4o-tts"
+const DEFAULT_TTS_FALLBACK_MODEL = Deno.env.get("VOICE_MODEL_FALLBACK")?.trim() || "tts-1"
+const DEFAULT_STT_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL")?.trim() || "gpt-4o-transcribe"
 const DEFAULT_STT_FALLBACK_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL_FALLBACK")?.trim() || "whisper-1"
-const DEFAULT_SCOPE_MODEL = Deno.env.get("VOICE_SCOPE_MODEL")?.trim() || "gpt-4o-mini"
-const DEFAULT_SCOPE_FALLBACK_MODEL = Deno.env.get("VOICE_SCOPE_MODEL_FALLBACK")?.trim() || "gpt-4o"
+const DEFAULT_SCOPE_MODEL = Deno.env.get("VOICE_SCOPE_MODEL")?.trim() || "gpt-5.6-luna"
+const DEFAULT_SCOPE_FALLBACK_MODEL = Deno.env.get("VOICE_SCOPE_MODEL_FALLBACK")?.trim() || "gpt-4o-mini"
 const DEFAULT_TTS_MODE: "fast" | "premium" =
   (Deno.env.get("VOICE_DEFAULT_TTS_MODE") || "premium").trim().toLowerCase() === "fast"
     ? "fast"
@@ -33,7 +33,7 @@ const FEMALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_FEMALE_VOICE") || "nova").trim
 const MALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_MALE_VOICE") || "onyx").trim() || "onyx"
 const VOICE_TTS_SPEED = Math.max(0.85, Math.min(1.25, Number(Deno.env.get("VOICE_TTS_SPEED") || "0.98")))
 const VOICE_TTS_STYLE = (Deno.env.get("VOICE_TTS_STYLE") || "Warm, natural, human conversational telemedicine tone. Speak clearly with gentle pacing, subtle pauses, and expressive but calm delivery. Avoid robotic cadence. Keep explanations clinically sensible and easy to understand.").trim()
-const VOICE_CHAT_TIMEOUT_MS = Math.max(2000, Math.min(45000, parseEnvInt("VOICE_CHAT_TIMEOUT_MS", 20000)))
+const VOICE_CHAT_TIMEOUT_MS = Math.max(2000, Math.min(45000, parseEnvInt("VOICE_CHAT_TIMEOUT_MS", 15000)))
 const VOICE_TTS_TIMEOUT_MS = Math.max(2000, Math.min(30000, parseEnvInt("VOICE_TTS_TIMEOUT_MS", 15000)))
 const VOICE_TTS_MAX_INPUT_CHARS = Math.max(180, Math.min(2200, parseEnvInt("VOICE_TTS_MAX_INPUT_CHARS", 1200)))
 const VOICE_TTS_FAST_MAX_INPUT_CHARS = Math.max(80, Math.min(900, parseEnvInt("VOICE_TTS_FAST_MAX_INPUT_CHARS", 520)))
@@ -75,10 +75,13 @@ const isLikelyHindiVoiceText = (value: string): boolean => {
 }
 
 const buildVoiceStyleInstruction = (text: string): string => {
-  if (isLikelyHindiVoiceText(text)) {
-    return "Speak naturally in Hindi or Hinglish with clear Indian pronunciation, warm telemedicine doctor tone, smooth pacing, subtle pauses, and expressive but calm delivery. Avoid sounding robotic or overly formal."
+  if (/[\u0900-\u097F]/.test(text || "")) {
+    return "Speak only the supplied Devanagari Hindi text, with clear Indian pronunciation and a calm junior-doctor tone. Do not translate it or insert English sentences."
   }
-  return VOICE_TTS_STYLE
+  if (isLikelyHindiVoiceText(text)) {
+    return "Speak only the supplied Roman Hindi text with clear Indian pronunciation and a calm junior-doctor tone. Do not translate it, switch to Devanagari, or insert English sentences."
+  }
+  return `${VOICE_TTS_STYLE} Speak only in English and do not insert Hindi or Hinglish.`
 }
 
 const VOICE_MEDICAL_SCOPE_TERMS = [
@@ -308,6 +311,9 @@ const getVoiceScopeMessage = (text: string): string => {
   const looksHindiRoman = /\b(kya|mujhe|mera|meri|hai|nahi|doctor|dawai|bukhar|sir|dard)\b/.test(normalized)
 
   if (hasDevanagari || looksHindiRoman) {
+    if (hasDevanagari) {
+      return "मैं केवल स्वास्थ्य और चिकित्सा से जुड़े विषयों पर मदद कर सकता हूँ। कृपया अपने लक्षण, रिपोर्ट, दवाइयों या डॉक्टर परामर्श से जुड़ा सवाल पूछें।"
+    }
     return "Main sirf health aur medical topics par madad kar sakta hoon. Kripya apne symptoms, reports, medicines, ya doctor consultation se related sawal poochiye."
   }
   return "I can only help with health and medical topics. Please ask about symptoms, reports, medicines, or doctor consultation."
@@ -375,9 +381,11 @@ Latest user query: ${args.text}`
 
   const requestOnce = async (modelName: string) => {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort("scope_timeout"), 8000)
+    // Scope routing must never make a voice reply wait for a long secondary AI call.
+    const timeout = setTimeout(() => controller.abort("scope_timeout"), 2500)
 
     try {
+      const isGpt56 = /^gpt-5\.6(?:-|$)/i.test(modelName)
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -386,8 +394,9 @@ Latest user query: ${args.text}`
         },
         body: JSON.stringify({
           model: modelName,
-          temperature: 0,
-          max_tokens: 90,
+          ...(isGpt56
+            ? { reasoning_effort: "none", max_completion_tokens: 90 }
+            : { temperature: 0, max_tokens: 90 }),
           messages: [
             {
               role: "system",
@@ -1073,8 +1082,9 @@ const callChatAI = async (payload: {
     history: Array.isArray(payload.history) ? payload.history : [],
     locationCity: typeof payload.locationCity === "string" ? payload.locationCity : null,
     searchAreaCity: typeof payload.searchAreaCity === "string" ? payload.searchAreaCity : null,
-    fastResponse: false,
-    quick: false,
+    // Voice replies use the short/low-latency Chat AI path.
+    fastResponse: true,
+    quick: true,
     replyInVoice: true,
   }
 
@@ -1163,8 +1173,8 @@ const synthesizeSpeech = async (
   styleInstruction?: string,
   ttsMode: "fast" | "premium" = "premium",
 ) => {
-  const ttsModel = ttsMode === "fast" ? "tts-1" : (model || "gpt-4o-mini-tts");
-  const fallbackTtsModel = fallbackModel || (ttsMode === "fast" ? "tts-1-hd" : ttsModel);
+  const ttsModel = model || "gpt-4o-tts";
+  const fallbackTtsModel = fallbackModel || "tts-1";
   const resolvedStyleInstruction = (styleInstruction || VOICE_TTS_STYLE || "").trim()
   const candidateModels = Array.from(
     new Set(

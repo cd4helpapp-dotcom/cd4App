@@ -6,6 +6,10 @@ import {
   CHAT_HISTORY_SEND_ITEMS,
   CHAT_HISTORY_MAX_CHARS,
   GEMINI_MAX_OUTPUT_TOKENS,
+  DEFAULT_OPENAI_MODEL,
+  DEFAULT_OPENAI_FALLBACK_MODEL,
+  CHAT_AI_QUALITY_MODEL,
+  CHAT_AI_FAST_MODEL,
   AUTONOMOUS_AGENT_ENABLED,
   PREFETCH_DOCTORS_BEFORE_AI,
   INCLUDE_TOP_DOCTORS_IN_PROMPT,
@@ -47,6 +51,7 @@ import {
   hasSmartBookingPrepareSignal,
   hasSmartBookingConfirmationSignal,
   buildTriageFollowUpReply,
+  validateTriageQuestionReply,
   getLastAssistantQuestionSlot,
   BOOKING_PREPARE_INTENT_TERMS,
   BOOKING_CONFIRMATION_TERMS,
@@ -117,6 +122,26 @@ const buildHealthOnlyScopeReply = (messageText: string): string => {
   }
 
   return 'I can only help with health and teleconsultation-related questions. Please ask about symptoms, reports, medicines, doctor recommendations, or appointment booking.'
+}
+
+const sanitizeUserFacingReply = (value: unknown): string =>
+  String(value || '')
+    .replace(/\b(?:undefined|null|NaN)\b/gi, '')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/([,;:])\s*([,;:])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+const replyMatchesLanguageLock = (reply: string, style: 'english' | 'roman_hindi' | 'devanagari_hindi'): boolean => {
+  const text = String(reply || '')
+  if (style === 'devanagari_hindi') return looksDevanagari(text)
+  if (looksDevanagari(text)) return false
+  if (style === 'roman_hindi') {
+    return /\b(kya|aap|mujhe|main|hai|hain|nahi|bataya|batayein|samajh|takleef|dard|bukhar|khansi|dawai|ho raha|kar rahe)\b/i.test(text)
+  }
+  return !/\b(kya|aapko|mujhe|mera|meri|hai|hain|nahi|batayein|samajh gaya|takleef|bukhar|khansi|dawai)\b/i.test(text)
 }
 
 const normalizeSummaryLine = (value: string, maxChars: number): string =>
@@ -316,14 +341,37 @@ const buildAppOnlyDoctorReply = (args: {
   specialtyLabel?: string | null
   recommendationMode?: string | null
   forceDoctorCount?: boolean
+  languageStyle?: 'english' | 'roman_hindi' | 'devanagari_hindi'
 }): string => {
   const doctors = Array.isArray(args.doctors) ? args.doctors : []
+  const languageStyle = args.languageStyle || 'english'
+  const isRomanHindi = languageStyle === 'roman_hindi'
+  const isDevanagariHindi = languageStyle === 'devanagari_hindi'
+  const localized = (english: string, romanHindi: string, devanagariHindi: string): string =>
+    isDevanagariHindi ? devanagariHindi : isRomanHindi ? romanHindi : english
   if (args.bookingConfirmation?.status === 'confirmed') {
     const doctorName = String(args.bookingConfirmation?.doctorName || 'the selected doctor').trim()
     const slotLabel = String(args.bookingConfirmation?.slotLabel || '').trim()
     return slotLabel
-      ? `### Appointment Confirmed\nYour appointment with **${doctorName}** is confirmed for **${slotLabel}**.`
-      : `### Appointment Confirmed\nYour appointment with **${doctorName}** is confirmed.`
+      ? localized(
+          `### Appointment Confirmed\nYour appointment with **${doctorName}** is confirmed for **${slotLabel}**.`,
+          `### Appointment Confirm Ho Gayi\n**${doctorName}** ke saath aapki appointment **${slotLabel}** ke liye confirm ho gayi hai.`,
+          `### अपॉइंटमेंट कन्फर्म हो गई\n**${doctorName}** के साथ आपकी अपॉइंटमेंट **${slotLabel}** के लिए कन्फर्म हो गई है।`,
+        )
+      : localized(
+          `### Appointment Confirmed\nYour appointment with **${doctorName}** is confirmed.`,
+          `### Appointment Confirm Ho Gayi\n**${doctorName}** ke saath aapki appointment confirm ho gayi hai.`,
+          `### अपॉइंटमेंट कन्फर्म हो गई\n**${doctorName}** के साथ आपकी अपॉइंटमेंट कन्फर्म हो गई है।`,
+        )
+  }
+  if (args.bookingConfirmation?.status === 'payment_required') {
+    const doctorName = String(args.bookingConfirmation?.doctorName || 'the selected doctor').trim()
+    const slotLabel = String(args.bookingConfirmation?.slotLabel || '').trim()
+    return localized(
+      `### Continue to Payment\nYour selected slot${slotLabel ? ` **${slotLabel}**` : ''} with **${doctorName}** is ready. Complete payment on the secure confirmation screen to book the appointment.`,
+      `### Payment Karein\n**${doctorName}** ke saath aapka chuna hua slot${slotLabel ? ` **${slotLabel}**` : ''} taiyar hai. Appointment book karne ke liye secure confirmation screen par payment khud complete karein.`,
+      `### भुगतान करें\n**${doctorName}** के साथ आपका चुना हुआ स्लॉट${slotLabel ? ` **${slotLabel}**` : ''} तैयार है। अपॉइंटमेंट बुक करने के लिए सुरक्षित कन्फर्मेशन स्क्रीन पर भुगतान स्वयं पूरा करें।`,
+    )
   }
   if (args.bookingPrep?.status === 'confirm_pending') {
     const slotLabel = String(args.bookingPrep?.proposal?.selectedSlotLabel || '').trim()
@@ -332,16 +380,38 @@ const buildAppOnlyDoctorReply = (args: {
       : 'the selected doctor'
     const doctorLabel = fallbackDoctor === 'the selected doctor' ? fallbackDoctor : `Dr. ${fallbackDoctor}`
     return slotLabel
-      ? `### Slot Selected\nYou selected **${slotLabel}** with **${doctorLabel}**.\n\nPlease confirm and I will book this exact slot.`
-      : `### Slot Selected\nPlease confirm and I will book the selected slot with the chosen doctor.`
+      ? localized(
+          `### Slot Selected\nYou selected **${slotLabel}** with **${doctorLabel}**.\n\nPlease confirm this exact slot to continue to payment.`,
+          `### Slot Select Ho Gaya\nAapne **${doctorLabel}** ke saath **${slotLabel}** chuna hai.\n\nPayment screen par jaane ke liye isi slot ko confirm karein.`,
+          `### स्लॉट चुन लिया गया\nआपने **${doctorLabel}** के साथ **${slotLabel}** चुना है।\n\nभुगतान स्क्रीन पर जाने के लिए इसी स्लॉट को कन्फर्म करें।`,
+        )
+      : localized(
+          '### Slot Selected\nPlease confirm the selected slot to continue to payment.',
+          '### Slot Select Ho Gaya\nPayment screen par jaane ke liye chuna hua slot confirm karein.',
+          '### स्लॉट चुन लिया गया\nभुगतान स्क्रीन पर जाने के लिए चुना हुआ स्लॉट कन्फर्म करें।',
+        )
   }
   if (args.bookingPrep?.status === 'no_slots') {
     const doctorName = doctors.length > 0 ? ` for **Dr. ${getDoctorDisplayName(doctors[0], 0)}**` : ''
-    return `### No Slots Available\nNo future slots are currently available${doctorName} in the CD4 app.\n\nPlease choose another doctor or ask me to check again later.`
+    return localized(
+      `### No Slots Available\nNo future slots are currently available${doctorName} in the CD4 app.\n\nPlease choose another doctor or ask me to check again later.`,
+      `### Koi Slot Available Nahi Hai\nCD4 app me abhi${doctorName} ka koi future slot available nahi hai.\n\nKoi doosra doctor chunein ya baad me dobara check karne ko kahein.`,
+      `### कोई स्लॉट उपलब्ध नहीं है\nCD4 ऐप में अभी${doctorName} का कोई भविष्य का स्लॉट उपलब्ध नहीं है।\n\nकोई दूसरा डॉक्टर चुनें या बाद में दोबारा जांचने को कहें।`,
+    )
   }
   if (args.bookingPrep?.status === 'error' || args.bookingPrep?.status === 'incomplete') {
     const message = String(args.bookingPrep?.message || '').trim()
-    return message || 'Please tell me which doctor and exact slot you want to book.'
+    if (languageStyle === 'english' && message) return message
+    const needsDoctor = /which doctor|doctor you want/i.test(message)
+    return needsDoctor ? localized(
+      'Please tell me which doctor you want to book with.',
+      'Kripya batayein aap kis doctor ke saath appointment chahte hain.',
+      'कृपया बताएं कि आप किस डॉक्टर के साथ अपॉइंटमेंट चाहते हैं।',
+    ) : localized(
+      'Please tell me which doctor and exact slot you want to book.',
+      'Kripya pehle dikhaye gaye slots me se exact slot number ya time batayein.',
+      'कृपया पहले दिखाए गए स्लॉट में से सही स्लॉट नंबर या समय बताएं।',
+    )
   }
   const slotOptions = Array.isArray(args.bookingPrep?.slotOptions) ? args.bookingPrep.slotOptions : []
   const slotLines = slotOptions
@@ -350,10 +420,18 @@ const buildAppOnlyDoctorReply = (args: {
     .filter((line: string) => line.trim().length > 0)
 
   if (!doctors.length && slotLines.length > 0) {
-    return `### Available Slots\n${slotLines.join('\n')}\n\nPlease tell me the exact slot number or time to select. I will ask once more before booking.`
+    return localized(
+      `### Available Slots\n${slotLines.join('\n')}\n\nPlease tell me the exact slot number or time to select.`,
+      `### Available Slots\n${slotLines.join('\n')}\n\nExact slot number ya time batayein.`,
+      `### उपलब्ध स्लॉट\n${slotLines.join('\n')}\n\nसही स्लॉट नंबर या समय बताएं।`,
+    )
   }
   if (!doctors.length) {
-    return 'I could not find any verified CD4 doctors in the app for this request right now. Please change city or specialty and I will search again.'
+    return localized(
+      'I could not find any verified CD4 doctors in the app for this request right now. Please change the city or specialty and I will search again.',
+      'Is request ke liye CD4 app me abhi koi verified doctor nahi mila. City ya specialty badal kar batayein, main dobara search karunga.',
+      'इस अनुरोध के लिए CD4 ऐप में अभी कोई सत्यापित डॉक्टर नहीं मिला। शहर या स्पेशलिटी बदलकर बताएं, मैं दोबारा खोजूंगा।',
+    )
   }
 
   const doctorLines = doctors.slice(0, DOCTOR_RECOMMENDATION_LIMIT).map((doctor, index) => {
@@ -368,6 +446,34 @@ const buildAppOnlyDoctorReply = (args: {
   const normalizedCity = String(args.cityLabel || '').trim()
   const normalizedSpecialty = String(args.specialtyLabel || '').trim()
   const recommendationMode = String(args.recommendationMode || '').trim()
+  if (languageStyle !== 'english') {
+    const exactMatch = recommendationMode === 'exact'
+    const scopeLabel = [normalizedSpecialty, normalizedCity].filter(Boolean).join(', ')
+    const title = localized(
+      '### Verified CD4 Doctors',
+      `### CD4 App Ke Verified Doctors${scopeLabel ? ` — ${scopeLabel}` : ''}`,
+      `### CD4 ऐप के सत्यापित डॉक्टर${scopeLabel ? ` — ${scopeLabel}` : ''}`,
+    )
+    const contextLine = exactMatch
+      ? ''
+      : localized(
+          '',
+          'Exact match nahi mila, isliye CD4 app ke sabse kareebi verified options dikha raha hoon.\n\n',
+          'सटीक मैच नहीं मिला, इसलिए CD4 ऐप के सबसे नज़दीकी सत्यापित विकल्प दिखा रहा हूँ।\n\n',
+        )
+    const countLine = args.forceDoctorCount
+      ? localized('', `App results me **${doctors.length}** verified options mile.\n\n`, `ऐप के परिणामों में **${doctors.length}** सत्यापित विकल्प मिले।\n\n`)
+      : ''
+    let localizedReply = `${title}\n${contextLine}${countLine}${doctorLines.join('\n')}`
+    if (slotLines.length > 0) {
+      localizedReply += localized(
+        '',
+        `\n\n### Available Slots\n${slotLines.join('\n')}\n\nExact slot number ya time batayein.`,
+        `\n\n### उपलब्ध स्लॉट\n${slotLines.join('\n')}\n\nसही स्लॉट नंबर या समय बताएं।`,
+      )
+    }
+    return localizedReply
+  }
   let title = normalizedCity ? `### Verified CD4 Doctors in ${normalizedCity}` : '### Verified CD4 Doctors'
   let contextLine = ''
 
@@ -911,8 +1017,10 @@ Deno.serve(async (req) => {
       extractStoredTriageSetCount(memoryRecord.summary || ''),
     )
     const triageQuestionSetLimitReached =
-      triageQuestionSetsUsed >= 3 ||
-      (triageQuestionSetsUsed >= 2 && (triageCoverage.covered >= 2 || bookingIntent || doctorSearchIntent))
+      triageQuestionSetsUsed >= 6 ||
+      triageCoverage.covered >= 5 ||
+      bookingIntent ||
+      doctorSearchIntent
 
     const systemPrompt = buildSystemPrompt({
       concern: concernText, assistantMode, medicineQuery, languageInstruction,
@@ -937,7 +1045,7 @@ Deno.serve(async (req) => {
     if (voiceReplyRequested) {
       messagesToSend.push({
         role: 'system',
-        content: 'VOICE REPLY MODE: Speak in a natural female-doctor style. Give useful medical guidance in a clean rich-text layout that looks good in chat: start with one short empathetic line, then use 2 to 4 compact bullet points or short sections with markdown headings like ### What to do, ### Watch for, and ### Next question only when needed. Bold key warnings or important terms. Keep each bullet short, conversational, and easy to read aloud. Avoid one long paragraph.'
+        content: 'VOICE REPLY MODE: Speak like a calm, clinically precise junior doctor. Answer only the current request and do not add an unasked doctor search, diagnosis, treatment, or booking step. During symptom history, output exactly ONE specific clinical follow-up question and nothing else: no acknowledgement, advice, diagnosis, warning, heading, bullet, list, emoji, or extra sentence. Outside triage, give the shortest complete direct answer that is easy to hear.'
       })
     }
     const shouldUseDoctorLikeTriageQuestionStyle =
@@ -947,7 +1055,7 @@ Deno.serve(async (req) => {
     if (shouldUseDoctorLikeTriageQuestionStyle) {
       messagesToSend.push({
         role: 'system',
-        content: 'TRIAGE QUESTION STYLE: If you need more information, ask like a doctor in a natural conversation. You can use markdown to highlight key details, but keep it clear and ask only the most important next question(s).'
+        content: 'TRIAGE QUESTION STYLE: Conduct a structured junior-doctor history for the active concern. Cover onset/progression, severity, associated symptoms/red flags, triggers or pattern, functional impact, and medicines/allergies/relevant history. While any triage detail is still missing, output exactly ONE clinically focused question and NOTHING ELSE. Do not add acknowledgement, empathy, advice, diagnosis, treatment, warning, recap, heading, bullet, list, emoji, or another sentence. Use the patient answer to choose the next missing domain. Once enough information is captured, you may give a short objective recap suitable for the AI clinical snapshot.'
       })
     }
     
@@ -987,6 +1095,7 @@ Deno.serve(async (req) => {
           cityLabel: searchAreaCity,
           specialtyLabel: departmentSuggestion?.label || null,
           recommendationMode,
+          languageStyle,
           // Do not claim global totals from a limited result set.
           forceDoctorCount: true,
         }),
@@ -1002,11 +1111,9 @@ Deno.serve(async (req) => {
           messages: messagesToSend,
           messageText,
           maxTokens: generationMaxTokens,
-          preferredModels: voiceReplyRequested
-            ? ['gpt-4o-mini', 'gpt-4o']
-            : fastResponseRequested
-                ? ['gpt-4o-mini', 'gpt-4o']
-                : undefined,
+          preferredModels: voiceReplyRequested || fastResponseRequested
+            ? [CHAT_AI_FAST_MODEL, DEFAULT_OPENAI_FALLBACK_MODEL, 'gpt-4o-mini']
+            : [CHAT_AI_QUALITY_MODEL, DEFAULT_OPENAI_MODEL, 'gpt-4o'],
         })
       } catch (openAiError) {
         console.error('[chat-ai] OpenAI generation failed, attempting fallback:', openAiError)
@@ -1037,6 +1144,7 @@ Deno.serve(async (req) => {
             specialtyLabel: departmentSuggestion?.label || null,
             recommendationMode,
             forceDoctorCount: pureDoctorDirectoryIntent,
+            languageStyle,
           }),
           source: 'structured_fallback',
           selectedModel: null,
@@ -1046,7 +1154,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    let reply = formatAiReplyForPremiumMarkdown(generation.reply, { allowEmoji: true, safetyCritical: dangerFromUserInput })
+    const generationContainedInvalidArtifact = /\b(?:undefined|null|NaN)\b/i.test(String(generation.reply || ''))
+    let reply = sanitizeUserFacingReply(
+      formatAiReplyForPremiumMarkdown(generation.reply, { allowEmoji: !voiceReplyRequested, safetyCritical: dangerFromUserInput }),
+    )
 
     if (bookingIntent && (bookingConfirmation?.status || bookingPrep?.status)) {
       reply = buildAppOnlyDoctorReply({
@@ -1056,6 +1167,7 @@ Deno.serve(async (req) => {
         cityLabel: searchAreaCity,
         specialtyLabel: departmentSuggestion?.label || null,
         recommendationMode,
+        languageStyle,
       })
     }
 
@@ -1076,6 +1188,7 @@ Deno.serve(async (req) => {
           specialtyLabel: departmentSuggestion?.label || null,
           recommendationMode,
           forceDoctorCount: true,
+          languageStyle,
         })
       }
       const hasDoctors = doctors.length > 0
@@ -1098,6 +1211,7 @@ Deno.serve(async (req) => {
           cityLabel: searchAreaCity,
           specialtyLabel: departmentSuggestion?.label || null,
           recommendationMode,
+          languageStyle,
         })
       }
     }
@@ -1116,26 +1230,41 @@ Deno.serve(async (req) => {
 
     if (shouldValidateTriageQuestion) {
       reply = stripTriageAdviceSections(reply)
-      const validationResult = buildTriageFollowUpReply({
+      const deterministicTriageReply = buildTriageFollowUpReply({
         concernText: concernText || combinedUserText || messageText,
         coverage: triageCoverage,
         history,
         voiceMode: voiceReplyRequested,
         latestMessageText: messageText,
+        languageStyle,
       })
 
-      const replyLooksValid = validationResult.valid &&
+      const generatedValidation = validateTriageQuestionReply(reply, {
+        concernText: `${concernText || ''} ${messageText}`,
+        coverage: triageCoverage,
+        history,
+        voiceMode: voiceReplyRequested,
+      })
+      const triageStillInProgress = deterministicTriageReply.missingSlots.length > 0
+      const replyLooksValid = !generationContainedInvalidArtifact &&
+        generatedValidation.valid &&
+        replyMatchesLanguageLock(reply, languageStyle) &&
+        (reply.match(/\?/g) || []).length === 1 &&
         !/(\bmore details\b|\btell me more\b|\bgive more details\b|\bwhat symptoms\b|\bplease elaborate\b)/i.test(reply)
 
-      if (!replyLooksValid) {
+      // During active triage, always use the deterministic one-question response.
+      // Model-generated text can contain medically useful but premature advice before its question.
+      if (triageStillInProgress || !replyLooksValid) {
         console.log('[chat-ai] triage reply fallback engaged', {
-          profileId: validationResult.profileId,
-          missingSlots: validationResult.missingSlots,
-          reason: validationResult.reason || 'invalid_triage_reply',
+          profileId: deterministicTriageReply.profileId,
+          missingSlots: deterministicTriageReply.missingSlots,
+          reason: generatedValidation.reasons[0] || deterministicTriageReply.reason || 'invalid_triage_reply',
         })
-        reply = validationResult.reply
+        reply = deterministicTriageReply.reply
       }
     }
+
+    reply = sanitizeUserFacingReply(reply)
 
     // 9. Persistence
     let finalKeyFacts = memoryRecord.keyFacts || []
@@ -1167,7 +1296,7 @@ Deno.serve(async (req) => {
               slotOptions: bookingPrep.slotOptions.slice(0, 6),
               updatedAt: new Date().toISOString(),
             }
-          : bookingIntent && bookingPrep?.status !== 'ready'
+          : bookingIntent && bookingPrep?.status !== 'ready' && bookingPrep?.status !== 'incomplete'
             ? null
             : pendingBookingProposal
     finalKeyFacts = mergePendingBookingProposalIntoKeyFacts(finalKeyFacts, nextPendingBookingProposal)
@@ -1196,13 +1325,24 @@ Deno.serve(async (req) => {
     }
     await Promise.all(persistenceTasks)
 
-    const bookingPrompt =
-      typeof bookingPrep?.message === 'string' && bookingPrep.message.trim().length > 0
-        ? bookingPrep.message.trim()
-        : bookingPrep?.status === 'confirm_pending'
-          ? 'Please confirm and I will book this exact slot for you.'
-        : bookingPrep?.status === 'ready'
-          ? 'I found available slots in our database. Which one should I book for you?'
+    const bookingPrompt = bookingPrep?.status === 'confirm_pending'
+      ? languageStyle === 'devanagari_hindi'
+        ? 'भुगतान स्क्रीन पर जाने के लिए चुने हुए स्लॉट को कन्फर्म करें।'
+        : languageStyle === 'roman_hindi'
+          ? 'Payment screen par jaane ke liye chuna hua slot confirm karein.'
+          : 'Confirm the selected slot to continue to the secure payment screen.'
+      : bookingPrep?.status === 'ready'
+        ? languageStyle === 'devanagari_hindi'
+          ? 'उपलब्ध स्लॉट में से सही स्लॉट नंबर या समय बताएं।'
+          : languageStyle === 'roman_hindi'
+            ? 'Available slots me se exact slot number ya time batayein.'
+            : 'Tell me the exact slot number or time you want to select.'
+        : bookingPrep?.status === 'incomplete'
+          ? languageStyle === 'devanagari_hindi'
+            ? 'आगे बढ़ने के लिए डॉक्टर या सही स्लॉट बताएं।'
+            : languageStyle === 'roman_hindi'
+              ? 'Aage badhne ke liye doctor ya exact slot batayein.'
+              : 'Tell me the doctor or exact slot needed to continue.'
           : null
 
     const consultRecommended = Boolean(dangerFromUserInput || hasConsultRecommendationCue(reply))

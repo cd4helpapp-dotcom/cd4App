@@ -6,6 +6,7 @@ import { useCallContext } from '../context/CallContext';
 import { useRouter } from 'expo-router';
 import { Phone, Video } from 'lucide-react-native';
 import { getActiveRoomId } from '../hooks/usePushNotifications';
+import { getImageUrl } from '../constants/Config';
 
 const { width, height } = Dimensions.get('window');
 
@@ -148,7 +149,7 @@ export default function GlobalCallObserver() {
                 return {
                     ...prev,
                     callerName: fullName || 'Unknown Caller',
-                    callerAvatar: profile?.profile_picture
+                    callerAvatar: getImageUrl(profile?.profile_picture)
                 };
             });
         } catch (error) {

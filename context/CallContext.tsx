@@ -595,6 +595,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 throw new Error(eligibility.reason || 'Consultation window closed.');
             }
 
+            // Set state to ringing instantly so calling screen pops up in one click
+            setBoundRoomId(targetRoomId);
+            setActiveCallRoomId(targetRoomId);
+            setIsCaller(true);
+            setCallType(type);
+            setIsAudioMuted(false);
+            setIsVideoMuted(type === 'audio');
+            setCallStatus('ringing');
+
             const [tokenBundle, engineReady] = await Promise.all([
                 fetchAgoraToken(targetRoomId),
                 initEngine(),
@@ -602,6 +611,9 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!engineReady) {
                 throw new Error('Could not initialize Agora call engine. Please check Agora setup and rebuild the app.');
             }
+
+            setAgoraToken(tokenBundle.token);
+            setLocalAgoraUid(tokenBundle.uid);
 
             const { data: sessionData, error } = await supabase
                 .from('call_sessions')
@@ -616,16 +628,6 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 .single();
 
             if (error) throw error;
-
-            setBoundRoomId(targetRoomId);
-            setActiveCallRoomId(targetRoomId);
-            setIsCaller(true);
-            setAgoraToken(tokenBundle.token);
-            setLocalAgoraUid(tokenBundle.uid);
-            setCallType(type);
-            setIsAudioMuted(false);
-            setIsVideoMuted(type === 'audio');
-            setCallStatus('ringing');
 
             void (async () => {
                 const { data, error: pushError } = await supabase.functions.invoke('send-chat-notification', {
@@ -734,36 +736,40 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!targetRoomId) return;
 
         clearStatusResetTimer();
-        try {
-            const { data: activeSessions } = await supabase
-                .from('call_sessions')
-                .select('id')
-                .eq('room_id', targetRoomId)
-                .eq('status', 'active')
-                .order('created_at', { ascending: false })
-                .limit(1);
-            const hadActiveSession = Boolean(activeSessions && activeSessions.length > 0);
 
-            await supabase
-                .from('call_sessions')
-                .update({ status: 'ended', ended_at: new Date().toISOString() })
-                .eq('room_id', targetRoomId)
-                .in('status', ['ringing', 'active']);
+        // Instantly transition local state and cleanup Agora engine to stop audio/video immediately
+        setCallStatus('ended');
+        void cleanupEngine();
+        scheduleResetToIdle(2000);
 
-            if (hadActiveSession) {
-                const marked = await markTodayAppointmentCompletedForRoom(targetRoomId);
-                if (marked) {
-                    queryClient.invalidateQueries({ queryKey: ['appointments'] });
+        // Perform database updates asynchronously in the background
+        void (async () => {
+            try {
+                const { data: activeSessions } = await supabase
+                    .from('call_sessions')
+                    .select('id')
+                    .eq('room_id', targetRoomId)
+                    .eq('status', 'active')
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                const hadActiveSession = Boolean(activeSessions && activeSessions.length > 0);
+
+                await supabase
+                    .from('call_sessions')
+                    .update({ status: 'ended', ended_at: new Date().toISOString() })
+                    .eq('room_id', targetRoomId)
+                    .in('status', ['ringing', 'active']);
+
+                if (hadActiveSession) {
+                    const marked = await markTodayAppointmentCompletedForRoom(targetRoomId);
+                    if (marked) {
+                        queryClient.invalidateQueries({ queryKey: ['appointments'] });
+                    }
                 }
+            } catch (error) {
+                if (__DEV__) console.error('[CallContext] Background endCall DB update failed:', error);
             }
-
-            setCallStatus('ended');
-        } catch (error) {
-            if (__DEV__) console.error('[CallContext] Error ending call:', error);
-        } finally {
-            await cleanupEngine();
-            scheduleResetToIdle(2000);
-        }
+        })();
     }, [cleanupEngine, clearStatusResetTimer, currentRoomId, markTodayAppointmentCompletedForRoom, queryClient, scheduleResetToIdle]);
 
     const declineCall = useCallback(async (roomId?: string | null) => {
@@ -771,20 +777,24 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!targetRoomId) return;
 
         clearStatusResetTimer();
-        try {
-            await supabase
-                .from('call_sessions')
-                .update({ status: 'declined' })
-                .eq('room_id', targetRoomId)
-                .eq('status', 'ringing');
 
-            setCallStatus('declined');
-        } catch (error) {
-            if (__DEV__) console.error('[CallContext] Error declining call:', error);
-        } finally {
-            await cleanupEngine();
-            scheduleResetToIdle(2000);
-        }
+        // Instantly update local status and cleanup
+        setCallStatus('declined');
+        void cleanupEngine();
+        scheduleResetToIdle(2000);
+
+        // Update database status asynchronously in the background
+        void (async () => {
+            try {
+                await supabase
+                    .from('call_sessions')
+                    .update({ status: 'declined' })
+                    .eq('room_id', targetRoomId)
+                    .eq('status', 'ringing');
+            } catch (error) {
+                if (__DEV__) console.error('[CallContext] Background declineCall DB update failed:', error);
+            }
+        })();
     }, [cleanupEngine, clearStatusResetTimer, currentRoomId, scheduleResetToIdle]);
 
     const toggleAudio = useCallback(() => {
@@ -840,7 +850,21 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     .limit(1)
                     .maybeSingle();
 
-                if (cancelled || sessionError || !ongoingSession?.room_id) return;
+                if (cancelled) return;
+
+                if (sessionError || !ongoingSession?.room_id) {
+                    // Reset if local state has ongoing call but DB says there is none
+                    setCallStatus((curr) => {
+                        if (curr === 'ringing' || curr === 'active') {
+                            setTimeout(() => {
+                                resetToIdle();
+                                void cleanupEngine();
+                            }, 0);
+                        }
+                        return curr;
+                    });
+                    return;
+                }
 
                 clearStatusResetTimer();
                 setBoundRoomId(ongoingSession.room_id);
@@ -861,12 +885,14 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         };
 
-        void hydrateAnyOngoingCall();
+        if (appState === 'active') {
+            void hydrateAnyOngoingCall();
+        }
 
         return () => {
             cancelled = true;
         };
-    }, [cleanupEngine, clearStatusResetTimer, resetToIdle, user?.id]);
+    }, [cleanupEngine, clearStatusResetTimer, resetToIdle, user?.id, appState]);
 
     useEffect(() => {
         if (!boundRoomId) return;
@@ -958,7 +984,21 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     .limit(1)
                     .maybeSingle();
 
-                if (cancelled || error || !session) return;
+                if (cancelled) return;
+
+                if (error || !session) {
+                    // Reset if local state has ongoing call but DB says there is none
+                    setCallStatus((curr) => {
+                        if (curr === 'ringing' || curr === 'active') {
+                            setTimeout(() => {
+                                resetToIdle();
+                                void cleanupEngine();
+                            }, 0);
+                        }
+                        return curr;
+                    });
+                    return;
+                }
 
                 clearStatusResetTimer();
                 setCallStatus(session.status as CallStatus);
@@ -980,12 +1020,14 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         };
 
-        void hydrateLatestSession();
+        if (appState === 'active') {
+            void hydrateLatestSession();
+        }
 
         return () => {
             cancelled = true;
         };
-    }, [boundRoomId, clearStatusResetTimer, user?.id]);
+    }, [boundRoomId, clearStatusResetTimer, user?.id, appState]);
 
     useEffect(() => {
         let isCancelled = false;
@@ -1038,17 +1080,59 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [agoraToken, callStatus, callType, currentRoomId, initEngine, isJoined, localAgoraUid]);
 
     useEffect(() => {
-        if (callStatus === 'ringing' && isCaller && currentRoomId) {
+        let intervalId: any = null;
+
+        if (callStatus === 'ringing' && currentRoomId) {
             if (ringingTimeoutRef.current) {
                 clearTimeout(ringingTimeoutRef.current);
             }
 
-            ringingTimeoutRef.current = setTimeout(async () => {
-                await supabase.from('call_sessions')
-                    .update({ status: 'missed' })
-                    .eq('room_id', currentRoomId)
-                    .eq('status', 'ringing');
-            }, 45000);
+            if (isCaller) {
+                ringingTimeoutRef.current = setTimeout(async () => {
+                    await supabase.from('call_sessions')
+                        .update({ status: 'missed' })
+                        .eq('room_id', currentRoomId)
+                        .eq('status', 'ringing');
+                }, 45000);
+            }
+
+            // Polling status updates fallback for WebSocket disconnect/sync resilience
+            intervalId = setInterval(async () => {
+                try {
+                    const { data: session, error } = await supabase
+                        .from('call_sessions')
+                        .select('status, type, caller_id, agora_token')
+                        .eq('room_id', currentRoomId)
+                        .in('status', ['ringing', 'active', 'ended', 'declined', 'missed'])
+                        .order('created_at', { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+
+                    if (error || !session) return;
+
+                    const nextStatus = session.status as CallStatus;
+                    if (nextStatus !== callStatus) {
+                        setCallStatus(nextStatus);
+                        if (session.type === 'audio' || session.type === 'video') {
+                            setCallType(session.type);
+                            setIsVideoMuted(session.type === 'audio');
+                        }
+                        const nextIsCaller = session.caller_id === user?.id;
+                        setIsCaller(nextIsCaller);
+                        if (nextStatus === 'active' && nextIsCaller && session.agora_token) {
+                            setAgoraToken(session.agora_token);
+                            setLocalAgoraUid(getAgoraUidFromUserId(user?.id));
+                        }
+
+                        if (['ended', 'declined', 'missed'].includes(nextStatus)) {
+                            void cleanupEngine();
+                            scheduleResetToIdle(2500);
+                        }
+                    }
+                } catch (error) {
+                    if (__DEV__) console.warn('[CallContext] Polling status fetch failed:', error);
+                }
+            }, 3000);
         }
 
         return () => {
@@ -1056,8 +1140,11 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 clearTimeout(ringingTimeoutRef.current);
                 ringingTimeoutRef.current = null;
             }
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
         };
-    }, [callStatus, currentRoomId, isCaller]);
+    }, [callStatus, currentRoomId, isCaller, user?.id, cleanupEngine, scheduleResetToIdle]);
 
     useEffect(() => {
         const shouldPlayIncomingRingtone = callStatus === 'ringing' && !isCaller;

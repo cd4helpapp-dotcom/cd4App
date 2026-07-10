@@ -250,6 +250,7 @@ interface PersistedMessageRow {
   text: string;
   created_at: string | null;
   show_consult_now: boolean | null;
+  metadata?: Record<string, any> | null;
 }
 
 interface PersistedConversationRow {
@@ -515,16 +516,25 @@ const getAgentToolStatusVisual = (status: AgentToolStepStatus): {
   };
 };
 
-const mapPersistedMessageRow = (row: PersistedMessageRow): ChatMessage => ({
-  id: row.id,
-  sender: row.sender === 'user' ? 'user' : 'ai',
-  text: row.text || '',
-  createdAt: row.created_at || nowIso(),
-  showConsultNow:
-    row.sender !== 'user'
-      ? Boolean(row.show_consult_now) || shouldShowConsultButton(row.text || '')
-      : false,
-});
+const mapPersistedMessageRow = (row: PersistedMessageRow): ChatMessage => {
+  const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  return {
+    id: row.id,
+    sender: row.sender === 'user' ? 'user' : 'ai',
+    text: row.text || '',
+    createdAt: row.created_at || nowIso(),
+    showConsultNow:
+      row.sender !== 'user'
+        ? Boolean(row.show_consult_now) || shouldShowConsultButton(row.text || '')
+        : false,
+    recommendedDepartmentLabel:
+      typeof metadata.recommendedDepartmentLabel === 'string' ? metadata.recommendedDepartmentLabel : undefined,
+    recommendedDoctors: Array.isArray(metadata.recommendedDoctors) ? metadata.recommendedDoctors : undefined,
+    bookingSlotOptions: Array.isArray(metadata.bookingSlotOptions) ? metadata.bookingSlotOptions : undefined,
+    bookingPrompt: typeof metadata.bookingPrompt === 'string' ? metadata.bookingPrompt : undefined,
+    agentSteps: Array.isArray(metadata.agentSteps) ? metadata.agentSteps : undefined,
+  };
+};
 
 const normalizeConcern = (value: string | string[] | undefined): string => {
   if (Array.isArray(value)) {
@@ -938,7 +948,7 @@ const STREAM_MODE_RAW = (process.env.EXPO_PUBLIC_CHAT_STREAM_MODE || 'on').trim(
 const STREAM_MODE: 'on' | 'off' | 'auto' =
   STREAM_MODE_RAW === 'on' || STREAM_MODE_RAW === 'off' ? STREAM_MODE_RAW : 'auto';
 const CHAT_VOICE_TTS_MODE: 'fast' | 'premium' =
-  (process.env.EXPO_PUBLIC_CHAT_VOICE_TTS_MODE || 'premium').trim().toLowerCase() === 'fast'
+  (process.env.EXPO_PUBLIC_CHAT_VOICE_TTS_MODE || 'fast').trim().toLowerCase() === 'fast'
     ? 'fast'
     : 'premium';
 const AGENT_WS_MODE = (process.env.EXPO_PUBLIC_AGENT_WS_MODE || 'on').trim().toLowerCase() === 'on';
@@ -2040,6 +2050,15 @@ export default function AiGuidanceScreen() {
         sender: msg.sender,
         text: msg.text,
         show_consult_now: Boolean(msg.showConsultNow),
+        metadata: msg.sender === 'ai'
+          ? {
+              recommendedDepartmentLabel: msg.recommendedDepartmentLabel || null,
+              recommendedDoctors: Array.isArray(msg.recommendedDoctors) ? msg.recommendedDoctors.slice(0, 6) : [],
+              bookingSlotOptions: Array.isArray(msg.bookingSlotOptions) ? msg.bookingSlotOptions.slice(0, 6) : [],
+              bookingPrompt: msg.bookingPrompt || null,
+              agentSteps: Array.isArray(msg.agentSteps) ? msg.agentSteps : [],
+            }
+          : {},
         created_at: msg.createdAt,
       });
 
@@ -2609,7 +2628,7 @@ export default function AiGuidanceScreen() {
     try {
       const { data: storedMessages, error: messagesError } = await supabase
         .from('ai_chat_messages')
-        .select('id, sender, text, show_consult_now, created_at')
+        .select('id, sender, text, show_consult_now, metadata, created_at')
         .eq('conversation_id', targetConversationId)
         .order('created_at', { ascending: true });
 
@@ -2761,7 +2780,7 @@ export default function AiGuidanceScreen() {
 
         const { data: storedMessages, error: messagesError } = await supabase
           .from('ai_chat_messages')
-          .select('id, sender, text, show_consult_now, created_at')
+          .select('id, sender, text, show_consult_now, metadata, created_at')
           .eq('conversation_id', targetConversationId)
           .order('created_at', { ascending: true });
 
@@ -2827,6 +2846,39 @@ export default function AiGuidanceScreen() {
     }
 
     router.replace('/(tabs)');
+  };
+
+  const openBookingPaymentHandoff = (handoff: any, targetConversationId?: string | null): boolean => {
+    if (handoff?.status !== 'payment_required') return false;
+
+    const doctorId = typeof handoff?.doctorId === 'string' ? handoff.doctorId.trim() : '';
+    const slotId = typeof handoff?.slotId === 'string' ? handoff.slotId.trim() : '';
+    if (!doctorId || !slotId) {
+      Toast.show({
+        type: 'error',
+        text1: 'Booking details missing',
+        text2: 'Please select the doctor and slot again.',
+      });
+      return false;
+    }
+
+    router.push({
+      pathname: '/confirm-consultation',
+      params: {
+        doctorId,
+        slotId,
+        doctorName: String(handoff?.doctorName || 'Selected Doctor'),
+        doctorSpecialization: String(handoff?.doctorSpecialization || ''),
+        doctorCity: String(handoff?.doctorCity || ''),
+        doctorFee: String(handoff?.doctorFee || '500'),
+        concern: concern || '',
+        slotDate: String(handoff?.slotDate || ''),
+        slotStartTime: String(handoff?.slotStartTime || ''),
+        slotEndTime: String(handoff?.slotEndTime || ''),
+        conversationId: targetConversationId || '',
+      },
+    });
+    return true;
   };
 
   const handleConsultNow = async () => {
@@ -3641,6 +3693,8 @@ export default function AiGuidanceScreen() {
         }
       }
 
+      openBookingPaymentHandoff(response.data?.bookingConfirmation, requestConversationId);
+
       // Dedicated voice mode should rely on backend TTS audio from sendVoiceMessage.
       // Avoid forcing device-local TTS here because it sounds inconsistent across entry points/devices.
     } catch (error: any) {
@@ -4053,7 +4107,8 @@ export default function AiGuidanceScreen() {
         return currentSession.access_token;
       };
 
-      const historyForVoice = buildHistoryForApi(messagesRef.current, 14);
+      // Keep voice context compact so the first answer is generated quickly.
+      const historyForVoice = buildHistoryForApi(messagesRef.current, 6);
       const baseVoiceRequestBody = {
         text,
         concern,
@@ -4064,6 +4119,8 @@ export default function AiGuidanceScreen() {
         locationCity,
         searchAreaCity: locationCity,
         preferLocalPlayback: false,
+        fastResponse: true,
+        quick: true,
         ttsMode: CHAT_VOICE_TTS_MODE,
       };
 
@@ -4525,6 +4582,7 @@ export default function AiGuidanceScreen() {
       if (!voiceLiveSpokenViaDelta && !hasReceivedServerVoiceAudioChunksRef.current && !voiceOpenAiAudioOnlyRef.current) {
         void speakText(aiText, audioBase64, audioMimeType);
       }
+      openBookingPaymentHandoff(responseData?.bookingConfirmation, requestConversationId);
       setIsVoiceDeltaLive(false);
     } catch (error: any) {
       if (activeRequestTokenRef.current !== requestToken) {

@@ -11,6 +11,7 @@ import { PanResponder, Animated } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuthContext } from '../context/AuthContext';
 import { useAppLanguage } from '../context/AppLanguageContext';
 import { useChatMessages, useSendMessage, useGetOrCreateRoom, useMarkAsRead, useChatRooms, useSendPrescriptionPdfToChat } from '../hooks/useChat';
@@ -720,6 +721,7 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
 
 export default function ChatDetailScreen() {
     const router = useRouter();
+    const queryClient = useQueryClient();
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
     const { language } = useAppLanguage();
@@ -822,6 +824,15 @@ export default function ChatDetailScreen() {
         setIsHeaderAvatarBroken(false);
     }, [currentRoom?.other_party?.profilePicture, roomId]);
 
+    const prevIsOnlineRef = useRef(isOnline);
+    useEffect(() => {
+        // When user transitions from Online to Offline, refetch chat rooms to update last_seen_at
+        if (prevIsOnlineRef.current && !isOnline && roomId) {
+            queryClient.invalidateQueries({ queryKey: ['chat-rooms'] });
+        }
+        prevIsOnlineRef.current = isOnline;
+    }, [isOnline, roomId, queryClient]);
+
     const getStatusText = () => {
         if (isOnline) return 'Online';
         if (!lastSeenAt) return '';
@@ -870,12 +881,28 @@ export default function ChatDetailScreen() {
     const hasLiveCall = callStatus === 'ringing' || callStatus === 'active';
 
     const handleBackNavigation = useCallback(() => {
+        if (hasLiveCall) {
+            Alert.alert(
+                'Ongoing Call',
+                'Please end the call before leaving this screen.',
+                [{ text: 'OK', style: 'default' }]
+            );
+            return;
+        }
         router.back();
-    }, [router]);
+    }, [hasLiveCall, router]);
 
     useEffect(() => {
         const { BackHandler } = require('react-native');
         const onBackPress = () => {
+            if (hasLiveCall) {
+                Alert.alert(
+                    'Ongoing Call',
+                    'Please end the call before leaving this screen.',
+                    [{ text: 'OK', style: 'default' }]
+                );
+                return true;
+            }
             router.back();
             return true;
         };
@@ -884,10 +911,13 @@ export default function ChatDetailScreen() {
         return () => backHandler.remove();
     }, [hasLiveCall, router]);
 
-    // Reset minimized state when call ends or goes idle
+    // Reset minimized state and dismiss keyboard when call status changes
     useEffect(() => {
         if (callStatus === 'idle' || callStatus === 'ended') {
             setIsCallMinimized(false);
+        }
+        if (callStatus !== 'idle') {
+            Keyboard.dismiss();
         }
     }, [callStatus]);
 
@@ -1086,7 +1116,7 @@ export default function ChatDetailScreen() {
                 console.log('Resolving room for otherId:', otherId);
                 setIsResolvingRoom(true);
                 try {
-                    const isDoctor = user.role === 'Doctor';
+                    const isDoctor = String(user.role || '').toLowerCase() === 'doctor';
                     const patientId = isDoctor ? otherId : user.id;
                     const doctorId = isDoctor ? user.id : otherId;
 

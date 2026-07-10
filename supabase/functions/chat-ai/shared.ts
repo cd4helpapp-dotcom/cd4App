@@ -30,8 +30,10 @@ export const parseEnvFloat = (key: string, fallback: number): number => {
   return Number.isFinite(raw) ? raw : fallback
 }
 
-export const DEFAULT_OPENAI_MODEL = (Deno.env.get('CHAT_AI_OPENAI_MODEL') || 'gpt-4o-mini').trim() || 'gpt-4o-mini'
-export const DEFAULT_OPENAI_FALLBACK_MODEL = (Deno.env.get('CHAT_AI_OPENAI_FALLBACK_MODEL') || 'gpt-4o').trim() || 'gpt-4o'
+export const DEFAULT_OPENAI_MODEL = (Deno.env.get('CHAT_AI_OPENAI_MODEL') || 'gpt-5.6-terra').trim() || 'gpt-5.6-terra'
+export const DEFAULT_OPENAI_FALLBACK_MODEL = (Deno.env.get('CHAT_AI_OPENAI_FALLBACK_MODEL') || 'gpt-5.6-luna').trim() || 'gpt-5.6-luna'
+export const CHAT_AI_QUALITY_MODEL = (Deno.env.get('CHAT_AI_QUALITY_MODEL') || 'gpt-5.6-sol').trim() || 'gpt-5.6-sol'
+export const CHAT_AI_FAST_MODEL = (Deno.env.get('CHAT_AI_FAST_MODEL') || 'gpt-5.6-terra').trim() || 'gpt-5.6-terra'
 export const GEMINI_TIMEOUT_MS = Math.max(8_000, parseEnvInt('CHAT_AI_GEMINI_TIMEOUT_MS', 12_000))
 export const GEMINI_MAX_ATTEMPTS = Math.max(1, Math.min(2, parseEnvInt('CHAT_AI_GEMINI_MAX_ATTEMPTS', 1)))
 export const GEMINI_MAX_OUTPUT_TOKENS = Math.max(180, Math.min(900, parseEnvInt('CHAT_AI_GEMINI_MAX_OUTPUT_TOKENS', 420)))
@@ -56,7 +58,7 @@ export const CHAT_HISTORY_SEND_ITEMS = Math.max(
 )
 export const CHAT_HISTORY_MAX_CHARS = 520
 
-export type ReplyLanguageStyle = 'auto'
+export type ReplyLanguageStyle = 'english' | 'roman_hindi' | 'devanagari_hindi'
 
 export type DepartmentConfig = {
   id: string
@@ -268,24 +270,48 @@ export const normalize = (value: string): string =>
 export const isAssistantConcern = (concern: string): boolean =>
   normalize(concern).includes('assistant')
 
-export const detectLanguageStyle = (_message: string, _history: any[] = []): ReplyLanguageStyle => 'auto'
+const ROMAN_HINDI_LANGUAGE_HINTS = [
+  /\b(kya|kyu|kyun|kaise|kab|kahan|kaun|mujhe|mera|meri|mere|main|mai|hum|aap|tum|hai|hain|nahi|haan|han|kar|karo|batao|dikhao|chahiye|din|ghante|hafte)\b/i,
+  /\b(bukhar|khansi|dard|dawai|ilaaj|saans|pet|pait|ulti|kamzori|takleef|tabiyat|doctor se|slot|appointment)\b/i,
+]
+
+export const detectLanguageStyle = (message: string, _history: any[] = []): ReplyLanguageStyle => {
+  const currentTurn = String(message || '').trim()
+  if (looksDevanagari(currentTurn)) return 'devanagari_hindi'
+  if (ROMAN_HINDI_LANGUAGE_HINTS.some((pattern) => pattern.test(currentTurn))) return 'roman_hindi'
+  const englishHits = currentTurn.match(/\b(i|i'm|im|my|me|you|your|the|is|are|am|have|has|feel|feeling|since|what|when|where|which|how|should|please|doctor|pain|fever|cough)\b/gi) || []
+  if (englishHits.length >= 2) return 'english'
+
+  const recentUserHistory = (Array.isArray(_history) ? _history : [])
+    .filter((item: any) => item?.role === 'user' && typeof item?.content === 'string')
+    .slice(-4)
+    .reverse()
+  for (const item of recentUserHistory) {
+    const priorText = String(item.content || '')
+    if (looksDevanagari(priorText)) return 'devanagari_hindi'
+    if (ROMAN_HINDI_LANGUAGE_HINTS.some((pattern) => pattern.test(priorText))) return 'roman_hindi'
+    const priorEnglishHits = priorText.match(/\b(i|i'm|im|my|me|you|your|the|is|are|am|have|has|feel|feeling|since|what|when|where|which|how|should|please|doctor|pain|fever|cough)\b/gi) || []
+    if (priorEnglishHits.length >= 2) return 'english'
+  }
+  return 'english'
+}
 
 export const getLanguageInstruction = (style: ReplyLanguageStyle): string => {
-  if (style === 'auto') {
-    return [
-      'CRITICAL: You MUST reply in the EXACT SAME SCRIPT as the user.',
-      'If the user writes Hindi in English letters (Hinglish like "kya hal hai"), you MUST reply in Hinglish (Roman script, e.g. "Main theek hu"). DO NOT use Devanagari script (हिंदी) unless the user uses it first.',
-      'If the user writes in English, reply in English.',
-      'If the user writes in Devanagari Hindi, reply in Devanagari Hindi.',
-      'Always mirror the user\'s tone and language naturally.',
+  const languageRule = style === 'devanagari_hindi'
+    ? 'The current user turn is in Hindi written in Devanagari. Reply entirely in natural Devanagari Hindi. Do not switch to English or Roman Hindi, except unavoidable doctor names or medical abbreviations.'
+    : style === 'roman_hindi'
+      ? 'The current user turn is in Roman Hindi/Hinglish. Reply entirely in natural Roman Hindi using English letters. Do not use Devanagari and do not switch to an English sentence, except unavoidable doctor names or medical abbreviations.'
+      : 'The current user turn is in English. Reply entirely in English. Do not switch to Hindi, Hinglish, or Devanagari.'
+
+  return [
+      `CRITICAL LANGUAGE LOCK: ${languageRule}`,
+      'Determine the response only from the current user turn; older conversation language must not override it.',
       'Use clean Markdown formatting when helpful for readability (headings, bullet points, numbered steps, and bold key terms).',
       'Keep formatting natural and not excessive for short or casual replies.',
       'UX SAFETY: NEVER output internal system hints (like "INSTRUCTION:", "No verified doctors found") or raw search metadata (like "class=", "Web Search Results:").',
       'REPHRASE ALL SYSTEM HINTS into warm, conversational responses. NEVER mention that you checked specific external tools by name (like Practo, Tavily, or DuckDuckGo) unless asked.',
       'If citing web results, use "According to health sources" or similar natural phrases. NO RAW URLS allowed.',
     ].join(' ')
-  }
-  return 'Automatically detect and mirror the user language.'
 }
 
 export const hasMarkdownStructure = (value: string): boolean =>
@@ -647,13 +673,18 @@ export const extractStoredCoverageCount = (summary: string): number => {
 }
 
 export const extractStoredTriageSetCount = (summary: string): number => {
-  const match = (summary || '').match(/triage question sets used:\s*([0-2])\s*\/\s*2/i)
+  const match = (summary || '').match(/triage question sets used:\s*([0-6])\s*\/\s*(?:2|6)/i)
   return match?.[1] ? Number(match[1]) : 0
 }
 
 export const countTriageQuestionSetsFromHistory = (history: any[]): number => {
-  const triageHints = ['when did', 'how long', 'kab se', 'severity', '1-10']
-  return (history || []).filter(item => item.role === 'assistant' && item.content.includes('?') && triageHints.some(hint => normalize(item.content).includes(hint))).length
+  const askedSlots = new Set<TriageQuestionSlot>()
+  for (const item of history || []) {
+    if (item?.role !== 'assistant' || typeof item?.content !== 'string' || !item.content.includes('?')) continue
+    const slot = detectTriageQuestionSlot(item.content)
+    if (slot) askedSlots.add(slot)
+  }
+  return askedSlots.size
 }
 
 type ConcernTriageProfile = {
@@ -691,14 +722,22 @@ const TRIAGE_GENERIC_PATTERNS = [
 
 const TRIAGE_SLOT_KEYWORDS: Record<TriageQuestionSlot, string[]> = {
   onset: ['kab se', 'since when', 'when did', 'how long', 'started', 'start hua', 'start hui', 'start huye', 'begin', 'began', 'ongoing', 'shuruaat'],
-  severity: ['kitna', 'severity', '1-10', '1 to 10', 'pressure', 'tightness', 'sharp', 'burning', 'constant', 'cramping', 'worse', 'mild', 'moderate', 'severe', 'intensity'],
-  associated: ['saath', 'also', 'along with', 'other symptoms', 'aur kya', 'aur kaun se', 'fever', 'cough', 'breath', 'breathing', 'wheezing', 'vomit', 'nausea', 'weakness', 'numbness', 'swelling', 'bleeding', 'rash', 'urine', 'dizziness', 'sweating', 'vision'],
-  trigger: ['trigger', 'after', 'before', 'during', 'with food', 'exercise', 'walking', 'movement', 'stress', 'sleep', 'worse with', 'better with', 'khane ke baad', 'chalne par'],
+  severity: ['kitna', 'severity', '1-10', '1 to 10', 'blood sugar', 'sugar reading', 'glucose', 'hba1c', 'pressure', 'tightness', 'sharp', 'burning', 'constant', 'cramping', 'worse', 'mild', 'moderate', 'severe', 'intensity'],
+  associated: ['saath', 'also', 'along with', 'other symptoms', 'aur kya', 'aur kaun se', 'fever', 'cough', 'breath', 'breathing', 'wheezing', 'vomit', 'nausea', 'weakness', 'numbness', 'swelling', 'bleeding', 'rash', 'urine', 'dizziness', 'sweating', 'vision', 'hunger', 'weight loss', 'wound', 'healing'],
+  trigger: ['trigger', 'after', 'before', 'during', 'with food', 'food habits', 'diet', 'exercise', 'physical activity', 'smoking', 'alcohol', 'walking', 'movement', 'stress', 'sleep', 'worse with', 'better with', 'khane ke baad', 'chalne par'],
   impact: ['impact', 'affect', 'work', 'sleep', 'walk', 'daily', 'routine', 'unable', 'difficulty', 'school', 'office', 'feeding', 'moving', 'breathing difficulty'],
   medicationContext: ['medicine', 'medication', 'tablet', 'allergy', 'inhaler', 'paracetamol', 'bp', 'blood pressure', 'diabetes', 'pregnancy', 'history', 'taken any medicines', 'ongoing conditions', 'regular medicine', 'purani bimari'],
 }
 
 const TRIAGE_QUESTION_TEMPLATES: Record<string, Record<TriageQuestionSlot, string>> = {
+  diabetes: {
+    onset: 'Zyada pyaas, baar-baar urine aur thakan kab se ho rahi hai, aur kya ye symptoms badh rahe hain?',
+    severity: 'Kya aapko recent blood sugar ya HbA1c result pata hai, aur wo kab check hua tha?',
+    associated: 'Kya saath me bhook zyada lagna, bina wajah weight kam hona, dhundhla dikhna, ya wounds der se heal hona bhi ho raha hai?',
+    trigger: 'Aapki daily food habits aur physical activity kaisi hai, aur kya aap smoking ya alcohol lete hain?',
+    impact: 'Kya thakan ya baar-baar urine ki wajah se aapka routine, kaam ya neend affect ho rahi hai?',
+    medicationContext: 'Kya pehle diabetes, high BP ya koi chronic condition diagnose hui hai, abhi tablets ya insulin chal raha hai, ya family me diabetes ka history hai?',
+  },
   chest_pain: {
     onset: 'Chest pain kab se start hua, aur kya abhi bhi ho raha hai?',
     severity: 'Dard 1-10 me kitna hai, aur pressure/tightness jaisa lagta hai ya sharp?',
@@ -969,6 +1008,8 @@ const buildDoctorLikeQuestion = (args: {
       onset: 'पहले समय-रेखा समझ लेते हैं',
       severity: 'क्लिनिकल severity समझने के लिए यह बताइए',
       associated: 'साथ के symptoms भी जानना जरूरी है',
+      trigger: 'लक्षणों का pattern समझने के लिए यह बताइए',
+      impact: 'रोजमर्रा पर इसका असर समझना जरूरी है',
       medicationContext: 'सुरक्षित सलाह के लिए medicine history भी बताइए',
     }[args.slot]
 
@@ -976,6 +1017,8 @@ const buildDoctorLikeQuestion = (args: {
       onset: 'यह दिक्कत आपको कब से शुरू हुई है?',
       severity: 'अभी यह तकलीफ 1 से 10 में कितनी लगेगी?',
       associated: 'इसके साथ और कौन से symptoms हो रहे हैं?',
+      trigger: 'यह तकलीफ किस चीज़ से बढ़ती या कम होती है—जैसे खाना, चलना, तनाव या आराम?',
+      impact: 'क्या इसकी वजह से आपकी नींद, काम या रोज़मर्रा की गतिविधियां प्रभावित हो रही हैं?',
       medicationContext: 'अब तक कोई medicine ली है, या allergy / पुरानी बीमारी का history है?',
     }[args.slot]
 
@@ -989,6 +1032,8 @@ const buildDoctorLikeQuestion = (args: {
     onset: 'To understand the timeline better',
     severity: 'To judge the clinical severity properly',
     associated: 'To understand the full symptom pattern',
+    trigger: 'To understand the symptom pattern better',
+    impact: 'To understand how much this is affecting you',
     medicationContext: 'To keep the advice medically safe',
   }[args.slot]
 
@@ -996,6 +1041,8 @@ const buildDoctorLikeQuestion = (args: {
     onset: 'when did this problem begin, and is it still ongoing right now?',
     severity: 'how severe is it at the moment, roughly on a 1 to 10 scale?',
     associated: 'what other symptoms are happening along with this?',
+    trigger: 'what tends to make it worse or better, such as food, activity, stress, sleep, or rest?',
+    impact: 'is it affecting your sleep, work, movement, or usual daily activities?',
     medicationContext: 'have you taken any medicines already, or do you have allergies or ongoing conditions?',
   }[args.slot]
   const concernSpecificEnglishQuestion = guidanceToEnglishQuestion(profileGuidance, englishVariant)
@@ -1075,9 +1122,9 @@ const pickNextTriageSlots = (args: {
   const secondRecentSlot = recentSlots[recentSlots.length - 2] || null
   const preferred = missingSlots.filter((slot) => slot !== lastRecentSlot && slot !== secondRecentSlot)
   if (preferred.length > 0) {
-    return args.voiceMode ? [preferred[0]] : preferred.slice(0, 2)
+    return [preferred[0]]
   }
-  return args.voiceMode ? [missingSlots[0]] : missingSlots.slice(0, 2)
+  return [missingSlots[0]]
 }
 
 export const buildTriageQuestionBlueprint = (concernText: string, coverage: any = {}): string => {
@@ -1096,15 +1143,21 @@ export const buildTriageFollowUpReply = (args: {
   history?: any[]
   voiceMode?: boolean
   latestMessageText?: string
+  languageStyle?: ReplyLanguageStyle
 }): { valid: boolean; reply: string; reason?: string; profileId: string; missingSlots: TriageQuestionSlot[] } => {
-  const profile = getConcernTriageProfile(args.concernText || args.latestMessageText || '')
+  const profile = getConcernTriageProfile(`${args.concernText || ''} ${args.latestMessageText || ''}`)
   const coverage = args.coverage || {}
   const history = Array.isArray(args.history) ? args.history : []
   const missingSlots = getTriageMissingSlots(coverage)
   if (missingSlots.length === 0) {
+    const language = args.languageStyle || detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)
     return {
       valid: true,
-      reply: 'Samajh gaya. Ab main concise guidance de raha hoon.',
+      reply: language === 'devanagari_hindi'
+        ? 'समझ गया। अब मैं संक्षिप्त मार्गदर्शन दे रहा हूँ।'
+        : language === 'roman_hindi'
+          ? 'Samajh gaya. Ab main seedhi aur chhoti guidance de raha hoon.'
+          : 'Understood. I will now give you concise guidance.',
       profileId: profile.id,
       missingSlots,
     }
@@ -1128,15 +1181,16 @@ export const buildTriageFollowUpReply = (args: {
   ) {
     return {
       valid: true,
-      reply: 'Samajh gaya. Main ab doctor recommendation ya next-step guidance de raha hoon.',
+      reply: (args.languageStyle || detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)) === 'english'
+        ? 'Understood. I will now give you the appropriate next-step guidance.'
+        : 'Samajh gaya. Ab main aapko sahi next-step guidance de raha hoon.',
       profileId: profile.id,
       missingSlots,
     }
   }
 
   const latestSlot = selectedSlots[0] || missingSlots[0]
-  const secondSlot = args.voiceMode ? null : selectedSlots[1] || null
-  const language = detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)
+  const language = args.languageStyle || detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)
   const questions = [buildDoctorLikeQuestion({
     profile,
     slot: latestSlot,
@@ -1145,29 +1199,11 @@ export const buildTriageFollowUpReply = (args: {
     history,
     language,
   })]
-  if (secondSlot) {
-    questions.push(buildDoctorLikeQuestion({
-      profile,
-      slot: secondSlot,
-      concernText: args.concernText,
-      latestMessageText: args.latestMessageText,
-      history,
-      language,
-    }))
-  }
 
-  const lead =
-    language === 'devanagari_hindi'
-      ? 'समझ गया।'
-      : language === 'roman_hindi'
-        ? 'Samajh gaya.'
-        : 'Understood.'
-  const reply = secondSlot
-    ? `${lead} ${questions[0]} ${questions[1]}`
-    : `${lead} ${questions[0]}`
+  const reply = questions[0]
 
   const validation = validateTriageQuestionReply(reply, {
-    concernText: args.concernText || args.latestMessageText || '',
+    concernText: `${args.concernText || ''} ${args.latestMessageText || ''}`,
     coverage,
     history,
     voiceMode: Boolean(args.voiceMode),
@@ -1198,6 +1234,8 @@ export const validateTriageQuestionReply = (reply: string, args: {
 
   if (!normalizedReply) reasons.push('empty')
   if (missingSlots.length > 0 && !reply.includes('?')) reasons.push('no_question_mark')
+  if ((reply.match(/\?/g) || []).length > 1) reasons.push('multiple_questions')
+  if (/\b(?:undefined|null|NaN)\b/i.test(reply || '')) reasons.push('invalid_artifact')
   if (TRIAGE_GENERIC_PATTERNS.some((pattern) => pattern.test(reply || ''))) reasons.push('generic')
   if (/^\s*[-*]\s+/m.test(reply || '') || /###\s+/i.test(reply || '')) reasons.push('checklist_or_heading')
   if (missingSlots.length > 0 && !slot) reasons.push('vague_or_untyped_question')
@@ -1219,6 +1257,18 @@ export const validateTriageQuestionReply = (reply: string, args: {
 }
 
 const CONCERN_TRIAGE_PROFILES: ConcernTriageProfile[] = [
+  {
+    id: 'diabetes',
+    label: 'diabetes symptoms',
+    terms: ['diabetes', 'diabetic', 'high sugar', 'blood sugar', 'sugar level', 'glucose', 'hba1c', 'insulin', 'frequent urination', 'frequent urine', 'zyada pyaas', 'baar baar peshab'],
+    onset: 'Ask since when increased thirst, frequent urination, and fatigue have been present, and whether they are worsening.',
+    severity: 'Ask for the latest blood sugar or HbA1c result and when it was checked.',
+    associated: 'Ask about increased hunger, unintentional weight loss, blurred vision, recurrent infections, or slow-healing wounds.',
+    trigger: 'Ask about usual food habits, physical activity, smoking, and alcohol use.',
+    impact: 'Ask whether fatigue or urinary frequency is affecting routine, work, sleep, or normal activities.',
+    medicationContext: 'Ask whether diabetes or another chronic disease has been diagnosed, current tablets/insulin, allergies, and family history of diabetes.',
+    redFlags: 'Confusion, fainting, repeated vomiting, severe weakness, abdominal pain, deep/rapid breathing, or inability to keep fluids down needs urgent medical care.',
+  },
   {
     id: 'chest_pain',
     label: 'chest pain / heart symptoms',
@@ -1419,7 +1469,7 @@ export const getConcernSpecificTriageGuidance = (concernText: string, coverage: 
     `Next missing detail priority: ${nextQuestion}`,
     `Concern-specific red flags to screen when relevant: ${profile.redFlags}`,
     'Ask a bounded sequence of concern-specific follow-ups over the conversation, usually 5 to 6 good questions max, not an endless questionnaire.',
-    'Ask only one clear follow-up question in voice mode. In text mode, ask at most two short doctor-like questions in one paragraph, and never repeat a slot that was already answered or asked.',
+    'While triage is active, output exactly one clear, concern-specific follow-up question per turn in both voice and text, with no acknowledgement, advice, diagnosis, warning, recap, heading, bullet, emoji, or extra sentence.',
     'Avoid headings like "Fever Symptoms", decorative emojis, and multi-bullet questionnaires for triage follow-ups.',
     'If the user asks for doctor suggestions, slots, or booking, proceed to that flow instead of continuing triage questions.',
   ].join(' ')

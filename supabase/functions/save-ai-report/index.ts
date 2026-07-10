@@ -380,10 +380,14 @@ const extractTriageSnapshot = (args: { concern: string; history: TriageHistoryIt
   }
 }
 
-const TRIAGE_SLOT_LABELS: Record<"onset" | "severity" | "associated" | "medicationContext", string> = {
+type PdfTriageSlot = "onset" | "severity" | "associated" | "trigger" | "impact" | "medicationContext"
+
+const TRIAGE_SLOT_LABELS: Record<PdfTriageSlot, string> = {
   onset: "Onset / Duration",
   severity: "Severity",
   associated: "Associated Symptoms",
+  trigger: "Pattern / Triggers",
+  impact: "Functional Impact",
   medicationContext: "Medicine / Allergy Context",
 }
 
@@ -393,10 +397,12 @@ const buildQuestionFingerprint = (value: string): string =>
 const normalizeInlineText = (value: string, maxLength: number = 160): string =>
   sanitizePdfText((value || "").replace(/\s+/g, " ").trim()).slice(0, maxLength)
 
-const ENGLISH_TRIAGE_SLOT_QUESTIONS: Record<"onset" | "severity" | "associated" | "medicationContext", string> = {
+const ENGLISH_TRIAGE_SLOT_QUESTIONS: Record<PdfTriageSlot, string> = {
   onset: "When did the main symptom begin, and is it still ongoing?",
   severity: "How severe is the problem right now?",
   associated: "What other symptoms are happening along with this?",
+  trigger: "What pattern or trigger makes the problem better or worse?",
+  impact: "How is the problem affecting normal daily activities, work, or sleep?",
   medicationContext: "What medicines have been taken already, and are there any allergies or relevant conditions?",
 }
 
@@ -520,7 +526,11 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concer
   const history = Array.isArray(historyInput) ? historyInput : []
   if (!history.length) return ["No AI/voice chat transcript attached"]
 
-  const profile = getConcernTriageProfile(concernText)
+  const concernBasis = `${concernText || ""} ${history
+    .filter((item) => item.role === "user")
+    .map((item) => item.content)
+    .join(" ")}`
+  const profile = getConcernTriageProfile(concernBasis)
   const lines: string[] = []
   const seen = new Set<string>()
   const seenSlots = new Set<string>()
@@ -594,8 +604,10 @@ Output format (plain text only, in professional English only):
 2) Onset/duration:
 3) Severity and progression:
 4) Associated symptoms:
-5) Relevant medical context (medicines/history/allergies if mentioned):
-6) Why doctor review may be needed:
+5) Pattern, triggers, lifestyle, or aggravating/relieving factors:
+6) Functional impact on routine, work, sleep, eating, walking, or activity:
+7) Relevant medical context (medicines/history/allergies/family history if mentioned):
+8) Why doctor review may be needed:
 
 Rules:
 - If data is missing, write "Not clearly stated".
@@ -852,9 +864,9 @@ const buildReportPdfBytes = async (args: {
 
   drawBox(28, 234, 539, 106, white, border)
   drawText("VOICE / AI Q&A", 40, 322, 11, true, green)
-  drawBullets(40, 304, 240, args.qaSnapshotLines, 4, 8.5, dark, 246)
+  drawBullets(40, 304, 240, args.qaSnapshotLines, 6, 7.6, dark, 246)
   drawText("RECENT CHAT CONTEXT", 318, 322, 11, true, green)
-  drawBullets(318, 304, 230, args.aiChatTimelineLines, 4, 8.5, dark, 246)
+  drawBullets(318, 304, 230, args.aiChatTimelineLines, 4, 7.8, dark, 246)
 
   drawText("AI-assisted summary for doctor review only. Not a diagnosis or prescription.", 28, 208, 9, false, muted)
   drawText("Reviewing Doctor", 430, 194, 11, true, dark)
@@ -947,7 +959,7 @@ Deno.serve(async (req) => {
         : []
     const compactHistory = choosePreferredHistory(payloadHistory, conversationHistory)
     const triageSnapshot = extractTriageSnapshot({ concern: safeConcern, history: compactHistory })
-    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 4)
+    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 6)
     const aiChatTimelineLines = buildAiChatTimelineLines(compactHistory, 4)
 
     let summary = ""
