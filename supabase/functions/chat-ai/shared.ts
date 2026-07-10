@@ -1121,10 +1121,80 @@ const pickNextTriageSlots = (args: {
   const lastRecentSlot = recentSlots[recentSlots.length - 1] || null
   const secondRecentSlot = recentSlots[recentSlots.length - 2] || null
   const preferred = missingSlots.filter((slot) => slot !== lastRecentSlot && slot !== secondRecentSlot)
-  if (preferred.length > 0) {
-    return [preferred[0]]
+  
+  // Ask up to 3 questions at a time to prevent repetitive loops
+  const selected = preferred.length > 0 ? preferred.slice(0, 3) : missingSlots.slice(0, 3)
+  return selected
+}
+
+const buildConsolidatedTriageQuestion = (args: {
+  selectedSlots: TriageQuestionSlot[]
+  profile: ConcernTriageProfile
+  concernText: string
+  latestMessageText?: string
+  history?: any[]
+  language: TriageReplyLanguage
+}): string => {
+  const { selectedSlots, profile, concernText, latestMessageText, history, language } = args
+
+  if (selectedSlots.length === 1) {
+    return buildDoctorLikeQuestion({
+      profile,
+      slot: selectedSlots[0],
+      concernText,
+      latestMessageText,
+      history,
+      language,
+    })
   }
-  return [missingSlots[0]]
+
+  // Multi-question consolidation
+  if (language === 'devanagari_hindi') {
+    const list = selectedSlots.map((slot, index) => {
+      const q = {
+        onset: 'यह तकलीफ कब शुरू हुई और क्या यह सुधर रही है या बिगड़ रही है?',
+        severity: 'तकलीफ 1 से 10 के स्केल में कितनी गंभीर है, और क्या इसे कोई चीज़ बेहतर या बदतर बनाती है?',
+        associated: 'क्या इसके साथ कोई और लक्षण (symptoms) भी महसूस हो रहे हैं?',
+        trigger: 'क्या कोई खास चीज़ (जैसे खाना, आराम या चलना) इसे बढ़ाती या घटाती है?',
+        impact: 'क्या इसकी वजह से आपकी नींद, काम या रोज़मर्रा की गतिविधियाँ प्रभावित हो रही हैं?',
+        medicationContext: 'क्या आपने इसके लिए कोई दवा ली है या आपको कोई एलर्जी है?',
+      }[slot]
+      return `${index + 1}. ${q}`
+    }).join('\n')
+
+    return `आपके स्वास्थ्य को बेहतर समझने के लिए, कृपया इन बातों की जानकारी दें:\n${list}\n\nक्या आप इसके लिए किसी डॉक्टर से परामर्श (consultation) करना चाहेंगे?`
+  }
+
+  if (language === 'roman_hindi') {
+    const list = selectedSlots.map((slot, index) => {
+      const q = {
+        onset: 'Yeh dikkat kab shuru hui aur kya yeh behtar ho rahi hai ya kharab?',
+        severity: 'Takleef 1 se 10 ke scale me kitni hai, aur ise kya cheez behtar ya kharab karti hai?',
+        associated: 'Kya iske sath koi aur symptoms bhi ho rahe hain?',
+        trigger: 'Kya koi khaas cheez (jaise khana, chalna ya aaram) ise badhati ya kam karti hai?',
+        impact: 'Kya isse aapki neend, kaam ya daily activities par koi asar pad raha hai?',
+        medicationContext: 'Kya aapne koi medicine li hai ya aapko koi allergy hai?',
+      }[slot]
+      return `${index + 1}. ${q}`
+    }).join('\n')
+
+    return `Aapki condition ko behtar samajhne ke liye, please mujhe ye batayein:\n${list}\n\nKya aap doctor se consult karna chahenge?`
+  }
+
+  // Default to English
+  const list = selectedSlots.map((slot, index) => {
+    const q = {
+      onset: 'When did this start and is it getting better or worse?',
+      severity: 'How severe is it on a scale of 1 to 10, and what makes it better or worse?',
+      associated: 'Are you experiencing any other symptoms along with this?',
+      trigger: 'What makes the symptoms better or worse, such as activity, food, or rest?',
+      impact: 'Is it affecting your sleep, work, or daily routine?',
+      medicationContext: 'Have you taken any medications for this already, or do you have any allergies?',
+    }[slot]
+    return `${index + 1}. ${q}`
+  }).join('\n')
+
+  return `To guide you properly, could you please help me with these details?\n${list}\n\nAlso, would you like to consult a doctor?`
 }
 
 export const buildTriageQuestionBlueprint = (concernText: string, coverage: any = {}): string => {
@@ -1189,18 +1259,15 @@ export const buildTriageFollowUpReply = (args: {
     }
   }
 
-  const latestSlot = selectedSlots[0] || missingSlots[0]
   const language = args.languageStyle || detectTriageReplyLanguage(`${args.latestMessageText || ''} ${args.concernText || ''}`)
-  const questions = [buildDoctorLikeQuestion({
+  const reply = buildConsolidatedTriageQuestion({
+    selectedSlots,
     profile,
-    slot: latestSlot,
     concernText: args.concernText,
     latestMessageText: args.latestMessageText,
     history,
     language,
-  })]
-
-  const reply = questions[0]
+  })
 
   const validation = validateTriageQuestionReply(reply, {
     concernText: `${args.concernText || ''} ${args.latestMessageText || ''}`,
