@@ -948,7 +948,7 @@ const STREAM_MODE_RAW = (process.env.EXPO_PUBLIC_CHAT_STREAM_MODE || 'on').trim(
 const STREAM_MODE: 'on' | 'off' | 'auto' =
   STREAM_MODE_RAW === 'on' || STREAM_MODE_RAW === 'off' ? STREAM_MODE_RAW : 'auto';
 const CHAT_VOICE_TTS_MODE: 'fast' | 'premium' =
-  (process.env.EXPO_PUBLIC_CHAT_VOICE_TTS_MODE || 'fast').trim().toLowerCase() === 'fast'
+  (process.env.EXPO_PUBLIC_CHAT_VOICE_TTS_MODE || 'premium').trim().toLowerCase() === 'fast'
     ? 'fast'
     : 'premium';
 const AGENT_WS_MODE = (process.env.EXPO_PUBLIC_AGENT_WS_MODE || 'on').trim().toLowerCase() === 'on';

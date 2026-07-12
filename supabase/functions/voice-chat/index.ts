@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
-const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "gpt-4o-tts"
+const DEFAULT_TTS_MODEL = Deno.env.get("VOICE_MODEL")?.trim() || "gpt-4o-mini-tts"
 const DEFAULT_TTS_FALLBACK_MODEL = Deno.env.get("VOICE_MODEL_FALLBACK")?.trim() || "tts-1"
 const DEFAULT_STT_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL")?.trim() || "gpt-4o-transcribe"
 const DEFAULT_STT_FALLBACK_MODEL = Deno.env.get("VOICE_TRANSCRIBE_MODEL_FALLBACK")?.trim() || "whisper-1"
@@ -28,11 +28,11 @@ const VOICE_HISTORY_LIMIT = Math.max(2, Math.min(20, parseEnvInt("VOICE_HISTORY_
 const VOICE_HISTORY_CONTENT_LIMIT = Math.max(80, Math.min(1200, parseEnvInt("VOICE_HISTORY_CONTENT_LIMIT", 260)))
 const VOICE_REPLY_TARGET_CHARS = Math.max(220, Math.min(2200, parseEnvInt("VOICE_REPLY_TARGET_CHARS", 900)))
 const VOICE_REPLY_TARGET_CHARS_FAST = Math.max(120, Math.min(900, parseEnvInt("VOICE_REPLY_TARGET_CHARS_FAST", 420)))
-const DEFAULT_TTS_VOICE = (Deno.env.get("VOICE_TTS_DEFAULT_VOICE") || "nova").trim() || "nova"
-const FEMALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_FEMALE_VOICE") || "nova").trim() || "nova"
-const MALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_MALE_VOICE") || "onyx").trim() || "onyx"
-const VOICE_TTS_SPEED = Math.max(0.85, Math.min(1.25, Number(Deno.env.get("VOICE_TTS_SPEED") || "0.98")))
-const VOICE_TTS_STYLE = (Deno.env.get("VOICE_TTS_STYLE") || "Warm, natural, human conversational telemedicine tone. Speak clearly with gentle pacing, subtle pauses, and expressive but calm delivery. Avoid robotic cadence. Keep explanations clinically sensible and easy to understand.").trim()
+const DEFAULT_TTS_VOICE = (Deno.env.get("VOICE_TTS_DEFAULT_VOICE") || "marin").trim() || "marin"
+const FEMALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_FEMALE_VOICE") || "marin").trim() || "marin"
+const MALE_TTS_VOICE = (Deno.env.get("VOICE_TTS_MALE_VOICE") || "cedar").trim() || "cedar"
+const VOICE_TTS_SPEED = Math.max(0.85, Math.min(1.25, Number(Deno.env.get("VOICE_TTS_SPEED") || "0.96")))
+const VOICE_TTS_STYLE = (Deno.env.get("VOICE_TTS_STYLE") || "Speak like a warm, experienced Indian telemedicine doctor in a genuinely human conversation. Use natural phrasing, gentle pacing, subtle pauses at punctuation, soft emphasis on clinically important words, and calm reassuring intonation. Avoid robotic rhythm, exaggerated emotion, announcer delivery, and rushed speech.").trim()
 const VOICE_CHAT_TIMEOUT_MS = Math.max(2000, Math.min(45000, parseEnvInt("VOICE_CHAT_TIMEOUT_MS", 15000)))
 const VOICE_TTS_TIMEOUT_MS = Math.max(2000, Math.min(30000, parseEnvInt("VOICE_TTS_TIMEOUT_MS", 15000)))
 const VOICE_TTS_MAX_INPUT_CHARS = Math.max(180, Math.min(2200, parseEnvInt("VOICE_TTS_MAX_INPUT_CHARS", 1200)))
@@ -1173,7 +1173,7 @@ const synthesizeSpeech = async (
   styleInstruction?: string,
   ttsMode: "fast" | "premium" = "premium",
 ) => {
-  const ttsModel = model || "gpt-4o-tts";
+  const ttsModel = model || "gpt-4o-mini-tts";
   const fallbackTtsModel = fallbackModel || "tts-1";
   const resolvedStyleInstruction = (styleInstruction || VOICE_TTS_STYLE || "").trim()
   const candidateModels = Array.from(
@@ -1186,16 +1186,19 @@ const synthesizeSpeech = async (
   )
 
   const buildSpeechPayload = (activeModel: string) => {
+    const isLegacyTtsModel = activeModel === "tts-1" || activeModel === "tts-1-hd"
+    const requestedVoice = voice || DEFAULT_TTS_VOICE
+    const fallbackCompatibleVoice = requestedVoice === "cedar" ? "onyx" : "nova"
     const payload: Record<string, unknown> = {
       model: activeModel,
       input: text.slice(0, ttsMode === "fast" ? VOICE_TTS_FAST_MAX_INPUT_CHARS : VOICE_TTS_MAX_INPUT_CHARS),
-      voice: voice || DEFAULT_TTS_VOICE,
+      voice: isLegacyTtsModel ? fallbackCompatibleVoice : requestedVoice,
       response_format: DEFAULT_AUDIO_RESPONSE_FORMAT,
-      speed: ttsMode === "fast" ? 1.12 : VOICE_TTS_SPEED,
+      speed: ttsMode === "fast" ? Math.min(1.04, VOICE_TTS_SPEED + 0.04) : VOICE_TTS_SPEED,
     };
 
-    // 4o TTS supports style instructions; avoid sending to legacy fallback models.
-    if (ttsMode !== "fast" && resolvedStyleInstruction && activeModel.includes("gpt-4o")) {
+    // GPT-4o mini TTS supports natural-language delivery instructions in both modes.
+    if (resolvedStyleInstruction && activeModel.includes("gpt-4o")) {
       payload.instructions = resolvedStyleInstruction;
     }
 

@@ -671,7 +671,7 @@ Deno.serve(async (req) => {
     )
     if (shouldRunAiEntityExtraction) {
       aiEntities = await extractEntitiesWithAI({
-        text: messageText,
+        text: normalizedMessageText || messageText,
         apiKey: openAiApiKey,
         serviceClient,
         history,
@@ -1085,8 +1085,36 @@ Deno.serve(async (req) => {
       !dangerFromUserInput &&
       !hasSymptomSignal(latestUserText)
 
+    const deterministicTriageCandidate =
+      shouldUseDoctorLikeTriageQuestionStyle &&
+      aiIntent !== 'info' &&
+      !dangerFromUserInput
+        ? buildTriageFollowUpReply({
+            concernText: concernText || combinedUserText || messageText,
+            coverage: triageCoverage,
+            history,
+            voiceMode: voiceReplyRequested,
+            latestMessageText: messageText,
+            languageStyle,
+          })
+        : null
+    const canUseDirectTriageQuestion = Boolean(
+      deterministicTriageCandidate && deterministicTriageCandidate.missingSlots.length > 0,
+    )
+
     let generation = null
-    if (pureDoctorDirectoryIntent && Array.isArray(doctorRecommendations) && doctorRecommendations.length > 0) {
+    if (canUseDirectTriageQuestion && deterministicTriageCandidate) {
+      generation = {
+        reply: deterministicTriageCandidate.reply,
+        source: 'deterministic_triage_fast_path',
+        selectedModel: null,
+      }
+      console.log('[chat-ai] deterministic triage fast path', {
+        profileId: deterministicTriageCandidate.profileId,
+        missingSlots: deterministicTriageCandidate.missingSlots,
+        voiceMode: voiceReplyRequested,
+      })
+    } else if (pureDoctorDirectoryIntent && Array.isArray(doctorRecommendations) && doctorRecommendations.length > 0) {
       generation = {
         reply: buildAppOnlyDoctorReply({
           doctors: doctorRecommendations,
@@ -1226,18 +1254,20 @@ Deno.serve(async (req) => {
     const shouldValidateTriageQuestion =
       (aiIntent === 'triage' || hasSymptomSignal(messageText)) &&
       !doctorSearchIntent &&
-      !bookingIntent
+      !bookingIntent &&
+      aiIntent !== 'info' &&
+      !dangerFromUserInput
 
     if (shouldValidateTriageQuestion) {
       reply = stripTriageAdviceSections(reply)
-      const deterministicTriageReply = buildTriageFollowUpReply({
-        concernText: concernText || combinedUserText || messageText,
-        coverage: triageCoverage,
-        history,
-        voiceMode: voiceReplyRequested,
-        latestMessageText: messageText,
-        languageStyle,
-      })
+      const deterministicTriageReply = deterministicTriageCandidate || buildTriageFollowUpReply({
+          concernText: concernText || combinedUserText || messageText,
+          coverage: triageCoverage,
+          history,
+          voiceMode: voiceReplyRequested,
+          latestMessageText: messageText,
+          languageStyle,
+        })
 
       const generatedValidation = validateTriageQuestionReply(reply, {
         concernText: `${concernText || ''} ${messageText}`,

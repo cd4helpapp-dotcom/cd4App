@@ -259,6 +259,7 @@ interface AgentMessage {
     bookingConfirmationSlotLabel?: string | null;
     consultRecommended?: boolean;
     agentSteps?: AgentToolStep[];
+    rateLimit?: VoiceLimitPromptState | null;
 }
 
 import { useDoctors } from '../../hooks/useDoctor';
@@ -4076,6 +4077,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 setSelectedDepartmentId((previous) => (previous === recommendedDepartment.id ? previous : recommendedDepartment.id));
             }
 
+            const rateLimitObj = responseData?.rateLimit;
             const aiMessage: AgentMessage = {
                 id: aiDraftId || nextAgentMessageId('a'),
                 role: 'ai',
@@ -4091,6 +4093,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 bookingConfirmationSlotLabel,
                 consultRecommended,
                 agentSteps,
+                rateLimit: rateLimitObj ? {
+                    blocked: Boolean(rateLimitObj.blocked),
+                    isPro: Boolean(rateLimitObj.isPro),
+                    retryAfterMs: Math.max(0, Number(rateLimitObj.retryAfterMs || 0)),
+                    burst: Boolean(rateLimitObj.burst),
+                } : null,
             };
             if (activeAgentRequestTokenRef.current === requestToken) {
                 setAgentCustomHint(null);
@@ -5905,6 +5913,15 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                             >
                                                                 {message.text}
                                                             </Markdown>
+                                                            {message.role === 'ai' && (message.text.includes('Usage limit reached') || message.rateLimit?.blocked) && !message.rateLimit?.isPro && (
+                                                                <TouchableOpacity
+                                                                    style={[styles.chatUpgradeButton, { backgroundColor: theme.tint }]}
+                                                                    activeOpacity={0.88}
+                                                                    onPress={handleOpenUpgradeToPro}
+                                                                >
+                                                                    <Text style={styles.chatUpgradeButtonText}>Upgrade to Pro</Text>
+                                                                </TouchableOpacity>
+                                                            )}
                                                         </>
                                                     )}
                                                 </View>
@@ -7027,6 +7044,20 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 }
 
 const styles = StyleSheet.create({
+    chatUpgradeButton: {
+        marginTop: 10,
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        alignSelf: 'stretch',
+    },
+    chatUpgradeButtonText: {
+        color: '#FFFFFF',
+        fontWeight: '700',
+        fontSize: 14,
+    },
     container: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 100 },
     topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
     brandRow: { flexDirection: 'row', alignItems: 'center' },

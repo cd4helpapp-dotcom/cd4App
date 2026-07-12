@@ -320,7 +320,8 @@ export const extractEntitiesWithAI = async (args: {
     - "search": User wants doctor discovery/options.
     - "book": User is asking to book/schedule/reserve.
     - "confirm": User confirms slot/booking (examples: "yes do it", "this slot", "go ahead", "book this one", "haan kar do").
-    - "triage": Symptoms/medical guidance.
+    - "triage": User is describing symptoms or answering assistant follow-up questions to complete a medical snapshot (e.g. "I have fever", "it started 5 days ago", "severity is 8").
+    - "info": User is asking informational or medical questions seeking general details, explanations, definitions, or medical knowledge (e.g. "tell me about symptoms of diabetes", "what are the side effects of this medicine?", "how is diabetes treated?").
     - "casual": Greeting/non-medical.
 
     Scope:
@@ -339,7 +340,7 @@ export const extractEntitiesWithAI = async (args: {
     - If the user suddenly asks something unrelated like geography or politics, mark scope as "non_medical" even if previous messages were medical.
 
     Return valid JSON only:
-    {"city": "CityName"|null, "specialty": "Specialty"|null, "intent": "search"|"book"|"confirm"|"triage"|"casual", "urgency": "urgent"|"routine", "scope": "medical"|"greeting"|"non_medical", "scope_reason": "short_reason"}`
+    {"city": "CityName"|null, "specialty": "Specialty"|null, "intent": "search"|"book"|"confirm"|"triage"|"info"|"casual", "urgency": "urgent"|"routine", "scope": "medical"|"greeting"|"non_medical", "scope_reason": "short_reason"}`
       : `Classify user intent and extract medical entities from the user's message. Interpret meaning semantically, not by exact keywords only.
 
     Context (Last 3 messages):
@@ -351,7 +352,8 @@ export const extractEntitiesWithAI = async (args: {
     - "search": Finding doctors/specialists.
     - "book": Starting/asking about booking/slots.
     - "confirm": Explicitly confirming a slot/booking OR providing details (name/phone) requested by the assistant for a booking.
-    - "triage": Discussing symptoms/medical advice.
+    - "triage": User is describing symptoms or answering assistant follow-up questions to complete a medical snapshot (e.g. "I have fever", "it started 5 days ago", "severity is 8").
+    - "info": User is asking informational or medical questions seeking general details, explanations, definitions, or medical knowledge (e.g. "tell me about symptoms of diabetes", "what are the side effects of this medicine?", "how is diabetes treated?").
     - "casual": Greetings/unrelated chat.
 
     Scope:
@@ -369,7 +371,7 @@ export const extractEntitiesWithAI = async (args: {
     CRITICAL: If the user suddenly switches to a non-health topic, classify scope as "non_medical" even if the conversation earlier was about symptoms or doctors.
 
     Respond with valid JSON only:
-    {"city": "CityName"|null, "specialty": "Specialty"|null, "intent": "search"|"book"|"confirm"|"triage"|"casual", "urgency": "urgent"|"routine", "scope": "medical"|"greeting"|"non_medical", "scope_reason": "short_reason"}
+    {"city": "CityName"|null, "specialty": "Specialty"|null, "intent": "search"|"book"|"confirm"|"triage"|"info"|"casual", "urgency": "urgent"|"routine", "scope": "medical"|"greeting"|"non_medical", "scope_reason": "short_reason"}
     Do not include any other text.
     NOTE: Be very smart about typos. Even if the user types "sinoatna" or "inpatna", extract "Patna".`
 

@@ -150,6 +150,8 @@ export const BOOKING_PREPARE_INTENT_TERMS = [
   'lock this slot', 'hold this slot', 'take this slot', 'fix appointment',
   'setup appointment', 'set up appointment', 'set appointment', 'consultation kara do',
   'appointment laga do', 'appointment lagao',
+  'find slot', 'find slots', 'search slot', 'search slots', 'get slot', 'get slots',
+  'show slot', 'show slots', 'check slot', 'check slots',
 ]
 
 export const BOOKING_CONFIRMATION_TERMS = [
@@ -506,6 +508,7 @@ export const hasAnyTerm = (text: string, terms: string[]): boolean => terms.some
 
 const BOOKING_ACTION_HINTS = [
   'book', 'schedule', 'reserve', 'confirm', 'lock', 'hold', 'fix', 'arrange',
+  'find', 'search', 'get', 'show', 'list', 'check', 'avail',
   'kara do', 'karwa do', 'kar do', 'kr do', 'kardo', 'karwao', 'karao',
 ]
 
