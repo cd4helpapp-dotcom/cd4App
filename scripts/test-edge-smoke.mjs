@@ -180,7 +180,7 @@ const main = async () => {
   await loadDotEnvFile('.env.local');
 
   const baseUrl = getBaseUrl();
-  const anonKey = (process.env.SUPABASE_ANON_KEY || '').trim();
+  const anonKey = (process.env.SUPABASE_ANON_KEY || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '').trim();
   const token = (process.env.SUPABASE_ACCESS_TOKEN || process.env.SUPABASE_USER_TOKEN || process.env.SUPABASE_JWT || '').trim();
 
   for (const key of REQUIRED_ENV_KEYS) {

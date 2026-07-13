@@ -1,19 +1,17 @@
-
 [functions.chat-ai]
 enabled = true
 verify_jwt = true
-import_map = "./functions/chat-ai/deno.json"
-# Uncomment to specify a custom file path to the entrypoint.
-# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
 entrypoint = "./functions/chat-ai/index.ts"
-# Specifies static files to be bundled with the function. Supports glob patterns.
-# For example, if you want to serve static HTML pages in your function:
-# static_files = [ "./functions/chat-ai/*.html" ]
 
-[functions.voice-chat]
+[functions.voice-realtime-session]
 enabled = true
 verify_jwt = true
-entrypoint = "./functions/voice-chat/index.ts"
+entrypoint = "./functions/voice-realtime-session/index.ts"
+
+[functions.voice-realtime-tools]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/voice-realtime-tools/index.ts"
 
 [functions.hospital-voice-intake]
 enabled = true

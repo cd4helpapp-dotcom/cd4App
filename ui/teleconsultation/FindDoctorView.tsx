@@ -16,6 +16,7 @@ import { supabase } from '../../src/lib/supabase';
 import { useAuthContext } from '../../context/AuthContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
+import { connectRealtimeVoice, type RealtimeVoiceHandle } from '../../src/services/realtimeVoice';
 
 type SpeechRecognitionEventName = 'start' | 'end' | 'result' | 'error';
 
@@ -752,8 +753,6 @@ const HOME_VOICE_STREAM_MODE: 'on' | 'off' | 'force' =
     HOME_VOICE_STREAM_MODE_RAW === 'off' || HOME_VOICE_STREAM_MODE_RAW === 'force'
         ? HOME_VOICE_STREAM_MODE_RAW
         : 'on';
-const HOME_VOICE_WARMUP_ENABLED =
-    (process.env.EXPO_PUBLIC_HOME_VOICE_WARMUP || (__DEV__ ? 'off' : 'on')).trim().toLowerCase() === 'on';
 const HOME_VOICE_TTS_MODE: 'fast' | 'premium' =
     (process.env.EXPO_PUBLIC_HOME_VOICE_TTS_MODE || 'fast').trim().toLowerCase() === 'premium'
         ? 'premium'
@@ -849,6 +848,30 @@ const createInitialAgentMessages = (): AgentMessage[] => [
         createdAt: nowIso(),
     },
 ];
+
+const formatAgentReplyForTextMode = (value: string): string => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+
+    // Realtime transcripts are usually plain speech without Markdown line
+    // breaks. Add readable paragraph rhythm for the text view while leaving
+    // already-structured replies untouched.
+    let formatted = text;
+    if (!/[\n]{2,}|(^|\n)\s*[-*]\s+/m.test(formatted)) {
+        const sentences = formatted.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g) || [formatted];
+        if (sentences.length > 1) {
+            formatted = sentences.map((sentence) => sentence.trim()).filter(Boolean).join('\n\n');
+        }
+    }
+
+    // Emphasize only safety-critical phrases already present in the response.
+    // This changes presentation, not the medical meaning or content.
+    if (formatted.includes('**')) return formatted;
+    return formatted.replace(
+        /\b(chest pain|chest pressure|trouble breathing|difficulty breathing|shortness of breath|fainting|severe confusion|severe bleeding|emergency care|urgent care)\b/gi,
+        (match) => `**${match}**`,
+    );
+};
 
 const createClientConversationId = (): string =>
     'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
@@ -1626,6 +1649,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const [modalTextInput, setModalTextInput] = React.useState('');
     const [isChatInputActive, setIsChatInputActive] = React.useState(false);
     const [aiDoctorPersona, setAiDoctorPersona] = React.useState<AIDoctorPersona>('female');
+    const [voiceClinicalSummary, setVoiceClinicalSummary] = React.useState('');
     const [voiceSilenceCountdownMs, setVoiceSilenceCountdownMs] = React.useState<number | null>(null);
     const [isAgentVoiceLiveStreaming, setIsAgentVoiceLiveStreaming] = React.useState(false);
     const [isKeyboardVisible, setIsKeyboardVisible] = React.useState(false);
@@ -1662,7 +1686,6 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const cachedSessionTokenAtRef = React.useRef(0);
     const homeVoiceStreamCapabilityRef = React.useRef<'unknown' | 'supported' | 'unsupported'>('unknown');
     const agentStreamingDraftMessageIdRef = React.useRef<string | null>(null);
-    const lastVoiceWarmupAtRef = React.useRef(0);
     const lastAgentUserIdRef = React.useRef<string | null>(user?.id || null);
     const hasSpeechPermissionRef = React.useRef(false);
     const nearbyLoadMoreThrottleRef = React.useRef(0);
@@ -1673,6 +1696,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const lastVoiceResultAtRef = React.useRef(0);
     const lastVoiceEndRestartAtRef = React.useRef(0);
     const voiceSubmitInProgressRef = React.useRef(false);
+    const realtimeVoiceRef = React.useRef<RealtimeVoiceHandle | null>(null);
+    const realtimeVoiceDraftIdRef = React.useRef<string | null>(null);
+    const realtimeLastAssistantIdRef = React.useRef<string | null>(null);
+    const realtimeAssistantBeforeInputRef = React.useRef(false);
+    const realtimeVoiceLastInputRef = React.useRef('');
+    const realtimeVoicePersistenceRef = React.useRef<Set<string>>(new Set());
+    const microphonePermissionRequestedRef = React.useRef(false);
     const voicePulse = React.useRef(new Animated.Value(1)).current;
     const premiumWaitPulse = React.useRef(new Animated.Value(0)).current;
     const doctorMouthScale = React.useRef(new Animated.Value(DOCTOR_MOUTH_IDLE_SCALE)).current;
@@ -1685,6 +1715,240 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const lipSyncBoundaryHitRef = React.useRef(false);
     const lipSyncDriveGateRef = React.useRef(0);
     const ambientMouthLoopRef = React.useRef<Animated.CompositeAnimation | null>(null);
+
+    const persistRealtimeMessage = React.useCallback(async (sender: 'user' | 'ai', text: string) => {
+        const cleanText = text.trim();
+        if (!user?.id || !cleanText) return;
+        const key = `${sender}:${cleanText}`;
+        if (realtimeVoicePersistenceRef.current.has(key)) return;
+        realtimeVoicePersistenceRef.current.add(key);
+
+        try {
+            const conversationId = agentConversationIdRef.current;
+            const { error: conversationError } = await supabase.from('ai_chat_conversations').upsert({
+                id: conversationId,
+                user_id: user.id,
+                mode: 'assistant',
+                concern: 'General Assistant',
+                title: 'AI Voice Conversation',
+                clinical_summary: '',
+            }, { onConflict: 'id' });
+            if (conversationError) throw conversationError;
+
+            const { error: messageError } = await supabase.from('ai_chat_messages').insert({
+                conversation_id: conversationId,
+                user_id: user.id,
+                sender,
+                text: cleanText,
+                show_consult_now: false,
+            });
+            if (messageError) throw messageError;
+        } catch (error) {
+            // Persistence must never interrupt the live voice conversation.
+            realtimeVoicePersistenceRef.current.delete(key);
+            if (__DEV__) console.warn('[Realtime voice] transcript persistence failed', error);
+        }
+    }, [user?.id]);
+
+    const closeRealtimeVoice = React.useCallback(async () => {
+        const handle = realtimeVoiceRef.current;
+        realtimeVoiceRef.current = null;
+        realtimeVoiceDraftIdRef.current = null;
+        realtimeLastAssistantIdRef.current = null;
+        realtimeAssistantBeforeInputRef.current = false;
+        realtimeVoiceLastInputRef.current = '';
+        if (handle) {
+            await handle.close();
+        }
+        setIsVoiceSessionActive(false);
+        setIsListening(false);
+        setIsVoiceReplyPlaying(false);
+    }, []);
+
+    const startRealtimeVoice = React.useCallback(async () => {
+        if (realtimeVoiceRef.current) return true;
+
+        const history = agentMessagesRef.current.slice(-5).map((message) => ({
+            role: message.role === 'ai' ? 'assistant' : 'user',
+            content: message.text.slice(0, 900),
+        }));
+
+        const handle = await connectRealtimeVoice(supabase, {
+            concern: 'General Assistant',
+            locationCity,
+            clinicalSummary: voiceClinicalSummary,
+            history,
+            voicePersona: 'female',
+        }, {
+            onStatus: (status) => {
+                if (status === 'connected') {
+                    realtimeVoiceRef.current?.setInputEnabled(true);
+                    setIsVoiceSessionActive(true);
+                    setIsListening(true);
+                    setVoiceStatusText('Listening...');
+                } else if (status === 'listening') {
+                    realtimeVoiceRef.current?.setInputEnabled(true);
+                    setIsListening(true);
+                    setIsVoiceReplyPlaying(false);
+                    setVoiceStatusText('Listening...');
+                } else if (status === 'speaking') {
+                    // Prevent microphone pickup and accidental interruption
+                    // while the AI is delivering its response.
+                    realtimeVoiceRef.current?.setInputEnabled(false);
+                    setIsListening(false);
+                    setIsVoiceReplyPlaying(true);
+                    setVoiceStatusText('Doctor is speaking...');
+                } else if (status === 'closed') {
+                    setIsVoiceSessionActive(false);
+                    setIsListening(false);
+                    setIsVoiceReplyPlaying(false);
+                }
+            },
+            onInputTranscript: (text) => {
+                const cleanText = text.trim();
+                if (!cleanText || cleanText === realtimeVoiceLastInputRef.current) return;
+                realtimeVoiceLastInputRef.current = cleanText;
+                const shouldPlaceBeforePendingAssistant = realtimeAssistantBeforeInputRef.current;
+                realtimeAssistantBeforeInputRef.current = false;
+                const message: AgentMessage = {
+                    id: nextAgentMessageId('u'),
+                    role: 'user',
+                    text: cleanText,
+                    createdAt: nowIso(),
+                };
+                setAgentMessages((previous) => {
+                    const pendingAssistantIndex = shouldPlaceBeforePendingAssistant
+                        ? previous.findIndex((item) =>
+                            item.id === realtimeVoiceDraftIdRef.current || item.id === realtimeLastAssistantIdRef.current
+                        )
+                        : -1;
+                    const next = [...previous];
+                    if (pendingAssistantIndex >= 0) {
+                        next.splice(pendingAssistantIndex, 0, message);
+                    } else {
+                        next.push(message);
+                    }
+                    agentMessagesRef.current = next;
+                    return next;
+                });
+                void persistRealtimeMessage('user', cleanText);
+            },
+            onAssistantTranscript: (text) => {
+                const cleanText = text.trim();
+                if (!cleanText) return;
+                // Input transcription can arrive after the assistant audio
+                // transcript. Mark this draft so the late user transcript is
+                // inserted immediately before it instead of below it.
+                realtimeAssistantBeforeInputRef.current = true;
+                const draftId = realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
+                realtimeVoiceDraftIdRef.current = draftId;
+                realtimeLastAssistantIdRef.current = draftId;
+                setAgentMessages((previous) => {
+                    const index = previous.findIndex((message) => message.id === draftId);
+                    const nextMessage: AgentMessage = {
+                        id: draftId,
+                        role: 'ai',
+                        text: cleanText,
+                        createdAt: nowIso(),
+                    };
+                    const next = index >= 0
+                        ? previous.map((message, itemIndex) => itemIndex === index ? { ...message, ...nextMessage } : message)
+                        : [...previous, nextMessage];
+                    agentMessagesRef.current = next;
+                    return next;
+                });
+            },
+            onAssistantDone: (text) => {
+                const cleanText = text.trim();
+                if (!cleanText) return;
+                realtimeAssistantBeforeInputRef.current = true;
+                const draftId = realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
+                realtimeLastAssistantIdRef.current = draftId;
+                realtimeVoiceDraftIdRef.current = null;
+                setAgentMessages((previous) => {
+                    const index = previous.findIndex((message) => message.id === draftId);
+                    const nextMessage: AgentMessage = {
+                        id: draftId,
+                        role: 'ai',
+                        text: cleanText,
+                        createdAt: nowIso(),
+                    };
+                    const next = index >= 0
+                        ? previous.map((message, itemIndex) => itemIndex === index ? { ...message, ...nextMessage } : message)
+                        : [...previous, nextMessage];
+                    agentMessagesRef.current = next;
+                    return next;
+                });
+                void persistRealtimeMessage('ai', cleanText);
+                setIsVoiceReplyPlaying(false);
+                // Use push-to-talk between turns: mute the input after the AI
+                // finishes so the next turn starts only after the user taps.
+                realtimeVoiceRef.current?.setInputEnabled(false);
+                setVoiceStatusText('Tap mic to speak');
+                setIsListening(false);
+            },
+            onToolCall: async (name, _callId, argumentsJson) => {
+                const { data, error } = await supabase.functions.invoke('voice-realtime-tools', {
+                    body: { name, arguments: argumentsJson },
+                });
+                if (error) throw error;
+                return data?.result || data || {};
+            },
+            onToolResult: (_name, rawResult) => {
+                const result = (rawResult as any)?.result || rawResult as any;
+                if (_name === 'book_appointment' && result?.status === 'payment_required') {
+                    void closeRealtimeVoice().then(() => {
+                        router.push({
+                            pathname: '/confirm-consultation',
+                            params: {
+                                doctorId: String(result.doctorId || ''),
+                                slotId: String(result.slotId || ''),
+                                doctorName: String(result.doctorName || 'Doctor'),
+                                doctorSpecialization: String(result.doctorSpecialization || ''),
+                                doctorCity: String(result.doctorCity || ''),
+                                doctorFee: String(result.doctorFee || '500'),
+                                concern: String(result.concern || 'General health'),
+                                slotDate: String(result.slotDate || ''),
+                                slotStartTime: String(result.slotStartTime || ''),
+                                slotEndTime: String(result.slotEndTime || ''),
+                                conversationId: agentConversationIdRef.current || '',
+                            },
+                        });
+                    });
+                    return;
+                }
+                const doctors = normalizeAgentRecommendedDoctors(result?.doctorRecommendations);
+                const slots = extractAgentBookingSlotOptions(result);
+                if (doctors.length === 0 && slots.length === 0) return;
+                const draftId = realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
+                realtimeVoiceDraftIdRef.current = draftId;
+                setAgentMessages((previous) => {
+                    const index = previous.findIndex((message) => message.id === draftId);
+                    const base = index >= 0 ? previous[index] : {
+                        id: draftId,
+                        role: 'ai' as const,
+                        text: 'I found options for you.',
+                        createdAt: nowIso(),
+                    };
+                    const updated = { ...base, recommendedDoctors: doctors, bookingSlotOptions: slots };
+                    const next = index >= 0
+                        ? previous.map((message, itemIndex) => itemIndex === index ? updated : message)
+                        : [...previous, updated];
+                    agentMessagesRef.current = next;
+                    return next;
+                });
+            },
+            onError: (error) => {
+                setVoiceStatusText(error.message || 'Voice connection error');
+            },
+        });
+        realtimeVoiceRef.current = handle;
+        setIsVoiceSessionActive(true);
+        setIsListening(true);
+        setVoiceStatusText('Listening...');
+        return true;
+    }, [closeRealtimeVoice, locationCity, persistRealtimeMessage, router, voiceClinicalSummary]);
+
     const clearVoiceAutoSubmitTimers = React.useCallback(() => {
         if (autoSubmitTimerRef.current) {
             clearTimeout(autoSubmitTimerRef.current);
@@ -1730,39 +1994,65 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, []);
 
     React.useEffect(() => {
-        if (!HOME_VOICE_WARMUP_ENABLED) return;
         if (!user?.id) return;
-        let isMounted = true;
-        const WARMUP_INTERVAL_MS = 3 * 60 * 1000;
+        let active = true;
 
-        const runWarmup = async () => {
-            const now = Date.now();
-            if (now - lastVoiceWarmupAtRef.current < WARMUP_INTERVAL_MS - 15000) {
-                return;
-            }
-            try {
-                const token = await ensureSessionToken();
-                if (!token || !isMounted) return;
-                supabase.functions.setAuth(token);
-                await supabase.functions.invoke('voice-chat', {
-                    body: { warmup: true, ttsMode: HOME_VOICE_TTS_MODE },
-                });
-                lastVoiceWarmupAtRef.current = Date.now();
-            } catch {
-                // Warmup is best-effort; ignore failures.
+        const restoreVoiceConversation = async () => {
+            const { data: conversation, error: conversationError } = await supabase
+                .from('ai_chat_conversations')
+                .select('id, clinical_summary')
+                .eq('user_id', user.id)
+                .eq('mode', 'assistant')
+                .eq('concern', 'General Assistant')
+                .order('updated_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            if (!active || conversationError || !conversation?.id) return;
+
+            const { data: persistedMessages, error: messagesError } = await supabase
+                .from('ai_chat_messages')
+                .select('id, sender, text, created_at, show_consult_now')
+                .eq('conversation_id', conversation.id)
+                .eq('user_id', user.id)
+                .order('created_at', { ascending: true })
+                .limit(40);
+            if (!active || messagesError) return;
+
+            agentConversationIdRef.current = conversation.id;
+            setVoiceClinicalSummary(typeof conversation.clinical_summary === 'string' ? conversation.clinical_summary : '');
+            if (!Array.isArray(persistedMessages) || persistedMessages.length === 0) return;
+
+            const restored: AgentMessage[] = persistedMessages.map((item: any) => ({
+                id: String(item.id),
+                role: item.sender === 'user' ? ('user' as const) : ('ai' as const),
+                text: String(item.text || ''),
+                createdAt: String(item.created_at || nowIso()),
+                consultRecommended: Boolean(item.show_consult_now),
+            })).filter((item) => item.text.trim().length > 0);
+            if (restored.length > 0) {
+                const next = [createInitialAgentMessages()[0], ...restored];
+                setAgentMessages(next);
+                agentMessagesRef.current = next;
             }
         };
 
-        void runWarmup();
-        const id = setInterval(() => {
-            void runWarmup();
-        }, WARMUP_INTERVAL_MS);
-
+        void restoreVoiceConversation();
         return () => {
-            isMounted = false;
-            clearInterval(id);
+            active = false;
         };
     }, [user?.id]);
+
+    React.useEffect(() => {
+        // Android/iOS show the native permission prompt from the home screen
+        // once. This grants permission early but does not open Realtime or
+        // start microphone capture.
+        if (Platform.OS === 'web' || microphonePermissionRequestedRef.current) return;
+        microphonePermissionRequestedRef.current = true;
+        void Audio.requestPermissionsAsync().catch((error) => {
+            if (__DEV__) console.warn('[Voice] homepage microphone permission request failed', error);
+            microphonePermissionRequestedRef.current = false;
+        });
+    }, []);
 
     React.useEffect(() => {
         const nextUserId = user?.id || null;
@@ -3131,7 +3421,19 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [stopLipSyncAnimation, startTimedLipSync, clearLipSyncTicker, clearLipSyncFallbackTimer]);
 
     const handleServerAudioChunk = React.useCallback((audioBase64: string, text: string, index: number) => {
-        hasReceivedServerAudioChunksRef.current = true;
+        // Server audio is the authoritative voice stream. If text-delta TTS
+        // already started while the first audio packet was arriving, stop and
+        // discard that fallback queue so one turn cannot be spoken twice.
+        if (!hasReceivedServerAudioChunksRef.current) {
+            hasReceivedServerAudioChunksRef.current = true;
+            homeVoiceLiveSpeechRunIdRef.current += 1;
+            homeVoiceLiveSpeechQueueRef.current = [];
+            homeVoiceLiveSpokenCharsRef.current = 0;
+            if (activeSpeechRef.current) {
+                activeSpeechRef.current = false;
+                void Speech.stop().catch(() => undefined);
+            }
+        }
         serverAudioChunksMapRef.current.set(index, { audio: audioBase64, text });
         void playNextServerAudioChunk();
     }, [playNextServerAudioChunk]);
@@ -3443,6 +3745,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const stopContinuousVoiceSession = React.useCallback(async (showToast: boolean = false) => {
         activeAgentRequestTokenRef.current = `stopped-${Date.now()}`;
         voiceSubmitInProgressRef.current = false;
+        await closeRealtimeVoice();
         if (agentStreamAbortControllerRef.current) {
             try {
                 const activeAbortController = agentStreamAbortControllerRef.current as any;
@@ -3480,7 +3783,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 text2: 'You can continue typing or start voice again.',
             });
         }
-    }, [clearVoiceAutoSubmitTimers, stopActiveVoicePlayback]);
+    }, [clearVoiceAutoSubmitTimers, closeRealtimeVoice, stopActiveVoicePlayback]);
 
     const callHomeAgent = async (
         userText: string,
@@ -3600,6 +3903,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             });
             const invokeBody = useVoiceEndpoint
                 ? {
+                    message: userText,
                     text: userText,
                     concern: 'General Assistant',
                     mode: 'assistant',
@@ -3614,6 +3918,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     fastResponse: true,
                     preferLocalPlayback: preferLocalVoicePlayback,
                     ttsMode,
+                    replyInVoice: true,
                 }
                 : {
                     message: userText,
@@ -3689,8 +3994,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
                 const controller = new AbortController();
                 agentStreamAbortControllerRef.current = controller;
+                let streamProducedOutput = false;
                 try {
-                    const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/voice-chat`, {
+                    const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/chat-ai`, {
                         method: 'POST',
                         headers: {
                             Authorization: `Bearer ${token}`,
@@ -3744,6 +4050,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     let shouldStopReading = false;
                     const handleVoiceDelta = (textDelta: string) => {
                         if (!textDelta) return;
+                        streamProducedOutput = true;
                         deltaCount += 1;
                         setIsAgentVoiceLiveStreaming(true);
                         voiceStreamedText += textDelta;
@@ -3754,25 +4061,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         if (hasReceivedServerAudioChunksRef.current) {
                             return;
                         }
-
-                        if (!nativeVoiceIdByPersona.female) {
-                            return;
-                        }
-
-                        const speakableText = voiceStreamedText.slice(homeVoiceLiveSpokenCharsRef.current);
-                        const segments = splitIntoReadableSegments(speakableText);
-                        if (segments.length <= 1) return;
-
-                        const completeSegments = segments.slice(0, -1);
-                        if (completeSegments.length < 1) return;
-
-                        const spokenNow = completeSegments.join(' ').trim();
-                        if (!spokenNow) return;
-
-                        voiceLiveSpokenViaDelta = true;
-                        homeVoiceLiveSpokenCharsRef.current += spokenNow.length + 1;
-                        homeVoiceLiveSpeechQueueRef.current.push(...completeSegments);
-                        void processHomeVoiceLiveSpeechQueue();
+                        // Do not speak partial deltas. The complete response is
+                        // played once after the stream finishes, which avoids
+                        // sentence-to-sentence pauses and duplicated TTS.
+                        return;
                     };
 
                     while (!shouldStopReading) {
@@ -3798,6 +4090,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             if (event.event === 'audio-chunk') {
                                 const audioChunk = event.data;
                                 if (audioChunk && typeof audioChunk.audio === 'string') {
+                                    streamProducedOutput = true;
                                     handleServerAudioChunk(audioChunk.audio, audioChunk.text || '', typeof audioChunk.index === 'number' ? audioChunk.index : 0);
                                 }
                                 continue;
@@ -3854,6 +4147,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             if (event.event === 'audio-chunk') {
                                 const audioChunk = event.data;
                                 if (audioChunk && typeof audioChunk.audio === 'string') {
+                                    streamProducedOutput = true;
                                     handleServerAudioChunk(audioChunk.audio, audioChunk.text || '', typeof audioChunk.index === 'number' ? audioChunk.index : 0);
                                 }
                                 continue;
@@ -3899,6 +4193,25 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     }
 
                     return finalPayload;
+                } catch (error: any) {
+                    // Once a stream has emitted content, never issue a second AI
+                    // request for the same user turn. A retry here creates the
+                    // exact double-response/pause effect in voice mode.
+                    const message = error instanceof Error ? error.message : String(error || 'Voice stream failed.');
+                    if (streamProducedOutput) {
+                        if (voiceStreamedText.trim()) {
+                            return {
+                                success: true,
+                                data: {
+                                    reply: voiceStreamedText.trim(),
+                                    text: voiceStreamedText.trim(),
+                                    source: 'stream_partial',
+                                },
+                            };
+                        }
+                        throw new Error(`VOICE_STREAM_INTERRUPTED: ${message}`);
+                    }
+                    throw error;
                 } finally {
                     if (agentStreamAbortControllerRef.current === controller) {
                         agentStreamAbortControllerRef.current = null;
@@ -3908,7 +4221,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
             const invokeVoiceEndpointJson = async (requestBody: any = invokeBody): Promise<any> => {
                 if (!FUNCTIONS_BASE_URL || !SUPABASE_ANON_KEY) {
-                    const { data, error } = await functionsClient.invoke('voice-chat', {
+                    const { data, error } = await functionsClient.invoke('chat-ai', {
                         body: { ...requestBody, stream: false },
                     });
                     if (error) {
@@ -3917,7 +4230,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     return data as any;
                 }
 
-                const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/voice-chat`, {
+                const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/chat-ai`, {
                     method: 'POST',
                     headers: {
                         Authorization: `Bearer ${token}`,
@@ -3962,6 +4275,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     const streamMessage =
                         typeof streamError?.message === 'string' ? streamError.message : 'Voice stream failed.';
                     lastStreamErrorMessage = streamMessage;
+                    if (/VOICE_STREAM_INTERRUPTED:/i.test(streamMessage)) {
+                        throw streamError;
+                    }
                     if (/streaming reader is unavailable|stream unsupported|unsupported stream/i.test(streamMessage.toLowerCase())) {
                         homeVoiceStreamCapabilityRef.current = 'unsupported';
                     }
@@ -4012,12 +4328,20 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             }
 
             if (__DEV__) {
-                console.log(`[AI Agent] ${useVoiceEndpoint ? 'voice-chat' : 'chat-ai'} latency: ${Date.now() - invokeStartAt}ms`);
+                console.log(`[AI Agent] ${useVoiceEndpoint ? 'chat-ai fallback' : 'chat-ai'} latency: ${Date.now() - invokeStartAt}ms`);
             }
 
             const responseData = response?.data || {};
             if (__DEV__ && useVoiceEndpoint && responseData?.perf) {
                 console.log('[VoiceChat Perf]', responseData.perf);
+            }
+            if (typeof responseData?.clinicalSummary === 'string' && responseData.clinicalSummary.trim()) {
+                const nextSummary = responseData.clinicalSummary.trim().slice(0, 700);
+                setVoiceClinicalSummary(nextSummary);
+                void supabase.from('ai_chat_conversations')
+                    .update({ clinical_summary: nextSummary })
+                    .eq('id', agentConversationIdRef.current)
+                    .eq('user_id', user.id);
             }
             setAiDoctorPersona('female');
             const replyTextRaw = typeof responseData?.reply === 'string'
@@ -4187,15 +4511,6 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 }
             }
 
-            const remainingLiveVoiceTail = voiceStreamedText
-                .slice(homeVoiceLiveSpokenCharsRef.current)
-                .trim();
-            if (remainingLiveVoiceTail && nativeVoiceIdByPersona.female) {
-                voiceLiveSpokenViaDelta = true;
-                homeVoiceLiveSpeechQueueRef.current.push(remainingLiveVoiceTail);
-                void processHomeVoiceLiveSpeechQueue();
-            }
-
             if (
                 options?.replyInVoice &&
                 activeAgentRequestTokenRef.current === requestToken &&
@@ -4336,7 +4651,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 const now = Date.now();
                 const duplicateVoiceSubmit =
                     lastVoiceSubmitRef.current.text === voiceFingerprint &&
-                    now - lastVoiceSubmitRef.current.at < 4200;
+                    now - lastVoiceSubmitRef.current.at < 10000;
                 if (duplicateVoiceSubmit) {
                     voiceSubmitInProgressRef.current = false;
                     return;
@@ -4404,11 +4719,18 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             return;
         }
 
+        setModalTextInput('');
+        if (realtimeVoiceRef.current) {
+            realtimeVoiceRef.current.setInputEnabled(false);
+            realtimeVoiceRef.current.sendText(text);
+            setIsChatInputActive(false);
+            setVoiceStatusText('Doctor is replying...');
+            return;
+        }
+
         if (voiceSessionActiveRef.current) {
             void stopContinuousVoiceSession(false);
         }
-
-        setModalTextInput('');
         void callHomeAgent(text, { replyInVoice: false });
     };
 
@@ -4512,9 +4834,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             } catch (e) {
                 console.warn('Speech recognition abort failed:', e);
             }
+            void closeRealtimeVoice();
             void stopActiveVoicePlayback();
         };
-    }, [clearVoiceAutoSubmitTimers, stopActiveVoicePlayback]);
+    }, [clearVoiceAutoSubmitTimers, closeRealtimeVoice, stopActiveVoicePlayback]);
 
     const handleMicPress = async (forceVoiceCapture: boolean = false) => {
         if (shouldShowVoiceUpgradePrompt) {
@@ -4523,6 +4846,28 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             setIsChatInputActive(false);
             setVoiceStatusText('Daily voice limit reached. Upgrade to Pro to continue.');
             setShowProPlanModal(true);
+            return;
+        }
+
+        // Prefer the low-latency OpenAI Realtime WebRTC session in browser
+        // and development builds. The existing speech-recognition flow below
+        // remains a safe fallback if WebRTC/session setup is unavailable.
+        if (realtimeVoiceRef.current) {
+            if (isVoiceReplyPlaying) {
+                realtimeVoiceRef.current.interrupt();
+                realtimeVoiceRef.current.setInputEnabled(true);
+                setIsVoiceReplyPlaying(false);
+                setIsListening(true);
+                setVoiceStatusText('Listening...');
+            } else if (isListening) {
+                realtimeVoiceRef.current.setInputEnabled(false);
+                setIsListening(false);
+                setVoiceStatusText('Tap mic to speak');
+            } else {
+                realtimeVoiceRef.current.setInputEnabled(true);
+                setIsListening(true);
+                setVoiceStatusText('Listening...');
+            }
             return;
         }
 
@@ -4565,13 +4910,32 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         setVoiceLiveTranscript('');
         voiceLiveTranscriptRef.current = '';
         voiceSessionActiveRef.current = true;
+        // Make the interaction feel immediate. The microphone/Realtime
+        // handshake can take a moment, but the user has already tapped the
+        // mic, so show the listening state without waiting for connection.
         setIsVoiceSessionActive(true);
-        setVoiceStatusText('Speak now. Pause briefly to auto-send.');
+        setIsListening(true);
+        setVoiceStatusText('Listening...');
+
+        if (Platform.OS === 'web' || !isExpoGo) {
+            try {
+                await startRealtimeVoice();
+                return;
+            } catch (error) {
+                if (__DEV__) console.warn('[Realtime voice] unavailable', error);
+                voiceSessionActiveRef.current = false;
+                setIsVoiceSessionActive(false);
+                setIsListening(false);
+                setVoiceStatusText('Realtime voice is unavailable in this build. Please install a fresh preview build.');
+                return;
+            }
+        }
 
         const started = await startContinuousListening();
         if (!started) {
             voiceSessionActiveRef.current = false;
             setIsVoiceSessionActive(false);
+            setIsListening(false);
             setVoiceStatusText('Voice unavailable. Use text chat.');
         }
     };
@@ -4586,6 +4950,60 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         setModalTextInput('');
         setIsChatInputActive(false);
     };
+
+    const openVoiceAssistantPanel = async () => {
+        // The entry button only opens the modal. Do not start microphone or
+        // Realtime until the user taps the Start/mic control inside it.
+        setIsAgentConversationVisible(true);
+        setIsChatInputActive(false);
+        setModalTextInput('');
+        setVoiceStatusText('Tap the mic to start speaking');
+
+        // Request microphone permission when the voice UI opens so the first
+        // mic tap feels immediate. This does not open a Realtime session or
+        // start listening; audio capture still begins only after mic tap.
+        try {
+            if (Platform.OS === 'web') {
+                const mediaDevices = (globalThis as any)?.navigator?.mediaDevices;
+                if (mediaDevices?.getUserMedia) {
+                    const stream = await mediaDevices.getUserMedia({ audio: true, video: false });
+                    stream.getTracks?.().forEach((track: any) => track.stop());
+                }
+            } else {
+                const permission = await Audio.requestPermissionsAsync();
+                if (!permission.granted) {
+                    setVoiceStatusText('Microphone permission is required for voice chat');
+                    Toast.show({
+                        type: 'info',
+                        text1: 'Microphone permission needed',
+                        text2: 'Allow microphone access to start voice chat.',
+                    });
+                }
+            }
+        } catch (error) {
+            if (__DEV__) console.warn('[Voice] microphone permission request failed', error);
+            setVoiceStatusText('Allow microphone access to start voice chat');
+        }
+    };
+
+    const handleStartNewVoiceSession = React.useCallback(async () => {
+        if (voiceSessionActiveRef.current || realtimeVoiceRef.current) {
+            await stopContinuousVoiceSession(false);
+        }
+
+        // Keep the previous session persisted in Supabase, but do not carry
+        // its transcript/clinical context into the new Realtime session.
+        const initialMessages = createInitialAgentMessages();
+        agentConversationIdRef.current = createClientConversationId();
+        agentMessagesRef.current = initialMessages;
+        setAgentMessages(initialMessages);
+        setVoiceClinicalSummary('');
+        setModalTextInput('');
+        setIsChatInputActive(false);
+        setVoiceLiveTranscript('');
+        voiceLiveTranscriptRef.current = '';
+        setVoiceStatusText('New session ready. Tap the mic to start speaking.');
+    }, [stopContinuousVoiceSession]);
 
     const resolveDoctorId = (doctor: { _id?: string; id?: string } | null | undefined): string | undefined => {
         const value = typeof doctor?._id === 'string' && doctor._id.trim()
@@ -4636,10 +5054,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             setIsAgentConversationVisible(true);
             setIsChatInputActive(false);
             setModalTextInput('');
-
-            if (!isVoiceSessionActive && !isListening && !isVoiceReplyPlaying) {
-                void handleMicPress(true);
-            }
+            // Opening the voice modal must stay idle. Start microphone,
+            // Realtime session, and AI replies only after the user taps Start.
             return;
         }
 
@@ -4695,10 +5111,6 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [
         doctorsData,
         handleConsultDoctor,
-        handleMicPress,
-        isListening,
-        isVoiceReplyPlaying,
-        isVoiceSessionActive,
         router,
         stopContinuousVoiceSession,
     ]);
@@ -5195,11 +5607,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [callHomeAgent, isVoiceSessionActive, latestAgentVisualMessage, router]);
     const showInitialHomeSkeleton = loading && doctorsData.length === 0;
     const agentSheetBottomPadding = Math.max(insets.bottom + 12, 16);
-    const agentSheetEffectiveBottomPadding = isKeyboardVisible ? 0 : agentSheetBottomPadding;
-    const keyboardComposerGap = 24;
-    const androidKeyboardLift = Platform.OS === 'android' && isChatInputActive && isKeyboardVisible
-        ? Math.max(0, keyboardHeight - insets.bottom + keyboardComposerGap)
-        : 0;
+    const isAndroidKeyboardOpen = Platform.OS === 'android' && isChatInputActive && isKeyboardVisible;
+    const agentSheetKeyboardHeight = isAndroidKeyboardOpen
+        ? Math.max(320, windowHeight - keyboardHeight)
+        : '100%';
+    const agentSheetEffectiveBottomPadding = isAndroidKeyboardOpen ? 12 : agentSheetBottomPadding;
 
     if (showInitialHomeSkeleton) {
         return (
@@ -5288,7 +5700,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                     : { backgroundColor: theme.tint },
                             ]}
                             onPress={() => {
-                                void handleMicPress();
+                                openVoiceAssistantPanel();
                             }}
                             activeOpacity={0.9}
                         >
@@ -5391,10 +5803,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             {
                                 backgroundColor: theme.cardBackground,
                                 borderColor: theme.borderColor,
-                                height: '100%',
+                                height: agentSheetKeyboardHeight,
                                 paddingTop: Math.max(insets.top, 8),
                                 paddingBottom: agentSheetEffectiveBottomPadding,
-                                marginBottom: androidKeyboardLift,
                                 marginHorizontal: 0,
                                 maxWidth: undefined,
                             },
@@ -5595,9 +6006,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                         <TouchableOpacity
                                             style={[styles.voiceListeningActionBtn, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
                                             onPress={() => {
-                                                if (voiceSessionActiveRef.current) {
-                                                    void stopContinuousVoiceSession(false);
-                                                }
+                                                // Switch the presentation to text without destroying the
+                                                // Realtime session. The session remains available for the
+                                                // next mic tap, but the input track is muted while typing.
+                                                realtimeVoiceRef.current?.setInputEnabled(false);
+                                                setIsListening(false);
                                                 setIsChatInputActive(true);
                                             }}
                                             activeOpacity={0.8}
@@ -5624,6 +6037,21 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             <X size={16} color={theme.textSecondary} />
                                         </TouchableOpacity>
                                     </View>
+
+                                    <TouchableOpacity
+                                        style={[
+                                            styles.voiceNewSessionButton,
+                                            { borderColor: theme.borderColor, backgroundColor: theme.cardBackground },
+                                        ]}
+                                        onPress={() => {
+                                            void handleStartNewVoiceSession();
+                                        }}
+                                        activeOpacity={0.82}
+                                    >
+                                        <Text style={[styles.voiceNewSessionButtonText, { color: theme.tint }]}>
+                                            + New voice session
+                                        </Text>
+                                    </TouchableOpacity>
 
                                     {shouldShowVoiceUpgradePrompt ? (
                                         <View style={[styles.voiceLimitCard, { backgroundColor: theme.tint + '16', borderColor: theme.tint + '66' }]}>
@@ -5911,7 +6339,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                                     td: { padding: 6 }
                                                                 }}
                                                             >
-                                                                {message.text}
+                                                                {formatAgentReplyForTextMode(message.text)}
                                                             </Markdown>
                                                             {message.role === 'ai' && (message.text.includes('Usage limit reached') || message.rateLimit?.blocked) && !message.rateLimit?.isPro && (
                                                                 <TouchableOpacity
@@ -6079,9 +6507,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
                                         ]}
                                         onPress={() => {
-                                            if (voiceSessionActiveRef.current) {
-                                                void stopContinuousVoiceSession(false);
-                                            }
+                                            realtimeVoiceRef.current?.setInputEnabled(false);
+                                            setIsListening(false);
                                             setIsChatInputActive(true);
                                         }}
                                         activeOpacity={0.7}
@@ -8999,6 +9426,21 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.14,
         shadowRadius: 8,
         elevation: 5,
+    },
+    voiceNewSessionButton: {
+        alignSelf: 'center',
+        marginTop: 10,
+        minHeight: 34,
+        paddingHorizontal: 14,
+        borderRadius: 17,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    voiceNewSessionButtonText: {
+        fontSize: 12,
+        fontWeight: '800',
+        letterSpacing: 0.15,
     },
     voiceLimitCard: {
         marginTop: 12,

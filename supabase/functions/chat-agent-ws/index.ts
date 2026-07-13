@@ -175,6 +175,7 @@ const normalizeChatPayload = (payload: any) => {
     conversationId: typeof payload?.conversationId === "string" ? payload.conversationId : null,
     mode: typeof payload?.mode === "string" ? payload.mode : "assistant",
     history: Array.isArray(payload?.history) ? payload.history : [],
+    clinicalSummary: typeof payload?.clinicalSummary === "string" ? payload.clinicalSummary.trim() : "",
     locationCity: typeof payload?.locationCity === "string" ? payload.locationCity : null,
     searchAreaCity: typeof payload?.searchAreaCity === "string" ? payload.searchAreaCity : null,
     fastResponse: payload?.fastResponse === true,
@@ -376,7 +377,7 @@ const invokeVoiceChatStreaming = async (args: {
   requestId: string
   signal?: AbortSignal
 }) => {
-  const response = await fetch(`${args.supabaseUrl}/functions/v1/voice-chat`, {
+  const response = await fetch(`${args.supabaseUrl}/functions/v1/chat-ai`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${args.accessToken}`,
@@ -394,12 +395,12 @@ const invokeVoiceChatStreaming = async (args: {
   if (!response.ok) {
     const rawError = await response.text().catch(() => "")
     const parsedError = safeJsonParse(rawError)
-    throw new Error(toMessageText(parsedError || rawError || `voice-chat failed (${response.status})`))
+    throw new Error(toMessageText(parsedError || rawError || `chat-ai failed (${response.status})`))
   }
 
   const reader = response.body?.getReader()
   if (!reader) {
-    throw new Error("voice-chat stream reader unavailable")
+    throw new Error("chat-ai stream reader unavailable")
   }
 
   const decoder = new TextDecoder()

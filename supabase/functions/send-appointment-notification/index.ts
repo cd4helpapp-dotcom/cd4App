@@ -3,7 +3,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 // @ts-ignore: Remote ESM import is resolved in Deno runtime.
 import { PDFDocument, StandardFonts, degrees, rgb } from "https://esm.sh/pdf-lib@1.17.1";
-import { detectTriageQuestionSlot, getConcernTriageProfile, getTriageQuestionTemplate } from "../chat-ai/shared.ts";
 
 declare const Deno: {
   env: {
@@ -1941,7 +1940,6 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concer
     return ["No AI/voice chat transcript attached for this booking."];
   }
 
-  const profile = getConcernTriageProfile(concernText);
   const pairs: ChatQaPair[] = [];
   const seen = new Set<string>();
   const seenSlots = new Set<string>();
@@ -1950,10 +1948,19 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concer
     const item = history[questionIndex];
     if (item.role !== "assistant" || typeof item.content !== "string" || !item.content.includes("?")) continue;
 
-    const slot = detectTriageQuestionSlot(item.content || "");
+    const normalizedQuestion = normalizeInlineText(item.content || "", 400).toLowerCase();
+    const slot = (Object.keys(ENGLISH_TRIAGE_SLOT_QUESTIONS) as Array<keyof typeof ENGLISH_TRIAGE_SLOT_QUESTIONS>).find((candidate) => {
+      const keywords: Record<keyof typeof ENGLISH_TRIAGE_SLOT_QUESTIONS, string[]> = {
+        onset: ["when did", "since when", "started", "how long"],
+        severity: ["how severe", "1 to 10", "intensity", "severity"],
+        associated: ["other symptoms", "along with", "associated"],
+        medicationContext: ["medicines", "allergies", "ongoing conditions"],
+      };
+      return keywords[candidate].some((keyword) => normalizedQuestion.includes(keyword));
+    }) || null;
     if (!slot || seenSlots.has(slot)) continue;
 
-    const rawQuestion = ENGLISH_TRIAGE_SLOT_QUESTIONS[slot] || extractQuestionText(item.content || "") || getTriageQuestionTemplate(profile, slot);
+    const rawQuestion = ENGLISH_TRIAGE_SLOT_QUESTIONS[slot] || extractQuestionText(item.content || "");
     if (!rawQuestion) continue;
     const answer = findNearestUserAnswer(history, questionIndex);
     if (!isHealthQaPair(rawQuestion, answer)) continue;

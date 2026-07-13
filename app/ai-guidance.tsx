@@ -260,6 +260,7 @@ interface PersistedConversationRow {
   title: string;
   created_at: string | null;
   updated_at: string | null;
+  clinical_summary?: string | null;
 }
 
 type PendingAttachment = {
@@ -749,6 +750,28 @@ const normalizeRateLimitReplyForPlan = (
   return `Your current Pro AI limit is reached. Please take a short break and try again in about ${waitLabel}.`;
 };
 
+// The Edge Function normally unwraps structured model output. This second
+// guard keeps an occasional raw JSON model response from appearing in chat.
+const extractReplyFromStructuredText = (value: string): string => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const normalized = text.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  try {
+    const parsed = JSON.parse(normalized);
+    if (typeof parsed?.reply === 'string' && parsed.reply.trim()) return parsed.reply.trim();
+  } catch {
+    const match = normalized.match(/"reply"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+    if (match) {
+      try {
+        return JSON.parse(`"${match[1]}"`).trim();
+      } catch {
+        // Leave the original text untouched if the model output is malformed.
+      }
+    }
+  }
+  return text;
+};
+
 const hasConsultCueInText = (rawText: string): boolean => {
   const text = (rawText || '').trim().toLowerCase().replace(/\s+/g, ' ');
   if (!text) return false;
@@ -1163,12 +1186,19 @@ export default function AiGuidanceScreen() {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [clinicalSummary, setClinicalSummary] = useState('');
   const [locationCity, setLocationCity] = useState<string | null>(null);
   const [isLoadingConversation, setIsLoadingConversation] = useState(true);
   const messagesRef = useRef<ChatMessage[]>(messages);
   const isSendingRef = useRef(isSending);
   const conversationIdRef = useRef<string | null>(null);
+  const clinicalSummaryRef = useRef('');
   const initialMessageConsumedRef = useRef(false);
+
+  useEffect(() => {
+    clinicalSummaryRef.current = '';
+    setClinicalSummary('');
+  }, [sessionSeed]);
   const [isVoicePromptVisible, setIsVoicePromptVisible] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceLiveStage, setVoiceLiveStage] = useState<VoiceLiveStage>('idle');
@@ -1675,7 +1705,7 @@ export default function AiGuidanceScreen() {
     onStage?: (stage: string) => void;
   }) => {
     const isChat = args.type === 'chat.message';
-    const endpointName = isChat ? 'chat-ai' : 'voice-chat';
+    const endpointName = 'chat-ai';
     const fallbackUrl = `${FUNCTIONS_BASE_URL}/functions/v1/${endpointName}`;
 
     console.warn(`[AI Failover] Executing HTTP fallback to /${endpointName}`);
@@ -2086,7 +2116,7 @@ export default function AiGuidanceScreen() {
 
     const { data, error } = await supabase
       .from('ai_chat_conversations')
-      .select('id, mode, concern, title, created_at, updated_at')
+      .select('id, mode, concern, title, created_at, updated_at, clinical_summary')
       .eq('user_id', user.id)
       .eq('mode', mode)
       .eq('concern', concernKey)
@@ -2642,6 +2672,8 @@ export default function AiGuidanceScreen() {
 
       setConversationId(targetConversationId);
       conversationIdRef.current = targetConversationId;
+      clinicalSummaryRef.current = String((targetConversationId && conversationList.find((item) => item.id === targetConversationId)?.clinical_summary) || '');
+      setClinicalSummary(clinicalSummaryRef.current);
       setMessages(mappedMessages);
       messagesRef.current = mappedMessages;
       setInput('');
@@ -2748,7 +2780,7 @@ export default function AiGuidanceScreen() {
       try {
         const { data: existingConversation, error: conversationError } = await supabase
           .from('ai_chat_conversations')
-          .select('id')
+          .select('id, clinical_summary')
           .eq('user_id', user.id)
           .eq('mode', mode)
           .eq('concern', concernKey)
@@ -2777,6 +2809,8 @@ export default function AiGuidanceScreen() {
 
         setConversationId(targetConversationId);
         conversationIdRef.current = targetConversationId;
+        clinicalSummaryRef.current = String(existingConversation?.clinical_summary || '');
+        setClinicalSummary(clinicalSummaryRef.current);
 
         const { data: storedMessages, error: messagesError } = await supabase
           .from('ai_chat_messages')
@@ -2992,7 +3026,8 @@ export default function AiGuidanceScreen() {
 
     await maybeShowContinuousChatRestReminder(targetConversationId);
 
-    const history = buildHistoryForApi(historySource ?? messagesRef.current, 14);
+    // Keep the AI prompt focused and lightweight: send only the latest five messages.
+    const history = buildHistoryForApi(historySource ?? messagesRef.current, 5);
     const userMessage: ChatMessage = { id: nextMessageId('u'), sender: 'user', text: userVisibleText, createdAt: nowIso() };
     const requestConversationId = targetConversationId;
 
@@ -3069,6 +3104,7 @@ export default function AiGuidanceScreen() {
             message: requestText,
             concern,
             history,
+            clinicalSummary: clinicalSummaryRef.current,
             conversationId: requestConversationId,
             mode: isAssistantMode ? 'assistant' : 'guided',
             locationCity,
@@ -3081,6 +3117,7 @@ export default function AiGuidanceScreen() {
         message: requestText,
         concern,
         history,
+        clinicalSummary: clinicalSummaryRef.current,
         conversationId: requestConversationId,
         mode: isAssistantMode ? 'assistant' as const : 'guided' as const,
         locationCity,
@@ -3189,7 +3226,15 @@ export default function AiGuidanceScreen() {
 
         const flushPendingStreamText = () => {
           if (!pendingStreamChunk) return;
-          streamedText += pendingStreamChunk;
+          const candidateText = `${streamedText}${pendingStreamChunk}`;
+          const cleanText = extractReplyFromStructuredText(candidateText);
+          const looksLikeUnfinishedStructuredOutput =
+            candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}');
+          if (looksLikeUnfinishedStructuredOutput) {
+            // Hold raw model JSON until the complete payload can be unwrapped.
+            return;
+          }
+          streamedText = cleanText;
           pendingStreamChunk = '';
           ensureStreamMessage();
           setMessages((prev) =>
@@ -3367,7 +3412,15 @@ export default function AiGuidanceScreen() {
 
         const flushPendingStreamText = () => {
           if (!pendingStreamChunk) return;
-          streamedText += pendingStreamChunk;
+          const candidateText = `${streamedText}${pendingStreamChunk}`;
+          const cleanText = extractReplyFromStructuredText(candidateText);
+          const looksLikeUnfinishedStructuredOutput =
+            candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}');
+          if (looksLikeUnfinishedStructuredOutput) {
+            // Hold raw model JSON until the complete payload can be unwrapped.
+            return;
+          }
+          streamedText = cleanText;
           pendingStreamChunk = '';
           ensureStreamMessage();
           setMessages((prev) =>
@@ -3587,7 +3640,21 @@ export default function AiGuidanceScreen() {
         setHasRateLimitSnapshot(true);
       }
       const source = response.data?.source;
-      const rawReplyText = response.data?.reply?.trim() || '';
+      const rawReplyText = extractReplyFromStructuredText(response.data?.reply?.trim() || '');
+      const nextClinicalSummary = typeof response.data?.clinicalSummary === 'string'
+        ? response.data.clinicalSummary.trim()
+        : '';
+      if (nextClinicalSummary) {
+        clinicalSummaryRef.current = nextClinicalSummary;
+        setClinicalSummary(nextClinicalSummary);
+        if (requestConversationId) {
+          void supabase
+            .from('ai_chat_conversations')
+            .update({ clinical_summary: nextClinicalSummary })
+            .eq('id', requestConversationId)
+            .eq('user_id', user.id);
+        }
+      }
       const replyText = normalizeRateLimitReplyForPlan(rawReplyText, parsedRateLimit, isProUser);
       const reviewReason = response.data?.reviewReason;
       const needsHumanReview = Boolean(response.data?.needsHumanReview);
@@ -3612,9 +3679,12 @@ export default function AiGuidanceScreen() {
       const isAiSource =
         source === 'gemini' ||
         source === 'openai' ||
+        source === 'gemini_fallback' ||
+        source === 'medical_scope_guard' ||
         source === 'fallback' ||
         source === 'stream' ||
-        source === 'ws_stream';
+        source === 'ws_stream' ||
+        Boolean(rawReplyText);
 
       if (AI_ONLY_RESPONSES && !isAiSource && !allowFallbackForSafety) {
         Toast.show({
@@ -3630,7 +3700,10 @@ export default function AiGuidanceScreen() {
           createdAt: nowIso(),
         };
         if (conversationIdRef.current === requestConversationId) {
-          setMessages((prev) => [...prev, fallbackMessage]);
+          setMessages((prev) => [
+            ...prev.filter((msg) => msg.id !== optimisticDraftId),
+            fallbackMessage,
+          ]);
         }
         if (requestConversationId) {
           try {
@@ -3646,7 +3719,10 @@ export default function AiGuidanceScreen() {
         throw new Error(response.message || 'Empty AI response');
       }
 
-      const aiMessageId = streamedMessageId || nextMessageId('a');
+      // Reuse the optimistic draft for JSON responses, and remove it when a
+      // separate streaming message was created. This prevents "Thinking..."
+      // from remaining above the completed AI response.
+      const aiMessageId = streamedMessageId || optimisticDraftId || nextMessageId('a');
       const aiCreatedAt = streamedCreatedAt || nowIso();
       const aiMessage: ChatMessage = {
         id: aiMessageId,
@@ -3670,11 +3746,14 @@ export default function AiGuidanceScreen() {
 
       if (conversationIdRef.current === requestConversationId) {
         setMessages((prev) => {
-          const existingIndex = prev.findIndex((msg) => msg.id === aiMessageId);
+          const withoutThinking = prev.filter(
+            (msg) => msg.id !== optimisticDraftId || msg.id === aiMessageId,
+          );
+          const existingIndex = withoutThinking.findIndex((msg) => msg.id === aiMessageId);
           if (existingIndex < 0) {
-            return [...prev, aiMessage];
+            return [...withoutThinking, aiMessage];
           }
-          const next = [...prev];
+          const next = [...withoutThinking];
           next[existingIndex] = { ...next[existingIndex], ...aiMessage };
           return next;
         });
@@ -4075,6 +4154,7 @@ export default function AiGuidanceScreen() {
     try {
       let voiceStreamedText = '';
       let voiceLiveSpokenViaDelta = false;
+      let voiceStreamProducedOutput = false;
       voiceLiveSpeechQueueRef.current = [];
       voiceLiveSpeechBusyRef.current = false;
       voiceLiveSpokenCharsRef.current = 0;
@@ -4108,9 +4188,9 @@ export default function AiGuidanceScreen() {
       };
 
       // Keep voice context compact so the first answer is generated quickly.
-      const historyForVoice = buildHistoryForApi(messagesRef.current, 6);
+      const historyForVoice = buildHistoryForApi(messagesRef.current, 5);
       const baseVoiceRequestBody = {
-        text,
+        message: text,
         concern,
         conversationId: requestConversationId,
         mode: isAssistantMode ? 'assistant' : 'guided',
@@ -4141,7 +4221,7 @@ export default function AiGuidanceScreen() {
         if (FUNCTIONS_BASE_URL && SUPABASE_ANON_KEY) {
           const controller = new AbortController();
           voiceAbortControllerRef.current = controller;
-          const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/voice-chat`, {
+          const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/chat-ai`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${accessToken}`,
@@ -4160,7 +4240,7 @@ export default function AiGuidanceScreen() {
 
         const functionsClient = supabase.functions;
         functionsClient.setAuth(accessToken);
-        const { data, error } = await functionsClient.invoke('voice-chat', {
+        const { data, error } = await functionsClient.invoke('chat-ai', {
           body: { ...baseVoiceRequestBody, stream: false },
         });
         if (error || !data?.success) {
@@ -4181,7 +4261,7 @@ export default function AiGuidanceScreen() {
           wsPayload = await sendAgentWsRequest({
             accessToken,
             requestId: wsRequestId,
-            type: 'voice.message',
+            type: 'chat.message',
             payload: { ...baseVoiceRequestBody, stream: false },
             timeoutMs: 18000,
             onStage: (stage) => {
@@ -4213,7 +4293,7 @@ export default function AiGuidanceScreen() {
         const controller = new AbortController();
         voiceAbortControllerRef.current = controller;
 
-        const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/voice-chat`, {
+        const response = await fetch(`${FUNCTIONS_BASE_URL}/functions/v1/chat-ai`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -4276,6 +4356,7 @@ export default function AiGuidanceScreen() {
                     : '';
               if (textDelta) {
                 sawAnyStreamOutput = true;
+                voiceStreamProducedOutput = true;
                 setIsVoiceDeltaLive(true);
                 voiceStreamedText += textDelta;
                 setMessages((prev) =>
@@ -4286,17 +4367,22 @@ export default function AiGuidanceScreen() {
                   ))
                 );
 
-                const speakableText = voiceStreamedText.slice(voiceLiveSpokenCharsRef.current);
-                const segments = splitIntoReadableSegments(speakableText);
-                if (segments.length > 1) {
-                  const completeSegments = segments.slice(0, -1);
-                  if (completeSegments.length > 0) {
-                    const spokenNow = completeSegments.join(' ').trim();
-                    if (spokenNow) {
-                      voiceLiveSpokenViaDelta = true;
-                      voiceLiveSpokenCharsRef.current += spokenNow.length + 1;
-                      voiceLiveSpeechQueueRef.current.push(...completeSegments);
-                      void processVoiceLiveSpeechQueue();
+                // Keep voice delivery as one complete response. Speaking each
+                // streamed text chunk creates audible pauses and can overlap
+                // with backend audio chunks.
+                if (!voiceOpenAiAudioOnlyRef.current) {
+                  const speakableText = voiceStreamedText.slice(voiceLiveSpokenCharsRef.current);
+                  const segments = splitIntoReadableSegments(speakableText);
+                  if (segments.length > 1) {
+                    const completeSegments = segments.slice(0, -1);
+                    if (completeSegments.length > 0) {
+                      const spokenNow = completeSegments.join(' ').trim();
+                      if (spokenNow) {
+                        voiceLiveSpokenViaDelta = true;
+                        voiceLiveSpokenCharsRef.current += spokenNow.length + 1;
+                        voiceLiveSpeechQueueRef.current.push(...completeSegments);
+                        void processVoiceLiveSpeechQueue();
+                      }
                     }
                   }
                 }
@@ -4319,6 +4405,7 @@ export default function AiGuidanceScreen() {
                   : '';
               if (audioBase64) {
                 sawAnyStreamOutput = true;
+                voiceStreamProducedOutput = true;
                 const chunkText = typeof event.data?.text === 'string' ? event.data.text : '';
                 if (chunkText.trim()) {
                   streamedAudioTranscript = `${streamedAudioTranscript} ${chunkText.trim()}`.trim();
@@ -4368,6 +4455,7 @@ export default function AiGuidanceScreen() {
                     : '';
               if (textDelta) {
                 sawAnyStreamOutput = true;
+                voiceStreamProducedOutput = true;
                 setIsVoiceDeltaLive(true);
                 voiceStreamedText += textDelta;
                 setMessages((prev) =>
@@ -4458,6 +4546,18 @@ export default function AiGuidanceScreen() {
             }
           } else if (isStreamUnsupportedError(streamMessage)) {
             voiceStreamCapabilityRef.current = 'unsupported';
+          } else if (voiceStreamProducedOutput) {
+            // Never send the same user turn through another AI transport after
+            // a stream has already produced content.
+            responseContent = {
+              success: true,
+              data: {
+                text: voiceStreamedText.trim(),
+                message: voiceStreamedText.trim(),
+                reply: voiceStreamedText.trim(),
+                source: 'voice_stream_partial',
+              },
+            };
           } else {
             console.warn('Voice stream failed, falling back to JSON:', streamError);
           }
@@ -4572,14 +4672,8 @@ export default function AiGuidanceScreen() {
         }
       }
 
-      const remainingTail = voiceStreamedText.slice(voiceLiveSpokenCharsRef.current).trim();
-      if (remainingTail) {
-        voiceLiveSpeechQueueRef.current.push(remainingTail);
-        voiceLiveSpokenViaDelta = true;
-      }
-
       // 4. Speak the response (prefer base64 audio) when live delta speech was not already used.
-      if (!voiceLiveSpokenViaDelta && !hasReceivedServerVoiceAudioChunksRef.current && !voiceOpenAiAudioOnlyRef.current) {
+      if (!hasReceivedServerVoiceAudioChunksRef.current && (voiceOpenAiAudioOnlyRef.current || !voiceLiveSpokenViaDelta)) {
         void speakText(aiText, audioBase64, audioMimeType);
       }
       openBookingPaymentHandoff(responseData?.bookingConfirmation, requestConversationId);
@@ -4672,7 +4766,10 @@ export default function AiGuidanceScreen() {
         const now = Date.now();
         const isDuplicateBurst =
           lastVoiceSubmitRef.current.text === normalized.toLowerCase() &&
-          now - lastVoiceSubmitRef.current.at < 1500;
+          // Speech recognition may emit the same final result again after the
+          // native recognizer closes. Keep the same turn locked through the
+          // full AI response window.
+          now - lastVoiceSubmitRef.current.at < 10000;
 
         if (isDuplicateBurst) {
           setVoiceStage('idle');
@@ -4742,6 +4839,13 @@ export default function AiGuidanceScreen() {
     setIsVoicePromptVisible(false);
     setVoiceStage('idle');
     void stopActiveVoicePlayback();
+  };
+
+  const openVoiceModal = () => {
+    // Opening the modal must not request the microphone or start listening.
+    // Listening begins only after the user taps Start inside the modal.
+    setIsVoicePromptVisible(true);
+    setVoiceStage('idle', 'Tap Start when you are ready to speak.');
   };
 
   const handleMicPress = async (forceVoiceCapture: boolean = false) => {
@@ -4911,9 +5015,9 @@ export default function AiGuidanceScreen() {
               {msg.text}
             </Text>
           ) : isStreamingDraft ? (
-            <Text style={[styles.messageText, { color: palette.aiBubbleText }]}>
+            <Markdown style={aiMarkdownStyles}>
               {msg.text}
-            </Text>
+            </Markdown>
           ) : (
             <Markdown style={aiMarkdownStyles}>
               {msg.text}
@@ -5114,15 +5218,10 @@ export default function AiGuidanceScreen() {
                 />
               );
             }
-            if (isSending && !streamingMessageIdRef.current) {
-              return (
-                <ThinkingIndicator 
-                  text={activeAgentProgressHint || "Thinking..."} 
-                  palette={palette} 
-                  theme={theme} 
-                />
-              );
-            }
+            // The optimistic AI draft already renders the thinking state while
+            // a message is being generated. Do not add a second global
+            // indicator after the final reply has arrived but persistence is
+            // still finishing.
             return null;
           }}
         />
@@ -5176,7 +5275,7 @@ export default function AiGuidanceScreen() {
                 { backgroundColor: isListening ? '#D9534F' : theme.tint },
               ]}
               onPress={() => {
-                void handleMicPress();
+                openVoiceModal();
               }}
               activeOpacity={0.85}
             >

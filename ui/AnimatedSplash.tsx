@@ -1,58 +1,65 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Image, StyleSheet, Animated, Dimensions } from 'react-native';
-
-const { width } = Dimensions.get('window');
+import React, { useEffect, useRef, useState } from 'react';
+import { View, StyleSheet, Platform } from 'react-native';
+import { Video, ResizeMode, AVPlaybackStatus, Audio } from 'expo-av';
 
 interface AnimatedSplashProps {
     onAnimationFinish: () => void;
 }
 
 export default function AnimatedSplash({ onAnimationFinish }: AnimatedSplashProps) {
-    const fadeAnim = useRef(new Animated.Value(1)).current;
-    const scaleAnim = useRef(new Animated.Value(1)).current;
-    const logoSize = Math.min(width * 0.46, 180);
+    const videoRef = useRef<Video>(null);
+    const [isVideoFinished, setIsVideoFinished] = useState(false);
 
+    // Safety timeout: If the video takes too long or fails to load,
+    // transition to the main app to avoid locking the user out.
     useEffect(() => {
-        Animated.sequence([
-            Animated.delay(260),
-            Animated.parallel([
-                Animated.timing(scaleAnim, {
-                    toValue: 1.03,
-                    duration: 180,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(fadeAnim, {
-                    toValue: 0,
-                    duration: 180,
-                    useNativeDriver: true,
-                }),
-            ]),
-        ]).start(() => {
-            onAnimationFinish();
+        const timer = setTimeout(() => {
+            if (!isVideoFinished) {
+                console.log('Splash video safety timeout triggered.');
+                onAnimationFinish();
+            }
+        }, 10000); // 10 seconds fallback
+
+        return () => clearTimeout(timer);
+    }, [onAnimationFinish, isVideoFinished]);
+
+    // Set audio mode for iOS silent switch
+    useEffect(() => {
+        Audio.setAudioModeAsync({
+            playsInSilentModeIOS: true,
+        }).catch(err => {
+            console.warn('Could not set silent mode audio preference:', err);
         });
-    }, [fadeAnim, scaleAnim, onAnimationFinish]);
+    }, []);
+
+    const handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {
+        if (!status.isLoaded) return;
+
+        // Check if video has ended
+        if (status.didJustFinish && !isVideoFinished) {
+            setIsVideoFinished(true);
+            onAnimationFinish();
+        }
+    };
+
+    const handleVideoError = (error: string) => {
+        console.error('Splash video playback error:', error);
+        onAnimationFinish();
+    };
 
     return (
         <View style={styles.container}>
-            <Animated.View
-                style={[
-                    styles.imageContainer,
-                    {
-                        width: logoSize,
-                        height: logoSize,
-                    },
-                    {
-                        opacity: fadeAnim,
-                        transform: [{ scale: scaleAnim }],
-                    },
-                ]}
-            >
-                <Image
-                    source={require('../assets/images/cd4_logo.png')}
-                    style={styles.image}
-                    resizeMode="contain"
-                />
-            </Animated.View>
+            <Video
+                ref={videoRef}
+                source={require('../assets/splash video/lv_0_20260713015405.mp4')}
+                style={styles.video}
+                resizeMode={ResizeMode.COVER}
+                shouldPlay
+                isLooping={false}
+                onPlaybackStatusUpdate={handlePlaybackStatusUpdate}
+                onError={handleVideoError}
+                isMuted={Platform.OS === 'web'} // Mute on web to bypass autoplay restrictions
+            />
         </View>
     );
 }
@@ -60,16 +67,13 @@ export default function AnimatedSplash({ onAnimationFinish }: AnimatedSplashProp
 const styles = StyleSheet.create({
     container: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: '#ffffff',
-        alignItems: 'center',
-        justifyContent: 'center',
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#ffffff', // Match native splash background to prevent transition flash
         zIndex: 9999, // Ensure it stays on top
     },
-    imageContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    image: {
+    video: {
+        ...StyleSheet.absoluteFillObject,
         width: '100%',
         height: '100%',
     },

@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1"
-import { detectTriageQuestionSlot, getConcernTriageProfile, getTriageQuestionTemplate } from "../chat-ai/shared.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -526,11 +525,6 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concer
   const history = Array.isArray(historyInput) ? historyInput : []
   if (!history.length) return ["No AI/voice chat transcript attached"]
 
-  const concernBasis = `${concernText || ""} ${history
-    .filter((item) => item.role === "user")
-    .map((item) => item.content)
-    .join(" ")}`
-  const profile = getConcernTriageProfile(concernBasis)
   const lines: string[] = []
   const seen = new Set<string>()
   const seenSlots = new Set<string>()
@@ -539,10 +533,21 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concer
     const item = history[questionIndex]
     if (item.role !== "assistant" || typeof item.content !== "string" || !item.content.includes("?")) continue
 
-    const slot = detectTriageQuestionSlot(item.content || "")
+    const normalizedQuestion = normalizeInlineText(item.content || "", 400).toLowerCase()
+    const slot = (Object.keys(ENGLISH_TRIAGE_SLOT_QUESTIONS) as PdfTriageSlot[]).find((candidate) => {
+      const keywords: Record<PdfTriageSlot, string[]> = {
+        onset: ["when did", "since when", "started", "how long"],
+        severity: ["how severe", "1 to 10", "intensity", "severity"],
+        associated: ["other symptoms", "along with", "associated"],
+        trigger: ["worse or better", "trigger", "make it worse"],
+        impact: ["affecting your", "daily", "sleep", "work"],
+        medicationContext: ["medicines", "allergies", "ongoing conditions"],
+      }
+      return keywords[candidate].some((keyword) => normalizedQuestion.includes(keyword))
+    }) || null
     if (!slot || seenSlots.has(slot)) continue
 
-    const question = ENGLISH_TRIAGE_SLOT_QUESTIONS[slot] || extractQuestionText(item.content || "") || getTriageQuestionTemplate(profile, slot)
+    const question = ENGLISH_TRIAGE_SLOT_QUESTIONS[slot] || extractQuestionText(item.content || "")
     const fingerprint = buildQuestionFingerprint(`${slot}:${question}`)
     const answer = findNearestUserAnswer(history, questionIndex)
     if (!question || !fingerprint || seen.has(fingerprint) || !isHealthQaPair(question, answer)) continue
