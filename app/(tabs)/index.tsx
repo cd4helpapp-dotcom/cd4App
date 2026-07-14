@@ -8,6 +8,7 @@ import TeleConsultationView from '../../ui/home/TeleConsultationView';
 import { Bot } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
+import { requestLocationPermissionOnce } from '../../services/locationPermission';
 // import DiabetesReversalView from '../../ui/home/DiabetesReversalView';
 
 export default function HomeScreen() {
@@ -18,6 +19,13 @@ export default function HomeScreen() {
   const floatingBottom = Math.max(insets.bottom + 24, 28);
   const tabSwipeHandlers = useTabSwipeNavigation('index');
   const [shouldMountHomeContent, setShouldMountHomeContent] = React.useState(false);
+
+  React.useEffect(() => {
+    // Request location only after the authenticated home tab mounts. Keeping
+    // this out of the root layout prevents the permission prompt from
+    // appearing over login/signup screens.
+    void requestLocationPermissionOnce();
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;

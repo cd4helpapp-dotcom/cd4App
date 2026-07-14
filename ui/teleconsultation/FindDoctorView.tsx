@@ -1697,6 +1697,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const lastVoiceEndRestartAtRef = React.useRef(0);
     const voiceSubmitInProgressRef = React.useRef(false);
     const realtimeVoiceRef = React.useRef<RealtimeVoiceHandle | null>(null);
+    const realtimeVoiceAttemptRef = React.useRef<number | null>(null);
     const realtimeVoiceDraftIdRef = React.useRef<string | null>(null);
     const realtimeLastAssistantIdRef = React.useRef<string | null>(null);
     const realtimeAssistantBeforeInputRef = React.useRef(false);
@@ -1753,6 +1754,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const closeRealtimeVoice = React.useCallback(async () => {
         const handle = realtimeVoiceRef.current;
         realtimeVoiceRef.current = null;
+        realtimeVoiceAttemptRef.current = null;
         realtimeVoiceDraftIdRef.current = null;
         realtimeLastAssistantIdRef.current = null;
         realtimeAssistantBeforeInputRef.current = false;
@@ -1766,7 +1768,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, []);
 
     const startRealtimeVoice = React.useCallback(async () => {
-        if (realtimeVoiceRef.current) return true;
+        if (realtimeVoiceRef.current || realtimeVoiceAttemptRef.current) return true;
+        const attemptId = Date.now();
+        realtimeVoiceAttemptRef.current = attemptId;
 
         const history = agentMessagesRef.current.slice(-5).map((message) => ({
             role: message.role === 'ai' ? 'assistant' : 'user',
@@ -1781,7 +1785,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             voicePersona: 'female',
         }, {
             onStatus: (status) => {
-                if (status === 'connected') {
+                if (status === 'connecting') {
+                    setIsVoiceSessionActive(true);
+                    setIsListening(false);
+                    setIsVoiceReplyPlaying(false);
+                    setVoiceStatusText('Connecting microphone...');
+                } else if (status === 'connected') {
                     realtimeVoiceRef.current?.setInputEnabled(true);
                     setIsVoiceSessionActive(true);
                     setIsListening(true);
@@ -1857,6 +1866,19 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     agentMessagesRef.current = next;
                     return next;
                 });
+            },
+            onAssistantInterrupted: () => {
+                const draftId = realtimeVoiceDraftIdRef.current;
+                realtimeVoiceDraftIdRef.current = null;
+                realtimeLastAssistantIdRef.current = null;
+                realtimeAssistantBeforeInputRef.current = false;
+                if (!draftId) return;
+                setAgentMessages((previous) => {
+                    const next = previous.filter((message) => message.id !== draftId);
+                    agentMessagesRef.current = next;
+                    return next;
+                });
+                setIsVoiceReplyPlaying(false);
             },
             onAssistantDone: (text) => {
                 const cleanText = text.trim();
@@ -1942,10 +1964,20 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 setVoiceStatusText(error.message || 'Voice connection error');
             },
         });
+        if (realtimeVoiceAttemptRef.current !== attemptId || !voiceSessionActiveRef.current) {
+            // The modal closed while the WebRTC handshake was pending.
+            // Release the newly-created stream instead of attaching a live
+            // microphone to a closed screen.
+            await handle.close();
+            if (realtimeVoiceAttemptRef.current === attemptId) realtimeVoiceAttemptRef.current = null;
+            return false;
+        }
         realtimeVoiceRef.current = handle;
+        realtimeVoiceAttemptRef.current = null;
         setIsVoiceSessionActive(true);
-        setIsListening(true);
-        setVoiceStatusText('Listening...');
+        // Do not claim that we are listening until the WebRTC data channel
+        // reports connected. Words spoken during the handshake must not look
+        // like they were captured when they were not.
         return true;
     }, [closeRealtimeVoice, locationCity, persistRealtimeMessage, router, voiceClinicalSummary]);
 
@@ -4910,12 +4942,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         setVoiceLiveTranscript('');
         voiceLiveTranscriptRef.current = '';
         voiceSessionActiveRef.current = true;
-        // Make the interaction feel immediate. The microphone/Realtime
-        // handshake can take a moment, but the user has already tapped the
-        // mic, so show the listening state without waiting for connection.
+        // The microphone/Realtime handshake can take a moment. Show a
+        // connecting state until the WebRTC channel is actually ready so the
+        // user does not speak into a session that is not capturing yet.
         setIsVoiceSessionActive(true);
-        setIsListening(true);
-        setVoiceStatusText('Listening...');
+        setIsListening(false);
+        setVoiceStatusText('Connecting microphone...');
 
         if (Platform.OS === 'web' || !isExpoGo) {
             try {
@@ -4923,10 +4955,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 return;
             } catch (error) {
                 if (__DEV__) console.warn('[Realtime voice] unavailable', error);
+                realtimeVoiceAttemptRef.current = null;
                 voiceSessionActiveRef.current = false;
                 setIsVoiceSessionActive(false);
                 setIsListening(false);
-                setVoiceStatusText('Realtime voice is unavailable in this build. Please install a fresh preview build.');
+                const detail = error instanceof Error ? error.message : String(error);
+                setVoiceStatusText(`Realtime voice unavailable: ${detail.slice(0, 150)}`);
                 return;
             }
         }
@@ -4941,7 +4975,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     };
 
     const handleCloseAgentPanel = () => {
-        if (voiceSessionActiveRef.current) {
+        // Always stop every voice path when the modal closes. Realtime can be
+        // connected even when the UI ref has not rendered the active state yet.
+        if (voiceSessionActiveRef.current || realtimeVoiceRef.current) {
             void stopContinuousVoiceSession(false);
         }
         Keyboard.dismiss();
@@ -4950,6 +4986,15 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         setModalTextInput('');
         setIsChatInputActive(false);
     };
+
+    React.useEffect(() => {
+        // Some modal actions close the panel directly (for example selecting a
+        // doctor). This guard makes sure those paths also release the native
+        // microphone track and WebRTC peer.
+        if (isAgentConversationVisible) return;
+        if (!voiceSessionActiveRef.current && !realtimeVoiceRef.current) return;
+        void stopContinuousVoiceSession(false);
+    }, [isAgentConversationVisible, stopContinuousVoiceSession]);
 
     const openVoiceAssistantPanel = async () => {
         // The entry button only opens the modal. Do not start microphone or
@@ -5181,6 +5226,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     : isVoiceSessionActive
                         ? 'Voice ready'
                         : 'Tap to speak';
+    const isVoiceUnavailable = voiceStatusText.toLowerCase().includes('unavailable');
     const subscriptionStatus = String(user?.subscription?.status || '').toLowerCase();
     const subscriptionExpiryMs =
         typeof user?.subscription?.expiresAt === 'string' && user.subscription.expiresAt.trim().length > 0
@@ -6514,14 +6560,14 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                         activeOpacity={0.7}
                                     >
                                         <View style={styles.bottomSheetVoiceMetaTopRow}>
-                                            <Text style={[styles.bottomSheetVoiceTitle, { color: theme.text }]}>
-                                                {bottomVoiceTitle}
+                                            <Text style={[styles.bottomSheetVoiceTitle, { color: theme.text }]} numberOfLines={1}>
+                                                {isVoiceUnavailable ? 'Voice unavailable' : bottomVoiceTitle}
                                             </Text>
-                                            <Text style={[styles.bottomSheetTextModeHint, { color: theme.tint }]}>
+                                            <Text style={[styles.bottomSheetTextModeHint, { color: theme.tint }]} numberOfLines={1}>
                                                 Tap for text
                                             </Text>
                                         </View>
-                                        <Text style={[styles.bottomSheetVoiceHint, { color: theme.textSecondary }]}>
+                                        <Text style={[styles.bottomSheetVoiceHint, { color: theme.textSecondary }]} numberOfLines={2}>
                                             {isListening ? 'Speak now, I am listening...' : voicePanelStatusText}
                                         </Text>
                                         <View style={styles.bottomSheetMiniWaveRow}>
@@ -8911,13 +8957,13 @@ const styles = StyleSheet.create({
     bottomSheetVoiceBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginHorizontal: 16,
-        marginTop: 10,
+        marginHorizontal: 14,
+        marginTop: 8,
         marginBottom: 0,
         gap: 10,
         borderWidth: 1,
-        borderRadius: 24,
-        padding: 10,
+        borderRadius: 20,
+        padding: 8,
         shadowColor: '#081510',
         shadowOffset: { width: 0, height: -2 },
         shadowOpacity: 0.12,
@@ -8968,9 +9014,9 @@ const styles = StyleSheet.create({
         lineHeight: 20,
     },
     bottomSheetMicBtn: {
-        width: 54,
-        height: 54,
-        borderRadius: 27,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#000',
@@ -9026,11 +9072,12 @@ const styles = StyleSheet.create({
         paddingVertical: 2,
     },
     bottomSheetVoiceMetaCard: {
-        marginLeft: 4,
+        marginLeft: 2,
         flex: 1,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 14,
+        minHeight: 52,
+        paddingHorizontal: 11,
+        paddingVertical: 8,
+        borderRadius: 15,
         borderWidth: 1,
     },
     bottomSheetVoiceMetaTopRow: {
@@ -9040,16 +9087,17 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     bottomSheetVoiceTitle: {
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: '800',
     },
     bottomSheetVoiceHint: {
-        marginTop: 3,
-        fontSize: 12,
+        marginTop: 2,
+        fontSize: 11,
+        lineHeight: 15,
         fontWeight: '500',
     },
     bottomSheetTextModeHint: {
-        fontSize: 11,
+        fontSize: 10,
         fontWeight: '700',
     },
     bottomSheetMiniWaveRow: {

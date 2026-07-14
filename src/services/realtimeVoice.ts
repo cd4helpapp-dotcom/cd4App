@@ -5,6 +5,7 @@ export type RealtimeVoiceCallbacks = {
   onInputTranscript?: (text: string) => void;
   onAssistantTranscript?: (text: string) => void;
   onAssistantDone?: (text: string) => void;
+  onAssistantInterrupted?: () => void;
   onToolCall?: (name: string, callId: string, argumentsJson: string) => Promise<unknown>;
   onToolResult?: (name: string, result: unknown) => void;
   onStatus?: (status: 'connecting' | 'connected' | 'speaking' | 'listening' | 'closed') => void;
@@ -35,27 +36,61 @@ export async function connectRealtimeVoice(
   callbacks: RealtimeVoiceCallbacks = {},
 ): Promise<RealtimeVoiceHandle> {
   callbacks.onStatus?.('connecting');
-  const { data, error } = await supabase.functions.invoke('voice-realtime-session', { body: context });
+  let data: any;
+  let error: any;
+  try {
+    const response = await supabase.functions.invoke('voice-realtime-session', { body: context });
+    data = response.data;
+    error = response.error;
+  } catch (cause) {
+    throw new Error(`Realtime session request failed: ${toErrorMessage(cause)}`);
+  }
   const clientSecret = data?.data?.clientSecret;
   if (error || typeof clientSecret !== 'string' || !clientSecret) {
-    throw new Error(error?.message || data?.message || 'Could not create realtime voice session');
+    throw new Error(`Realtime session failed: ${error?.message || data?.message || 'client secret missing'}`);
   }
 
   // Keep the native package out of the web module graph. Metro otherwise
   // tries to bundle react-native-webrtc on web and fails on native-only files
   // such as RTCPIPView.
-  const rtc: any = Platform.OS === 'web'
-    ? {
-        RTCPeerConnection: (globalThis as any).RTCPeerConnection,
-        mediaDevices: (globalThis as any).navigator?.mediaDevices,
-      }
-    : (0, eval)('require')('react-native-webrtc');
-  if (!rtc.RTCPeerConnection || !rtc.mediaDevices?.getUserMedia) {
-    throw new Error('Realtime WebRTC is not available in this build');
+  let rtc: any;
+  if (Platform.OS === 'web') {
+    rtc = {
+      RTCPeerConnection: (globalThis as any).RTCPeerConnection,
+      mediaDevices: (globalThis as any).navigator?.mediaDevices,
+    };
+  } else {
+    try {
+      // Keep this require conditional so the native module is bundled in an
+      // Android/iOS build without being initialized by the web bundle.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const loaded = require('react-native-webrtc');
+      rtc = loaded?.default ?? loaded;
+    } catch (cause) {
+      throw new Error(`Native WebRTC module failed to load: ${toErrorMessage(cause)}`);
+    }
+  }
+  const missing: string[] = [];
+  if (!rtc?.RTCPeerConnection) missing.push('RTCPeerConnection');
+  if (!rtc?.mediaDevices) missing.push('mediaDevices');
+  if (!rtc?.mediaDevices?.getUserMedia) missing.push('mediaDevices.getUserMedia');
+  if (missing.length > 0) {
+    throw new Error(`Realtime WebRTC is unavailable: missing ${missing.join(', ')}`);
   }
 
-  const peer = new rtc.RTCPeerConnection();
-  const localStream = await rtc.mediaDevices.getUserMedia({ audio: true, video: false });
+  let peer: any;
+  try {
+    peer = new rtc.RTCPeerConnection();
+  } catch (cause) {
+    throw new Error(`WebRTC peer could not start: ${toErrorMessage(cause)}`);
+  }
+  let localStream: any;
+  try {
+    localStream = await rtc.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (cause) {
+    peer.close?.();
+    throw new Error(`Microphone capture failed: ${toErrorMessage(cause)}`);
+  }
   localStream.getTracks().forEach((track: any) => peer.addTrack(track, localStream));
 
   if (Platform.OS === 'web') {
@@ -81,10 +116,11 @@ export async function connectRealtimeVoice(
   let assistantTranscriptBuffer = '';
   let assistantTranscriptMode: 'audio' | 'text' | null = null;
   let assistantResponseId: string | null = null;
+  let assistantAudioActive = false;
   let lastAssistantDoneText = '';
   let lastAssistantDoneAt = 0;
   let userTurnSequence = 0;
-  let lastDeliveredUserTurn = -1;
+  let lastCompletedAssistantResponseId: string | null = null;
   let toolFollowUpExpected = false;
   let lastInputTranscript = '';
   let lastInputTranscriptAt = 0;
@@ -92,15 +128,13 @@ export async function connectRealtimeVoice(
     const completeText = String(fallbackText || assistantTranscriptBuffer || '').trim();
     const now = Date.now();
     const duplicateDone = completeText === lastAssistantDoneText && now - lastAssistantDoneAt < 2500;
-    // Server VAD can occasionally produce a second response.done for the
-    // same input turn. Do not show/speak that second normal response. A tool
-    // result is the only valid reason to allow another response without a new
-    // user utterance.
-    const duplicateTurnResponse = lastDeliveredUserTurn === userTurnSequence && !toolFollowUpExpected;
-    if (completeText && !duplicateDone && !duplicateTurnResponse) {
+    // Realtime audio and input-transcription events can arrive out of order.
+    // Do not use the user-turn counter to cancel audio; deduplicate completed
+    // responses by text/response id instead.
+    if (completeText && !duplicateDone) {
       lastAssistantDoneText = completeText;
       lastAssistantDoneAt = now;
-      lastDeliveredUserTurn = userTurnSequence;
+      if (assistantResponseId) lastCompletedAssistantResponseId = assistantResponseId;
       callbacks.onAssistantDone?.(completeText);
     }
     toolFollowUpExpected = false;
@@ -157,16 +191,15 @@ export async function connectRealtimeVoice(
     // audio transcript arrives. Use the audio transcript as the single source
     // of truth for the voice UI.
     if (isAudioTranscriptDelta) {
-      if (lastDeliveredUserTurn === userTurnSequence && !toolFollowUpExpected) {
-        // A duplicate response for the same user turn has started. Cancel it
-        // before more audio is delivered, otherwise the user hears a second
-        // partial/duplicate answer even if the UI suppresses its transcript.
+      const responseId = typeof payload.response_id === 'string' ? payload.response_id : null;
+      if (responseId && responseId === lastCompletedAssistantResponseId) {
+        // Only cancel an actually repeated response ID. Transcript timing is
+        // asynchronous, so a user-turn counter is not a safe dedupe key.
         if (channel.readyState === 'open') {
           channel.send(JSON.stringify({ type: 'response.cancel' }));
         }
         return;
       }
-      const responseId = typeof payload.response_id === 'string' ? payload.response_id : null;
       // A new response must never inherit the previous response's transcript.
       // If the provider omitted response.done for the previous turn, flush it
       // before starting the next one.
@@ -175,6 +208,7 @@ export async function connectRealtimeVoice(
       }
       assistantResponseId = responseId || assistantResponseId;
       assistantTranscriptMode = 'audio';
+      assistantAudioActive = true;
       const delta = String(payload.delta || '');
       assistantTranscriptBuffer += delta;
       // Mute locally as soon as the assistant starts speaking. This avoids
@@ -190,6 +224,7 @@ export async function connectRealtimeVoice(
     // the end of the whole assistant turn, so do not create a chat bubble here.
     // response.done is the turn boundary and flushes the complete transcript.
     if (type === 'response.done') {
+      assistantAudioActive = false;
       flushAssistantTranscript();
     }
     if (type === 'response.function_call_arguments.done' && callbacks.onToolCall) {
@@ -200,6 +235,20 @@ export async function connectRealtimeVoice(
       channel.send(JSON.stringify({ type: 'response.create' }));
     }
     if (type === 'input_audio_buffer.speech_started') {
+      // Barge-in: stop the old assistant output, discard its unfinished
+      // transcript, and let the new user turn become the only active turn.
+      // This avoids leaving a partial answer in the chat when the user
+      // interrupts the assistant.
+      if (assistantAudioActive) {
+        if (channel.readyState === 'open') {
+          channel.send(JSON.stringify({ type: 'response.cancel' }));
+        }
+        assistantAudioActive = false;
+        assistantTranscriptBuffer = '';
+        assistantTranscriptMode = null;
+        assistantResponseId = null;
+        callbacks.onAssistantInterrupted?.();
+      }
       // The user arms the microphone explicitly via setInputEnabled(true).
       // Do not re-enable it from a late VAD event after speech has ended.
       callbacks.onStatus?.('listening');
@@ -225,15 +274,22 @@ export async function connectRealtimeVoice(
     if (type === 'error') callbacks.onError?.(new Error(payload.error?.message || 'Realtime voice error'));
   };
 
-  const offer = await peer.createOffer();
-  await peer.setLocalDescription(offer);
-  const answerResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${clientSecret}`, 'Content-Type': 'application/sdp' },
-    body: offer.sdp,
-  });
-  if (!answerResponse.ok) throw new Error(await answerResponse.text());
-  await peer.setRemoteDescription({ type: 'answer', sdp: await answerResponse.text() });
+  try {
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    const answerResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${clientSecret}`, 'Content-Type': 'application/sdp' },
+      body: offer.sdp,
+    });
+    const answerSdp = await answerResponse.text();
+    if (!answerResponse.ok) throw new Error(`OpenAI returned ${answerResponse.status}: ${answerSdp.slice(0, 240)}`);
+    await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+  } catch (cause) {
+    localStream.getTracks().forEach((track: any) => track.stop());
+    peer.close?.();
+    throw new Error(`Realtime connection failed: ${toErrorMessage(cause)}`);
+  }
 
   return {
     sendText: (text: string) => {
@@ -260,4 +316,10 @@ export async function connectRealtimeVoice(
       });
     },
   };
+}
+
+function toErrorMessage(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === 'string') return cause;
+  try { return JSON.stringify(cause); } catch { return 'Unknown error'; }
 }

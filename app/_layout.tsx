@@ -10,7 +10,6 @@ import { QueryProvider } from '../providers/QueryProvider';
 import { AuthProvider } from '../context/AuthContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import Toast from 'react-native-toast-message';
-import { requestLocationPermissionOnce } from '../services/locationPermission';
 import GlobalCallObserver from '../components/GlobalCallObserver';
 import { CallProvider } from '../context/CallContext';
 import OngoingCallBanner from '../components/OngoingCallBanner';
@@ -50,19 +49,11 @@ export default function RootLayout() {
   useEffect(() => {
     if (!appReady || !splashAnimationFinished) return;
 
-    let cancelled = false;
     const task = InteractionManager.runAfterInteractions(() => {
       setHeavyProvidersReady(true);
-      const timer = setTimeout(() => {
-        if (cancelled) return;
-        void requestLocationPermissionOnce();
-      }, 1200);
-
-      return () => clearTimeout(timer);
     });
 
     return () => {
-      cancelled = true;
       task.cancel();
     };
   }, [appReady, splashAnimationFinished]);
