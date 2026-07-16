@@ -101,6 +101,8 @@ Conversation behavior:
 - Do not claim to feel the patient's pain, do not say "everything will be fine," and do not imply that you are a licensed doctor. Say "I can help you understand this and prepare the right information for a doctor" when reassurance is needed.
 - Keep empathy specific to the patient's words. Vary natural wording across turns, avoid excessive emojis, and do not repeat the same reassurance unless the patient remains distressed.
 - When giving self-care, use low-risk supportive steps only (rest, fluids when appropriate, monitoring, avoiding known triggers) and explain when professional care is needed. Never let warmth replace a red-flag check.
+- When the patient asks "what should I do?", do not reply with only a history question. Give a useful, evidence-aligned first-step plan for the named symptom, then ask one focused question. For common concerns such as gas/bloating, explain that it can have several causes without diagnosing, suggest practical low-risk steps (smaller meals, eating slowly, gentle movement, hydration, and avoiding personal triggers or carbonated drinks), say what to monitor, and clearly list warning signs such as severe or persistent pain, repeated vomiting, blood or black stool, fever, marked abdominal swelling, inability to pass stool/gas, chest pain, or breathing difficulty.
+- Make every answer meaningfully specific to the latest concern: include a brief likely explanation, what the patient can do now, what to avoid or monitor, and when to seek care when those sections are clinically relevant. Avoid generic filler like "I am here to help" after the first turn and never replace practical guidance with "please consult a doctor" alone.
 - Treat the selected concern as background context, but always prioritize the patient's latest clear medical question. If the latest message names another medical symptom or condition, answer that current question naturally; do not force the old concern into the answer. Connect it to the selected concern only when clinically relevant.
 - When the patient reports a personal symptom or asks what to do, conduct clinical history-taking: ask specific questions about onset, severity, associated symptoms, triggers, impact, medicines, allergies, and relevant history. Ask only one question at a time while information is incomplete.
 - When the patient asks a direct educational question such as "what are the basic symptoms?", "symptoms of cough", or "symptoms of fever", you MUST answer the latest named condition first with a short Markdown bullet list. Add warning signs when relevant, then optionally ask one personal follow-up question. Never answer an educational question with only a request for the patient's own symptoms, and never say you are focusing on the old selected concern when the latest question is clear.
@@ -114,7 +116,7 @@ Conversation behavior:
 - Set consultPriority to "immediate" for emergency warning signs, "soon" when timely doctor review is appropriate, or null when no consultation recommendation is needed. Set needsHumanReview=true only for urgent/high-risk situations.
 
 ${languageInstruction(style)}
-Make the reply rich but easy to read in mobile chat: use short paragraphs, **bold** important terms, a small Markdown bullet list when useful, and at most one or two natural, gentle emojis. Do not use emojis in emergency warnings. Keep it clinically organized and directly related to the latest active topic. Keep the reply concise enough for a mobile message, but never end mid-word, mid-sentence, or with a dangling phrase such as "and", "when", or "because"; finish the final sentence before returning JSON.
+Make the reply feel like a polished, thoughtful health chat—not a search-result dump. Use a short empathetic opening only when appropriate, then useful sections such as **What this may mean**, **What you can do now**, **Avoid/monitor**, and **When to seek care**. Use **bold** important terms and compact Markdown bullets; use at most one or two natural, gentle emojis where they improve warmth. Do not use emojis in emergency warnings. Keep the reply clinically organized, mobile-friendly, and complete enough to answer the question in this turn. Never end mid-word, mid-sentence, or with a dangling phrase such as "and", "when", or "because"; finish the final sentence before returning JSON.
 
 Return only valid JSON in this exact shape (the reply value may contain Markdown):
 {"isMedical":true,"intent":"symptom_report","activeTopic":"cough","clinicalSummary":"Short factual summary under 700 characters","reply":"...","consultRecommended":false,"consultPriority":null,"needsHumanReview":false,"riskScore":0.1,"reviewReason":null}
@@ -223,12 +225,12 @@ const parseAssistantDecision = (value: string): AssistantDecision => {
     intent: "symptom_report",
     activeTopic: "",
     clinicalSummary: "",
-    reply: value.trim(),
+    reply: "I’m sorry, I couldn’t safely process that response. Please describe your main symptom in one short sentence, or contact a doctor if you feel seriously unwell.",
     consultRecommended: false,
     consultPriority: null,
-    needsHumanReview: false,
-    riskScore: 0.1,
-    reviewReason: null,
+    needsHumanReview: true,
+    riskScore: 0.35,
+    reviewReason: "safety_check_unavailable",
   }
   const normalized = value.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim()
   try {
@@ -273,9 +275,12 @@ const parseAssistantDecision = (value: string): AssistantDecision => {
             reply: parsed.reply.trim(),
             consultRecommended: Boolean(parsed.consultRecommended),
             consultPriority: parsed.consultPriority === "immediate" || parsed.consultPriority === "soon" ? parsed.consultPriority : null,
-            needsHumanReview: Boolean(parsed.needsHumanReview),
-            riskScore: Math.max(0, Math.min(1, Number(parsed.riskScore) || 0.1)),
-            reviewReason: typeof parsed.reviewReason === "string" ? parsed.reviewReason : null,
+            // This branch is reached only after structured parsing failed;
+            // keep the conservative review flag instead of trusting a
+            // partially recovered object as fully safe.
+            needsHumanReview: true,
+            riskScore: Math.max(0.35, Math.min(1, Number(parsed.riskScore) || 0.35)),
+            reviewReason: "safety_check_unavailable",
           }
         }
       } catch {
@@ -326,7 +331,7 @@ const classifyConversation = async (
 
 const detectEmergencySignal = (message: string, history: Array<{ role: string; content: string }>): boolean => {
   const text = `${message} ${history.slice(-3).map((item) => item.content).join(" ")}`.toLowerCase()
-  return /\b(chest pain|pressure in chest|severe breathing|difficulty breathing|shortness of breath|can't breathe|cannot breathe|fainted|unconscious|confusion|confused|stroke|face drooping|slurred speech|severe bleeding|bleeding heavily|bahut khoon|saans nahi|saans lene mein dikkat|behosh|hosh nahi|seene mein tez dard)\b/i.test(text)
+  return /\b(chest pain|pressure in chest|severe breathing|difficulty breathing|shortness of breath|can't breathe|cannot breathe|fainted|unconscious|loss of consciousness|confusion|confused|stroke|face drooping|slurred speech|severe bleeding|bleeding heavily|bahut khoon|saans nahi|saans lene mein dikkat|behosh|hosh nahi|seene mein tez dard|seizure|fit aa raha|severe dehydration|not passing urine|blue lips|throat swelling|face swelling|suicidal|kill myself|self harm|neck stiffness)\b/i.test(text)
 }
 
 const wantsDoctorOrBooking = (message: string): boolean =>
@@ -408,25 +413,29 @@ const loadDoctorRecommendations = async (admin: any, topic: string, requestedCit
   }))
 
   let slotOptions: any[] = []
-  const firstDoctor = normalizedDoctors[0]
-  if (firstDoctor?.id) {
+  const doctorIds = normalizedDoctors.map((doctor: any) => doctor.id).filter(Boolean)
+  if (doctorIds.length > 0) {
     const today = new Date().toISOString().slice(0, 10)
     const slotsResult = await admin.from("slots")
       .select("id,doctor_id,date,start_time,end_time")
-      .eq("doctor_id", firstDoctor.id)
+      .in("doctor_id", doctorIds)
       .eq("is_booked", false)
       .gte("date", today)
       .order("date", { ascending: true })
       .order("start_time", { ascending: true })
-      .limit(6)
+      .limit(24)
+    const doctorById = new Map(normalizedDoctors.map((doctor: any) => [String(doctor.id), doctor]))
     slotOptions = (slotsResult.data || []).map((slot: any) => ({
       id: slot.id,
       doctorId: slot.doctor_id,
       date: slot.date,
       startTime: slot.start_time,
       endTime: slot.end_time,
-      label: formatSlotLabel(slot),
-    }))
+      doctorName: `${doctorById.get(String(slot.doctor_id))?.firstName || ""} ${doctorById.get(String(slot.doctor_id))?.lastName || ""}`.trim(),
+      doctorSpecialization: doctorById.get(String(slot.doctor_id))?.specialization || "",
+      doctorCity: doctorById.get(String(slot.doctor_id))?.city || "",
+      label: `${`${doctorById.get(String(slot.doctor_id))?.firstName || ""} ${doctorById.get(String(slot.doctor_id))?.lastName || ""}`.trim() || "Doctor"} • ${formatSlotLabel(slot)}`,
+    })).slice(0, 12)
   }
   return { doctors: normalizedDoctors, slotOptions, mode, city: city || null }
 }

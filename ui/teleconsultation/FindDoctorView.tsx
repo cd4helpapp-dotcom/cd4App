@@ -1698,7 +1698,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const voiceSubmitInProgressRef = React.useRef(false);
     const realtimeVoiceRef = React.useRef<RealtimeVoiceHandle | null>(null);
     const realtimeVoiceAttemptRef = React.useRef<number | null>(null);
+    const realtimeGreetingPendingRef = React.useRef(false);
     const realtimeVoiceDraftIdRef = React.useRef<string | null>(null);
+    const realtimeLastToolResultKeyRef = React.useRef<string | null>(null);
     const realtimeLastAssistantIdRef = React.useRef<string | null>(null);
     const realtimeAssistantBeforeInputRef = React.useRef(false);
     const realtimeVoiceLastInputRef = React.useRef('');
@@ -1756,6 +1758,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         realtimeVoiceRef.current = null;
         realtimeVoiceAttemptRef.current = null;
         realtimeVoiceDraftIdRef.current = null;
+        realtimeLastToolResultKeyRef.current = null;
         realtimeLastAssistantIdRef.current = null;
         realtimeAssistantBeforeInputRef.current = false;
         realtimeVoiceLastInputRef.current = '';
@@ -1772,10 +1775,15 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         const attemptId = Date.now();
         realtimeVoiceAttemptRef.current = attemptId;
 
-        const history = agentMessagesRef.current.slice(-5).map((message) => ({
-            role: message.role === 'ai' ? 'assistant' : 'user',
-            content: message.text.slice(0, 900),
-        }));
+        // A welcome turn must never be generated from the previous user's
+        // last message. The visible history remains in the UI; only the
+        // clinical summary is carried into the fresh Realtime turn.
+        const history = realtimeGreetingPendingRef.current
+            ? []
+            : agentMessagesRef.current.slice(-5).map((message) => ({
+                role: message.role === 'ai' ? 'assistant' : 'user',
+                content: message.text.slice(0, 900),
+            }));
 
         const handle = await connectRealtimeVoice(supabase, {
             concern: 'General Assistant',
@@ -1783,6 +1791,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             clinicalSummary: voiceClinicalSummary,
             history,
             voicePersona: 'female',
+            autoStartResponse: realtimeGreetingPendingRef.current,
         }, {
             onStatus: (status) => {
                 if (status === 'connecting') {
@@ -1791,10 +1800,14 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     setIsVoiceReplyPlaying(false);
                     setVoiceStatusText('Connecting microphone...');
                 } else if (status === 'connected') {
-                    realtimeVoiceRef.current?.setInputEnabled(true);
+                    // Keep the microphone muted while the automatic welcome
+                    // message is being spoken. It becomes live after the
+                    // welcome response completes.
+                    realtimeVoiceRef.current?.setInputEnabled(!realtimeGreetingPendingRef.current);
                     setIsVoiceSessionActive(true);
-                    setIsListening(true);
-                    setVoiceStatusText('Listening...');
+                    setIsListening(!realtimeGreetingPendingRef.current);
+                    setIsVoiceReplyPlaying(realtimeGreetingPendingRef.current);
+                    setVoiceStatusText(realtimeGreetingPendingRef.current ? 'CD4 Assistant is speaking...' : 'Listening...');
                 } else if (status === 'listening') {
                     realtimeVoiceRef.current?.setInputEnabled(true);
                     setIsListening(true);
@@ -1884,7 +1897,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 const cleanText = text.trim();
                 if (!cleanText) return;
                 realtimeAssistantBeforeInputRef.current = true;
-                const draftId = realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
+                // The text UI already has a local welcome placeholder. When
+                // Realtime speaks the real welcome, replace that placeholder
+                // instead of appending a second greeting bubble.
+                const isAutomaticGreeting = realtimeGreetingPendingRef.current;
+                const draftId = isAutomaticGreeting
+                    ? 'agent-welcome'
+                    : realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
                 realtimeLastAssistantIdRef.current = draftId;
                 realtimeVoiceDraftIdRef.current = null;
                 setAgentMessages((previous) => {
@@ -1903,6 +1922,15 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 });
                 void persistRealtimeMessage('ai', cleanText);
                 setIsVoiceReplyPlaying(false);
+                if (realtimeGreetingPendingRef.current) {
+                    realtimeGreetingPendingRef.current = false;
+                    // Greeting is not permission to keep the microphone open.
+                    // Use push-to-talk so room noise cannot create a new turn.
+                    realtimeVoiceRef.current?.setInputEnabled(false);
+                    setIsListening(false);
+                    setVoiceStatusText('Tap mic to speak');
+                    return;
+                }
                 // Use push-to-talk between turns: mute the input after the AI
                 // finishes so the next turn starts only after the user taps.
                 realtimeVoiceRef.current?.setInputEnabled(false);
@@ -1942,6 +1970,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 const doctors = normalizeAgentRecommendedDoctors(result?.doctorRecommendations);
                 const slots = extractAgentBookingSlotOptions(result);
                 if (doctors.length === 0 && slots.length === 0) return;
+                // Realtime can emit the same function output once as the tool
+                // result and once while finalizing the assistant turn. Keep
+                // one visual card for the same doctor/slot set.
+                const toolResultKey = `${_name}:${doctors.map((doctor) => String(doctor.id || '')).sort().join(',')}:${slots.map((slot) => String(slot.id || '')).sort().join(',')}`;
+                if (toolResultKey === realtimeLastToolResultKeyRef.current) return;
+                realtimeLastToolResultKeyRef.current = toolResultKey;
                 const draftId = realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
                 realtimeVoiceDraftIdRef.current = draftId;
                 setAgentMessages((previous) => {
@@ -4997,21 +5031,30 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [isAgentConversationVisible, stopContinuousVoiceSession]);
 
     const openVoiceAssistantPanel = async () => {
-        // The entry button only opens the modal. Do not start microphone or
-        // Realtime until the user taps the Start/mic control inside it.
+        // Opening the voice modal prepares Realtime and its microphone. The
+        // assistant speaks a short welcome first, then starts listening.
         setIsAgentConversationVisible(true);
         setIsChatInputActive(false);
         setModalTextInput('');
         setVoiceStatusText('Tap the mic to start speaking');
+        // Every modal opening gets one short welcome. Previous user messages
+        // are deliberately excluded from that automatic greeting turn.
+        const shouldAutoGreet = true;
 
-        // Request microphone permission when the voice UI opens so the first
-        // mic tap feels immediate. This does not open a Realtime session or
-        // start listening; audio capture still begins only after mic tap.
+        // Request microphone permission before opening the Realtime session.
         try {
             if (Platform.OS === 'web') {
                 const mediaDevices = (globalThis as any)?.navigator?.mediaDevices;
                 if (mediaDevices?.getUserMedia) {
-                    const stream = await mediaDevices.getUserMedia({ audio: true, video: false });
+                    const stream = await mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                            channelCount: 1,
+                        },
+                        video: false,
+                    });
                     stream.getTracks?.().forEach((track: any) => track.stop());
                 }
             } else {
@@ -5023,9 +5066,41 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         text1: 'Microphone permission needed',
                         text2: 'Allow microphone access to start voice chat.',
                     });
+                    return;
                 }
             }
+
+            // Open the Realtime session automatically after permission is
+            // granted. The greeting is spoken with the mic muted; listening
+            // starts automatically as soon as that greeting finishes.
+            // Only a genuinely new conversation gets an automatic greeting.
+            // Reopening an existing session must not make Realtime answer an
+            // old message before the patient speaks again.
+            realtimeGreetingPendingRef.current = shouldAutoGreet;
+            setVoiceStatusText('Connecting microphone...');
+            setIsVoiceSessionActive(true);
+            setIsListening(false);
+            const started = await startRealtimeVoice();
+            if (!started || !realtimeVoiceRef.current) {
+                realtimeGreetingPendingRef.current = false;
+                return;
+            }
+            if (realtimeGreetingPendingRef.current) {
+                realtimeVoiceRef.current.setInputEnabled(false);
+                // Fallback for a channel that became ready before its
+                // onopen callback reached the UI. The realtime service
+                // deduplicates this against its channel-open trigger.
+                realtimeVoiceRef.current.startAssistantResponse();
+                setIsVoiceReplyPlaying(true);
+                setVoiceStatusText('CD4 Assistant is speaking...');
+            } else {
+                // The welcome response completed during the handshake.
+                realtimeVoiceRef.current.setInputEnabled(true);
+                setIsListening(true);
+                setVoiceStatusText('Listening...');
+            }
         } catch (error) {
+            realtimeGreetingPendingRef.current = false;
             if (__DEV__) console.warn('[Voice] microphone permission request failed', error);
             setVoiceStatusText('Allow microphone access to start voice chat');
         }
@@ -5953,50 +6028,66 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                     </View>
 
                                     <View style={styles.voiceListeningCenter}>
-                                        <View style={styles.voiceRobotAvatarWrap}>
-                                            <View style={[styles.voiceRobotAvatar, { borderColor: doctorVoiceAccent, backgroundColor: theme.cardBackground }]}>
-                                                <View style={styles.voiceDoctorImageFrame}>
-                                                    <Doctor3DIcon
-                                                        size={60}
-                                                        accentColor={doctorVoiceAccent}
-                                                        speaking={isVoiceReplyPlaying}
-                                                        mouthScale={doctorMouthScale}
-                                                        mouthScaleY={doctorMouthScaleY}
-                                                    />
-                                                    <Animated.View
-                                                        style={[
-                                                            styles.voiceDoctorScanLine,
-                                                            {
-                                                                backgroundColor: doctorScanColor,
-                                                                opacity: doctorHaloOpacity,
-                                                                transform: [{ translateY: doctorScanTranslate }],
-                                                            },
-                                                        ]}
-                                                    />
-                                                    <Animated.View
-                                                        style={[
-                                                            styles.voiceDoctorSpecular,
-                                                            {
-                                                                opacity: doctorSparkleOpacity,
-                                                                transform: [{ scale: doctorSparkleScale }],
-                                                            },
-                                                        ]}
-                                                    />
-                                                </View>
-                                                <Animated.View
-                                                    style={[
-                                                        styles.voiceDoctorSparkleDot,
-                                                        {
-                                                            backgroundColor: doctorDotColor,
-                                                            opacity: doctorSparkleOpacity,
-                                                            transform: [{ scale: doctorSparkleScale }],
-                                                        },
-                                                    ]}
+                                        <View style={{ width: 104, height: 104, alignItems: 'center', justifyContent: 'center' }}>
+                                            <Animated.View
+                                                style={{
+                                                    position: 'absolute',
+                                                    width: 100,
+                                                    height: 100,
+                                                    borderRadius: 50,
+                                                    backgroundColor: isVoiceReplyPlaying ? '#7386FF' : '#9AA9FF',
+                                                    opacity: doctorHaloOpacity,
+                                                    transform: [{ scale: doctorCoreShadowScale }],
+                                                }}
+                                            />
+                                            <Animated.View
+                                                style={{
+                                                    width: 78,
+                                                    height: 78,
+                                                    borderRadius: 39,
+                                                    overflow: 'hidden',
+                                                    transform: [{ rotate: doctorOrbRotate }, { scale: doctorSparkleScale }],
+                                                    shadowColor: '#7183FF',
+                                                    shadowOpacity: 0.28,
+                                                    shadowRadius: 16,
+                                                    shadowOffset: { width: 0, height: 8 },
+                                                    elevation: 8,
+                                                }}
+                                            >
+                                                <LinearGradient
+                                                    colors={isVoiceReplyPlaying ? ['#6677F5', '#DCE3FF', '#778BFF'] : ['#7F8EFF', '#EAF0FF', '#A7B4FF']}
+                                                    start={{ x: 0.05, y: 0.05 }}
+                                                    end={{ x: 0.95, y: 0.95 }}
+                                                    style={{ flex: 1 }}
                                                 />
-                                            </View>
+                                                <Animated.View
+                                                    style={{
+                                                        position: 'absolute',
+                                                        left: 16,
+                                                        top: 12,
+                                                        width: 36,
+                                                        height: 16,
+                                                        borderRadius: 20,
+                                                        backgroundColor: '#FFFFFF',
+                                                        opacity: doctorSparkleOpacity,
+                                                        transform: [{ rotate: '-18deg' }, { scale: doctorSparkleScale }],
+                                                    }}
+                                                />
+                                            </Animated.View>
+                                            <Animated.View
+                                                style={{
+                                                    position: 'absolute',
+                                                    width: 6,
+                                                    height: 6,
+                                                    borderRadius: 3,
+                                                    backgroundColor: '#FFFFFF',
+                                                    opacity: doctorSparkleOpacity,
+                                                    transform: [{ rotate: doctorOrbReverseRotate }, { translateX: 46 }],
+                                                }}
+                                            />
                                         </View>
 
-                                        <Text style={[styles.voiceRobotTitle, { color: theme.text, textAlign: 'center' }]}>Doctor Voice Mode</Text>
+                                        <Text style={[styles.voiceRobotTitle, { color: theme.text, textAlign: 'center' }]}>CD4 Voice Assistant</Text>
                                         <Text style={[styles.voiceRobotSubtitle, { color: theme.textSecondary, textAlign: 'center' }]}>
                                             {voiceRobotWaveLabel}
                                         </Text>
@@ -6575,30 +6666,6 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             <Animated.View style={[styles.bottomSheetMiniWaveBar, { backgroundColor: theme.tint, transform: [{ scaleY: robotBarScaleB }] }]} />
                                             <Animated.View style={[styles.bottomSheetMiniWaveBar, { backgroundColor: theme.tint, transform: [{ scaleY: robotBarScaleA }] }]} />
                                         </View>
-                                        {isVoiceReplyPlaying ? (
-                                            <View style={styles.bottomDoctorSpeakingRow}>
-                                                <View style={styles.bottomDoctorWrap}>
-                                                    <Animated.View
-                                                        style={[
-                                                            styles.bottomDoctorPulse,
-                                                            { backgroundColor: theme.tint + '30', transform: [{ scale: voicePulse }] },
-                                                        ]}
-                                                    />
-                                                    <View style={[styles.bottomDoctorAvatar, { backgroundColor: 'transparent' }]}>
-                                                        <Doctor3DIcon
-                                                            size={24}
-                                                            accentColor={theme.tint}
-                                                            speaking={isVoiceReplyPlaying}
-                                                            mouthScale={doctorMouthScale}
-                                                            mouthScaleY={doctorMouthScaleY}
-                                                        />
-                                                    </View>
-                                                </View>
-                                                <Text style={[styles.bottomDoctorSpeakingText, { color: theme.textSecondary }]}>
-                                                    Doctor is speaking...
-                                                </Text>
-                                            </View>
-                                        ) : null}
                                     </TouchableOpacity>
                                 </>
                                 )
@@ -9175,8 +9242,8 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderRadius: 22,
         paddingHorizontal: 14,
-        paddingTop: 14,
-        paddingBottom: 12,
+        paddingTop: 10,
+        paddingBottom: 8,
         alignSelf: 'center',
         width: '100%',
         maxWidth: 560,
@@ -9196,7 +9263,7 @@ const styles = StyleSheet.create({
         borderRadius: 999,
         paddingHorizontal: 10,
         paddingVertical: 5,
-        marginBottom: 12,
+        marginBottom: 8,
     },
     voiceListeningBadgeDot: {
         width: 8,
@@ -9212,8 +9279,8 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderRadius: 18,
         paddingHorizontal: 14,
-        paddingVertical: 12,
-        marginBottom: 14,
+        paddingVertical: 9,
+        marginBottom: 9,
         maxWidth: 420,
         alignSelf: 'center',
     },
@@ -9226,7 +9293,7 @@ const styles = StyleSheet.create({
     },
     voiceListeningCenter: {
         alignItems: 'center',
-        gap: 4,
+        gap: 2,
     },
     voiceRobotTopRow: {
         flexDirection: 'row',
@@ -9369,13 +9436,13 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     voiceRobotBarsRow: {
-        marginTop: 12,
+        marginTop: 8,
         flexDirection: 'row',
         alignItems: 'flex-end',
         gap: 6,
     },
     voiceListeningStatusRow: {
-        marginTop: 8,
+        marginTop: 5,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
@@ -9437,13 +9504,13 @@ const styles = StyleSheet.create({
         borderRadius: 999,
     },
     voiceRobotHint: {
-        marginTop: 10,
+        marginTop: 7,
         fontSize: 12,
         lineHeight: 17,
         fontWeight: '500',
     },
     voiceListeningActionRow: {
-        marginTop: 14,
+        marginTop: 10,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
@@ -9477,7 +9544,7 @@ const styles = StyleSheet.create({
     },
     voiceNewSessionButton: {
         alignSelf: 'center',
-        marginTop: 10,
+        marginTop: 6,
         minHeight: 34,
         paddingHorizontal: 14,
         borderRadius: 17,

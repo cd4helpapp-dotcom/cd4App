@@ -12,11 +12,21 @@ export type RealtimeVoiceCallbacks = {
   onError?: (error: Error) => void;
 };
 
-const EMERGENCY_PATTERN = /\b(chest pain|pressure in chest|severe breathing|difficulty breathing|shortness of breath|can't breathe|cannot breathe|fainted|unconscious|confusion|confused|stroke|face drooping|slurred speech|severe bleeding|bleeding heavily|bahut khoon|saans nahi|saans lene mein dikkat|behosh|hosh nahi|seene mein tez dard)\b/i;
+const EMERGENCY_PATTERN = /\b(chest pain|pressure in chest|severe breathing|difficulty breathing|shortness of breath|can't breathe|cannot breathe|fainted|unconscious|loss of consciousness|confusion|confused|stroke|face drooping|slurred speech|severe bleeding|bleeding heavily|bahut khoon|saans nahi|saans lene mein dikkat|behosh|hosh nahi|seene mein tez dard|seizure|fit aa raha|severe dehydration|not passing urine|blue lips|throat swelling|face swelling|suicidal|kill myself|self harm|neck stiffness)\b/i;
+const NOISE_TRANSCRIPT_PATTERN = /^(uh+|um+|hmm+|mm+|ah+|oh+|echo+|noise+|background noise|\.+|[-_.]+)$/i;
+
+const isLikelyNoiseTranscript = (value: string): boolean => {
+  const text = value.trim().replace(/\s+/g, ' ');
+  if (!text) return true;
+  if (NOISE_TRANSCRIPT_PATTERN.test(text)) return true;
+  if (/^(.)\1{3,}$/.test(text.replace(/\s/g, ''))) return true;
+  return false;
+};
 
 export type RealtimeVoiceHandle = {
   close: () => Promise<void>;
   sendText: (text: string) => void;
+  startAssistantResponse: () => void;
   interrupt: () => void;
   setInputEnabled: (enabled: boolean) => void;
 };
@@ -86,7 +96,15 @@ export async function connectRealtimeVoice(
   }
   let localStream: any;
   try {
-    localStream = await rtc.mediaDevices.getUserMedia({ audio: true, video: false });
+    localStream = await rtc.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      },
+      video: false,
+    });
   } catch (cause) {
     peer.close?.();
     throw new Error(`Microphone capture failed: ${toErrorMessage(cause)}`);
@@ -124,6 +142,18 @@ export async function connectRealtimeVoice(
   let toolFollowUpExpected = false;
   let lastInputTranscript = '';
   let lastInputTranscriptAt = 0;
+  let assistantResponseQueued = false;
+  let assistantResponseStarted = false;
+  const autoStartResponse = context?.autoStartResponse === true;
+  const requestAssistantResponse = () => {
+    if (assistantResponseStarted) return;
+    if (channel.readyState === 'open') {
+      assistantResponseStarted = true;
+      channel.send(JSON.stringify({ type: 'response.create' }));
+    } else {
+      assistantResponseQueued = true;
+    }
+  };
   const flushAssistantTranscript = (fallbackText = '') => {
     const completeText = String(fallbackText || assistantTranscriptBuffer || '').trim();
     const now = Date.now();
@@ -144,6 +174,12 @@ export async function connectRealtimeVoice(
   };
   channel.onopen = () => {
     callbacks.onStatus?.('connected');
+    if (autoStartResponse || assistantResponseQueued) {
+      assistantResponseQueued = false;
+      // Start the welcome turn at the data-channel boundary. This removes
+      // the extra UI/JS round trip after the WebRTC handshake completes.
+      requestAssistantResponse();
+    }
   };
   channel.onmessage = async (event: any) => {
     const payload = parseEvent(typeof event.data === 'string' ? event.data : '');
@@ -156,6 +192,12 @@ export async function connectRealtimeVoice(
       typeof payload.transcript === 'string'
     ) {
       const transcript = payload.transcript.trim();
+      if (isLikelyNoiseTranscript(transcript)) {
+        // Server VAD can occasionally commit a fan/echo syllable. Cancel the
+        // automatically-created turn instead of sending a meaningless reply.
+        if (channel.readyState === 'open') channel.send(JSON.stringify({ type: 'response.cancel' }));
+        return;
+      }
       const now = Date.now();
       if (transcript && transcript === lastInputTranscript && now - lastInputTranscriptAt < 3500) {
         return;
@@ -297,6 +339,9 @@ export async function connectRealtimeVoice(
       toolFollowUpExpected = false;
       channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }));
       channel.send(JSON.stringify({ type: 'response.create' }));
+    },
+    startAssistantResponse: () => {
+      requestAssistantResponse();
     },
     interrupt: () => {
       if (channel.readyState === 'open') {

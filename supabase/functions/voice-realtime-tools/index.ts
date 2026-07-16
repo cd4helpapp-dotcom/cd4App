@@ -76,6 +76,90 @@ Deno.serve(async (request: Request) => {
       })
     }
 
+    // A named doctor request is not a medical concern. Search the platform
+    // directly instead of sending "Dr Nitesh" through chat-ai's medical
+    // scope guard, which would otherwise return a generic health reply.
+    const requestedDoctorName = String(args.doctorName || args.doctor || "").trim()
+      || (/^(dr\.?|doctor)\b/i.test(String(args.concern || "")) ? String(args.concern).trim() : "")
+    if (requestedDoctorName) {
+      const searchTerm = requestedDoctorName
+        .replace(/^dr\.?\s*/i, "")
+        .replace(/^doctor\s*/i, "")
+        .replace(/[%,()]/g, " ")
+        .trim()
+        .split(/\s+/)[0]
+      const city = String(args.city || "").trim()
+      const fields = "id,city,specialization,experience,fee,rating,first_name,last_name,profile_picture"
+      const findDoctors = async (cityFilter: string) => {
+        let query = admin.from("doctors_public").select(fields).limit(6)
+        if (cityFilter) query = query.ilike("city", `%${cityFilter}%`)
+        if (searchTerm) query = query.or(`first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%`)
+        return query
+      }
+      let doctorResult = await findDoctors(city)
+      let doctors = doctorResult.data || []
+      if (doctors.length === 0 && city) {
+        doctorResult = await findDoctors("")
+        doctors = doctorResult.data || []
+      }
+      const doctorRecommendations = doctors.map((doctor: any) => ({
+        id: doctor.id,
+        firstName: doctor.first_name || "",
+        lastName: doctor.last_name || "",
+        city: doctor.city || "",
+        specialization: doctor.specialization || "",
+        experience: doctor.experience || "",
+        fee: doctor.fee || "",
+        rating: Number(doctor.rating || 0),
+        image: doctor.profile_picture || "",
+      }))
+      const doctorIds = doctorRecommendations.map((doctor: any) => doctor.id).filter(Boolean)
+      let bookingSlotOptions: any[] = []
+      if (doctorIds.length > 0) {
+        const today = new Date().toISOString().slice(0, 10)
+        const { data: slots } = await admin.from("slots")
+          .select("id,doctor_id,date,start_time,end_time")
+          .in("doctor_id", doctorIds)
+          .eq("is_booked", false)
+          .gte("date", today)
+          .order("date", { ascending: true })
+          .order("start_time", { ascending: true })
+          .limit(12)
+        const doctorById = new Map(doctorRecommendations.map((doctor: any) => [String(doctor.id), doctor]))
+        bookingSlotOptions = (slots || []).map((slot: any) => {
+          const doctor = doctorById.get(String(slot.doctor_id)) || {}
+          const doctorLabel = `${doctor.firstName || ""} ${doctor.lastName || ""}`.trim() || "Doctor"
+          const timeLabel = `${slot.date || ""}${slot.start_time ? ` • ${String(slot.start_time).slice(0, 5)}` : ""}${slot.end_time ? `–${String(slot.end_time).slice(0, 5)}` : ""}`
+          return {
+            id: slot.id,
+            doctorId: slot.doctor_id,
+            doctorName: doctorLabel,
+            doctorSpecialization: doctor.specialization || "",
+            doctorCity: doctor.city || "",
+            date: slot.date,
+            startTime: slot.start_time,
+            endTime: slot.end_time,
+            label: `${doctorLabel} • ${timeLabel}`,
+          }
+        })
+      }
+      const doctorLabel = doctorRecommendations[0]
+        ? `${doctorRecommendations[0].firstName} ${doctorRecommendations[0].lastName}`.trim()
+        : requestedDoctorName
+      return json({
+        success: true,
+        result: {
+          reply: bookingSlotOptions.length
+            ? `I found ${doctorLabel}'s available slots. Please choose one.`
+            : `I could not find an open slot for ${doctorLabel} right now.`,
+          doctorRecommendations,
+          bookingSlotOptions,
+          bookingPreparation: { slotOptions: bookingSlotOptions, doctorId: doctorRecommendations[0]?.id || null, searchCity: city || null },
+          bookingPrompt: bookingSlotOptions.length ? "Choose a specific doctor and slot before booking." : null,
+        },
+      })
+    }
+
     const response = await fetch(`${url}/functions/v1/chat-ai`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, apikey: anonKey, "Content-Type": "application/json" },
@@ -83,7 +167,17 @@ Deno.serve(async (request: Request) => {
     })
     const payload = await response.json().catch(() => ({}))
     if (!response.ok || payload?.success !== true) return json({ success: false, message: payload?.message || "Voice tool failed" }, 400)
-    return json({ success: true, result: payload.data })
+    const result = payload.data || {}
+    // Keep the voice tool response flat and compatible with the appointment
+    // UI. chat-ai stores slots under bookingPreparation.slotOptions, while
+    // the voice client also accepts bookingSlotOptions directly.
+    return json({
+      success: true,
+      result: {
+        ...result,
+        bookingSlotOptions: result.bookingSlotOptions || result.bookingPreparation?.slotOptions || [],
+      },
+    })
   } catch (error) {
     return json({ success: false, message: error instanceof Error ? error.message : "Voice tool failed" }, 400)
   }

@@ -3,8 +3,8 @@ import path from 'node:path';
 import process from 'node:process';
 
 const ROOT = process.cwd();
-const SHARED_TS = path.join(ROOT, 'supabase', 'functions', 'chat-ai', 'shared.ts');
-const TOOLS_TS = path.join(ROOT, 'supabase', 'functions', 'chat-ai', 'tools.ts');
+const SHARED_TS = path.join(ROOT, 'supabase', 'functions', '_shared', 'clinicalBrain.ts');
+const TOOLS_TS = path.join(ROOT, 'supabase', 'functions', 'chat-ai', 'index.ts');
 
 const PROFILES = [
   {
@@ -226,10 +226,11 @@ function readSourceChecks() {
   const shared = fs.readFileSync(SHARED_TS, 'utf8');
   const tools = fs.readFileSync(TOOLS_TS, 'utf8');
   return [
-    ['dynamic triage prompt', tools.includes('DYNAMIC TRIAGE QUESTIONS')],
-    ['doctor-like triage prompt', tools.includes('DOCTOR-LIKE TRIAGE QUESTIONS')],
-    ['voice one-question rule', shared.includes('Ask only one clear follow-up question in voice mode')],
-    ['no checklist triage rule', tools.includes('do NOT use a header or bullet checklist') || shared.includes('bullet checklist')],
+    ['adaptive clinical brain', shared.includes('adaptive reasoning') && shared.includes('highest-yield missing item')],
+    ['doctor-like history domains', shared.includes('hospital admission or surgery') && shared.includes('family/social context')],
+    ['one-question rule', shared.includes('Ask exactly one focused question per turn')],
+    ['no rigid checklist', shared.includes('not a mandatory checklist') && shared.includes('never ask a fixed questionnaire')],
+    ['emergency safety override', tools.includes('detectEmergencySignal') && tools.includes('consultPriority = "immediate"')],
   ];
 }
 
