@@ -265,6 +265,34 @@ export const useHospitalDoctors = () => {
     });
 };
 
+export const useHospitalDoctorSearch = (query: string) => {
+    const { user } = useAuthContext();
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return useQuery({
+        queryKey: [...HOSPITAL_QUERY_KEYS.doctors, 'search', normalizedQuery],
+        enabled: Boolean(user?.id && normalizedQuery.length >= 3),
+        staleTime: 30_000,
+        queryFn: async () => {
+            const { data, error } = await supabase.rpc('hospital_search_doctors', { p_query: normalizedQuery });
+            if (error) throw error;
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                doctorId: row.doctor_id,
+                status: row.status || 'active',
+                department: row.department || undefined,
+                name: row.name || 'Doctor',
+                email: row.email || '',
+                phoneNumber: row.phone_number || '',
+                specialization: row.specialization || '',
+                city: row.city || '',
+                registrationNumber: row.registration_number || '',
+                createdAt: row.created_at,
+            }));
+        },
+    });
+};
+
 export const useHospitalPatients = () => {
     const { user } = useAuthContext();
 
@@ -332,6 +360,24 @@ export const useHospitalVoiceIntake = (intakeId?: string) => {
     });
 };
 
+export const usePatientHospitalVoiceIntakes = () => {
+    const { user } = useAuthContext();
+
+    return useQuery({
+        queryKey: ['patient', 'hospital-voice-intakes'],
+        enabled: Boolean(user?.id),
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('hospital_voice_intake_sessions')
+                .select('id, title, status, language, ai_summary, transcript, metadata, patient_id, doctor_id, created_at')
+                .eq('patient_id', user!.id)
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            return (data || []).map(mapVoiceIntake);
+        },
+    });
+};
+
 export const useHospitalStats = () => {
     const { user } = useAuthContext();
 
@@ -393,12 +439,21 @@ export const useLinkHospitalPatient = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: async (input: { email: string; doctorId?: string; notes?: string }) => {
-            const { data, error } = await supabase.rpc('hospital_link_patient', {
-                p_email: input.email.trim().toLowerCase(),
-                p_doctor_id: input.doctorId || null,
-                p_notes: input.notes?.trim() || null,
-            });
+        mutationFn: async (input: { name?: string; email: string; phone?: string; doctorId?: string; notes?: string }) => {
+            const hasFullIdentity = Boolean(input.name?.trim() && input.phone?.trim());
+            const { data, error } = hasFullIdentity
+                ? await supabase.rpc('hospital_link_patient_details', {
+                    p_name: input.name!.trim(),
+                    p_email: input.email.trim().toLowerCase(),
+                    p_phone: input.phone!.trim(),
+                    p_doctor_id: input.doctorId || null,
+                    p_notes: input.notes?.trim() || null,
+                })
+                : await supabase.rpc('hospital_link_patient', {
+                    p_email: input.email.trim().toLowerCase(),
+                    p_doctor_id: input.doctorId || null,
+                    p_notes: input.notes?.trim() || null,
+                });
 
             if (error) throw error;
             return data as string;

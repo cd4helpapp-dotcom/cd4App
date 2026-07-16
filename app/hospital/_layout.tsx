@@ -51,7 +51,18 @@ export default function HospitalLayout() {
     return (
         <Tabs
             detachInactiveScreens={false}
-            tabBar={(props) => <SmoothTabBar {...props} visibleRouteNames={HOSPITAL_VISIBLE_TABS} />}
+            tabBar={(props) => (
+                <SmoothTabBar
+                    {...props}
+                    visibleRouteNames={HOSPITAL_VISIBLE_TABS}
+                    themeColors={{
+                        background: theme.background,
+                        border: theme.borderColor,
+                        active: theme.tint,
+                        inactive: theme.tabIconDefault,
+                    }}
+                />
+            )}
             screenOptions={{
                 animation: 'shift',
                 lazy: true,
@@ -161,6 +172,7 @@ export default function HospitalLayout() {
                 }}
             />
             <Tabs.Screen name="voice-intake-report" options={{ href: null, title: 'AI Intake PDF' }} />
+            <Tabs.Screen name="patient-profile" options={{ href: null, title: 'Patient Profile' }} />
         </Tabs>
     );
 }

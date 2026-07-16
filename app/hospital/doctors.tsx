@@ -33,14 +33,19 @@ export default function HospitalDoctorsScreen() {
     const handleLinkDoctor = async () => {
         const cleanIdentifier = identifier.trim();
         if (!cleanIdentifier) {
-            Toast.show({ type: 'error', text1: 'Doctor detail required', text2: 'Enter doctor email or registration number.' });
+            Toast.show({ type: 'error', text1: 'Doctor name required', text2: 'Enter the doctor’s full name.' });
+            return;
+        }
+        const cleanDepartment = department.trim();
+        if (!cleanDepartment) {
+            Toast.show({ type: 'error', text1: 'Department required', text2: 'Enter the doctor department or specialty.' });
             return;
         }
 
         try {
             await linkDoctor.mutateAsync({
                 identifier: cleanIdentifier,
-                department: department.trim() || undefined,
+                department: cleanDepartment,
             });
             setIdentifier('');
             setDepartment('');
@@ -108,13 +113,13 @@ export default function HospitalDoctorsScreen() {
                             </TouchableOpacity>
                         </View>
                         <Text style={[styles.modalSubtitle, { color: theme.textSecondary, marginBottom: 16 }]}>
-                            Link a doctor using their CD4 email or medical registration number.
+                            Link an existing CD4 doctor by name. The doctor’s profile details will be loaded automatically.
                         </Text>
 
                         <TextInput
                             value={identifier}
                             onChangeText={setIdentifier}
-                            placeholder="Doctor email or registration number"
+                            placeholder="Doctor full name"
                             placeholderTextColor={theme.textSecondary}
                             autoCapitalize="none"
                             style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
@@ -122,17 +127,17 @@ export default function HospitalDoctorsScreen() {
                         <TextInput
                             value={department}
                             onChangeText={setDepartment}
-                            placeholder="Department, e.g. Cardiology"
+                            placeholder="Hospital department / specialty (required)"
                             placeholderTextColor={theme.textSecondary}
                             style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
                         />
                         <TouchableOpacity
-                            style={[styles.primaryButton, { backgroundColor: theme.tint }, linkDoctor.isPending && styles.disabledButton]}
+                            style={[styles.primaryButton, { backgroundColor: theme.tint }, (linkDoctor.isPending || !department.trim()) && styles.disabledButton]}
                             onPress={handleLinkDoctor}
-                            disabled={linkDoctor.isPending}
+                            disabled={linkDoctor.isPending || !department.trim()}
                         >
                             {linkDoctor.isPending ? <ActivityIndicator color={theme.buttonText} /> : <Plus size={17} color={theme.buttonText} />}
-                            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Add doctor</Text>
+                            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Link doctor</Text>
                         </TouchableOpacity>
                     </Pressable>
                 </Pressable>
@@ -169,7 +174,7 @@ export default function HospitalDoctorsScreen() {
                 <View style={[styles.emptyCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                     <Text style={[styles.emptyTitle, { color: theme.text }]}>No doctors linked yet</Text>
                     <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-                        Add your first doctor using their CD4 doctor account email or registration number.
+                        Link your first doctor using their CD4 doctor account email or registration number.
                     </Text>
                 </View>
             )}

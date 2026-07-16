@@ -22,6 +22,7 @@ import Colors from '../../constants/Colors';
 import { useAuthContext } from '../../context/AuthContext';
 import { useHospitalDoctors, useHospitalPatients, useHospitalProfile, useHospitalStats, useHospitalVoiceIntakes, useCreateHospitalVoiceIntake, useLinkHospitalDoctor, useLinkHospitalPatient } from '../../hooks/useHospital';
 import { supabase } from '../../src/lib/supabase';
+import { connectRealtimeVoice, type RealtimeVoiceHandle } from '../../src/services/realtimeVoice';
 
 type SpeechRecognitionModule = {
     addListener?: (eventName: 'result' | 'error' | 'end', listener: (event: any) => void) => { remove?: () => void };
@@ -135,6 +136,8 @@ export default function HospitalDashboard() {
     const [chatHistory, setChatHistory] = React.useState<Array<{ role: 'user' | 'assistant'; content: string }>>(INITIAL_CHAT);
     const [activeUserInput, setActiveUserInput] = React.useState('');
     const [isChatLoading, setIsChatLoading] = React.useState(false);
+    const hospitalRealtimeRef = React.useRef<RealtimeVoiceHandle | null>(null);
+    const hospitalRealtimeStartingRef = React.useRef(false);
 
     const triageStepRef = React.useRef(0);
     const isTriageActiveRef = React.useRef(true);
@@ -159,21 +162,34 @@ export default function HospitalDashboard() {
     // Search states for assignment dropdowns
     const [patientSearch, setPatientSearch] = React.useState('');
     const [doctorSearch, setDoctorSearch] = React.useState('');
+    const [debouncedPatientSearch, setDebouncedPatientSearch] = React.useState('');
+    const [debouncedDoctorSearch, setDebouncedDoctorSearch] = React.useState('');
+
+    React.useEffect(() => {
+        const timer = setTimeout(() => setDebouncedPatientSearch(patientSearch.trim().toLowerCase()), 220);
+        return () => clearTimeout(timer);
+    }, [patientSearch]);
+
+    React.useEffect(() => {
+        const timer = setTimeout(() => setDebouncedDoctorSearch(doctorSearch.trim().toLowerCase()), 220);
+        return () => clearTimeout(timer);
+    }, [doctorSearch]);
 
     const recentDoctors = (doctorsQuery.data || []).slice(0, 3);
+    const recentPatients = (patientsQuery.data || []).slice(0, 3);
     const recentVoice = (voiceQuery.data || []).slice(0, 3);
 
     const filteredPatients = patients.filter((patient) => {
-        const matchesSearch = patient.patientName.toLowerCase().includes(patientSearch.toLowerCase()) ||
-            patient.patientEmail.toLowerCase().includes(patientSearch.toLowerCase());
+        const matchesSearch = patient.patientName.toLowerCase().includes(debouncedPatientSearch) ||
+            patient.patientEmail.toLowerCase().includes(debouncedPatientSearch);
         const isSelected = selectedPatientId === patient.patientId;
         return matchesSearch || isSelected;
     });
 
     const filteredDoctors = doctors.filter((doctor) => {
-        const matchesSearch = doctor.name.toLowerCase().includes(doctorSearch.toLowerCase()) ||
-            doctor.specialization.toLowerCase().includes(doctorSearch.toLowerCase()) ||
-            (doctor.department || '').toLowerCase().includes(doctorSearch.toLowerCase());
+        const matchesSearch = doctor.name.toLowerCase().includes(debouncedDoctorSearch) ||
+            doctor.specialization.toLowerCase().includes(debouncedDoctorSearch) ||
+            (doctor.department || '').toLowerCase().includes(debouncedDoctorSearch);
         const isSelected = selectedDoctorId === doctor.doctorId;
         return matchesSearch || isSelected;
     });
@@ -297,14 +313,89 @@ export default function HospitalDashboard() {
 
     React.useEffect(() => {
         if (!isVoiceModalVisible) {
+            void hospitalRealtimeRef.current?.close();
+            hospitalRealtimeRef.current = null;
+            hospitalRealtimeStartingRef.current = false;
             setPatientSearch('');
             setDoctorSearch('');
             setTriageStep(0);
+            setSelectedPatientId(undefined);
+            setSelectedDoctorId(undefined);
+            setVoiceTitle('');
             setChatHistory(INITIAL_CHAT);
             setActiveUserInput('');
             setIsTriageActive(true);
         }
     }, [isVoiceModalVisible, INITIAL_CHAT]);
+
+    const startHospitalRealtimeTriage = React.useCallback(async () => {
+        if (hospitalRealtimeRef.current || hospitalRealtimeStartingRef.current) return;
+
+        hospitalRealtimeStartingRef.current = true;
+        setVoiceStatus('Connecting live clinical voice...');
+        try {
+            const realtime = await connectRealtimeVoice(supabase, {
+                mode: 'hospital',
+                autoStartResponse: true,
+                concern: activeDoctor?.department || activeDoctor?.specialization || 'General medical intake',
+                department: activeDoctor?.department || activeDoctor?.specialization || 'General Medicine',
+                doctorSpecialty: activeDoctor?.specialization || activeDoctor?.department || 'General Medicine',
+                hospitalName: profileQuery.data?.displayName || profileQuery.data?.registeredName || 'CD4 Partner Hospital',
+                patientName: activePatient?.patientName || 'the patient',
+                history: [],
+            }, {
+                onStatus: (status) => {
+                    if (status === 'connecting') setVoiceStatus('Connecting live clinical voice...');
+                    if (status === 'connected') setVoiceStatus('Live voice ready. I am listening for the patient history.');
+                    if (status === 'speaking') {
+                        setIsListening(false);
+                        setVoiceStatus('AI is speaking. It will listen again after the question.');
+                    }
+                    if (status === 'listening') {
+                        setIsListening(true);
+                        setVoiceStatus('Listening for the next patient answer...');
+                    }
+                    if (status === 'closed') {
+                        setIsListening(false);
+                        setVoiceStatus('Live voice session closed.');
+                    }
+                },
+                onInputTranscript: (text) => {
+                    const clean = text.trim();
+                    if (!clean) return;
+                    setChatHistory((current) => [...current, { role: 'user', content: clean }]);
+                    setActiveUserInput('');
+                },
+                onAssistantDone: (text) => {
+                    const clean = text.trim();
+                    if (!clean) return;
+                    setChatHistory((current) => {
+                        if (current.length === 1 && current[0]?.role === 'assistant' && current[0].content === INITIAL_CHAT[0]?.content) {
+                            return [{ role: 'assistant', content: clean }];
+                        }
+                        return [...current, { role: 'assistant', content: clean }];
+                    });
+                    setIsChatLoading(false);
+                    // Re-arm only after the complete answer has finished.
+                    hospitalRealtimeRef.current?.setInputEnabled(true);
+                },
+                onAssistantInterrupted: () => {
+                    setVoiceStatus('I heard the interruption. Please continue.');
+                },
+                onError: (error) => {
+                    setIsListening(false);
+                    setVoiceStatus('Live voice is unavailable. You can continue with text or the saved intake flow.');
+                    if (__DEV__) console.warn('[HospitalRealtimeVoice]', error.message);
+                },
+            });
+            hospitalRealtimeRef.current = realtime;
+        } catch (error: any) {
+            setVoiceStatus('Live voice could not start. You can use text or the existing voice capture.');
+            Toast.show({ type: 'error', text1: 'Live voice unavailable', text2: error?.message || 'Please try again.' });
+        } finally {
+            hospitalRealtimeStartingRef.current = false;
+        }
+    }, [activeDoctor, activePatient, profileQuery.data]);
 
     const handleStepTransition = (nextStep: number) => {
         if (isListening) {
@@ -319,6 +410,7 @@ export default function HospitalDashboard() {
             setChatHistory(INITIAL_CHAT);
             setActiveUserInput('');
             setVoiceStatus('Tap mic to describe chief complaints.');
+            void startHospitalRealtimeTriage();
         } else if (nextStep === 2) {
             setVoiceStatus('Please review the compiled patient history below.');
             const compiled = chatHistory
@@ -331,6 +423,14 @@ export default function HospitalDashboard() {
     const handleSendResponse = async () => {
         const cleanInput = activeUserInput.trim();
         if (!cleanInput) return;
+
+        if (hospitalRealtimeRef.current) {
+            setChatHistory((current) => [...current, { role: 'user', content: cleanInput }]);
+            setActiveUserInput('');
+            setIsChatLoading(true);
+            hospitalRealtimeRef.current.sendText(cleanInput);
+            return;
+        }
 
         if (isListening) {
             ExpoSpeechRecognitionModule?.stop?.();
@@ -391,6 +491,13 @@ export default function HospitalDashboard() {
     };
 
     const handleMicPress = async () => {
+        if (hospitalRealtimeRef.current) {
+            const nextEnabled = !isListening;
+            hospitalRealtimeRef.current.setInputEnabled(nextEnabled);
+            setIsListening(nextEnabled);
+            setVoiceStatus(nextEnabled ? 'Listening for the patient answer...' : 'Microphone paused. Tap again to continue.');
+            return;
+        }
         if (isListening) {
             ExpoSpeechRecognitionModule?.stop?.();
             setIsListening(false);
@@ -542,56 +649,27 @@ export default function HospitalDashboard() {
             >
                 <View style={styles.voiceCardHeader}>
                     <Text style={[styles.voiceCardTitle, { color: tonePalette.title }]}>
-                        Patient Voice Intake
+                        Start patient history
                     </Text>
                     <View style={[styles.proBadge, { backgroundColor: tonePalette.badgeBg }]}>
                         <Text style={[styles.proBadgeText, { color: tonePalette.badgeText }]}>AI</Text>
                     </View>
                 </View>
                 <Text style={[styles.voiceCardSubtitle, { color: tonePalette.description }]}>
-                    Record patient symptoms naturally and generate instant medical reports.
+                    Select a patient and doctor, then let CD4 collect the clinical history one question at a time.
                 </Text>
-                <View style={[styles.voiceInputContainer, { backgroundColor: tonePalette.placeholderBg, borderColor: tonePalette.border, borderWidth: 0.5 }]}>
-                    <Text style={{ flex: 1, color: tonePalette.placeholderText, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
-                        Patient complains of mild fever and cough...
-                    </Text>
-                    <TouchableOpacity
-                        style={[styles.voiceBtn, { backgroundColor: tonePalette.ctaBg }]}
-                        onPress={() => setIsVoiceModalVisible(true)}
-                        activeOpacity={0.8}
-                    >
-                        <Mic size={14} color={tonePalette.ctaText} />
-                        <Text style={{ color: tonePalette.ctaText, fontSize: 12, fontWeight: '800', marginLeft: 4 }}>Voice</Text>
-                    </TouchableOpacity>
-                </View>
-                <Text style={[styles.voiceCardFooter, { color: tonePalette.description, opacity: 0.8 }]}>
-                    Tap Voice to start continuous listening. We will help link this to patients.
-                </Text>
-            </LinearGradient>
-
-            <View style={styles.quickGrid}>
-                <QuickAction
-                    title="Add doctor"
-                    subtitle="Link existing CD4 doctor"
-                    icon={Stethoscope}
-                    theme={theme}
-                    onPress={() => router.push('/hospital/doctors')}
-                />
-                <QuickAction
-                    title="Add patient"
-                    subtitle="Assign patient to hospital"
-                    icon={Users}
-                    theme={theme}
-                    onPress={() => router.push('/hospital/patients')}
-                />
-                <QuickAction
-                    title="Voice intake"
-                    subtitle="Capture patient symptoms"
-                    icon={Mic}
-                    theme={theme}
+                <TouchableOpacity
+                    style={[styles.voiceInputContainer, { backgroundColor: tonePalette.ctaBg }]}
                     onPress={() => setIsVoiceModalVisible(true)}
-                />
-            </View>
+                    activeOpacity={0.86}
+                >
+                    <View style={styles.voicePrimaryIcon}>
+                        <Mic size={18} color={tonePalette.ctaText} />
+                    </View>
+                    <Text style={[styles.voicePrimaryText, { color: tonePalette.ctaText }]}>Start live voice history</Text>
+                    <Text style={[styles.voicePrimaryArrow, { color: tonePalette.ctaText }]}>›</Text>
+                </TouchableOpacity>
+            </LinearGradient>
 
             <Section title="Stats overview" action="" onPress={() => {}} theme={theme}>
                 <View style={styles.statsRow}>
@@ -608,6 +686,22 @@ export default function HospitalDashboard() {
                     ))
                 ) : (
                     <EmptyText text="No doctors linked yet." theme={theme} />
+                )}
+            </Section>
+
+            <Section title="Recent patients" action="Manage" onPress={() => router.push('/hospital/patients')} theme={theme}>
+                {recentPatients.length ? (
+                    recentPatients.map((patient) => (
+                        <Row
+                            key={patient.id}
+                            title={patient.patientName}
+                            subtitle={`${patient.doctorName || 'Doctor not assigned'} • ${formatStatus(patient.status)}`}
+                            icon={Users}
+                            theme={theme}
+                        />
+                    ))
+                ) : (
+                    <EmptyText text="No patients assigned yet." theme={theme} />
                 )}
             </Section>
 
@@ -650,24 +744,16 @@ export default function HospitalDashboard() {
                             </TouchableOpacity>
                         </View>
                         <Text style={[styles.modalSubtitleText, { color: theme.textSecondary, marginBottom: 12 }]}>
-                            Record symptoms naturally and generate instant medical summaries.
+                            Select the patient and doctor. CD4 will take the clinical history by voice.
                         </Text>
 
                         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                            <TextInput
-                                value={voiceTitle}
-                                onChangeText={setVoiceTitle}
-                                placeholder="Enter intake title (e.g. Morning Triage)"
-                                placeholderTextColor={theme.textSecondary}
-                                style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                            />
-
                             <View style={styles.selectorLabelRow}>
-                                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Patient</Text>
+                                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>1. Patient</Text>
                                 <TextInput
                                     value={patientSearch}
                                     onChangeText={setPatientSearch}
-                                    placeholder="Search patient..."
+                                        placeholder="Search patient name or email..."
                                     placeholderTextColor={theme.textSecondary}
                                     autoCapitalize="none"
                                     style={[
@@ -677,24 +763,6 @@ export default function HospitalDashboard() {
                                 />
                             </View>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-                                <TouchableOpacity
-                                    style={[
-                                        styles.chip,
-                                        { borderColor: theme.borderColor, backgroundColor: !selectedPatientId ? theme.successLight : theme.background },
-                                    ]}
-                                    onPress={() => setSelectedPatientId(undefined)}
-                                >
-                                    <Text style={[styles.chipText, { color: !selectedPatientId ? theme.tint : theme.textSecondary }]}>Unassigned</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[
-                                        styles.chip,
-                                        { borderColor: theme.tint, backgroundColor: isAddingPatInline ? theme.successLight : theme.background },
-                                    ]}
-                                    onPress={() => setIsAddingPatInline(!isAddingPatInline)}
-                                >
-                                    <Text style={[styles.chipText, { color: theme.tint }]}>+ Add Patient</Text>
-                                </TouchableOpacity>
                                 {filteredPatients.map((patient) => {
                                     const selected = selectedPatientId === patient.patientId;
                                     return (
@@ -751,7 +819,7 @@ export default function HospitalDashboard() {
                             )}
 
                             <View style={styles.selectorLabelRow}>
-                                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Doctor</Text>
+                                <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>2. Doctor</Text>
                                 <TextInput
                                     value={doctorSearch}
                                     onChangeText={setDoctorSearch}
@@ -765,24 +833,6 @@ export default function HospitalDashboard() {
                                 />
                             </View>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-                                <TouchableOpacity
-                                    style={[
-                                        styles.chip,
-                                        { borderColor: theme.borderColor, backgroundColor: !selectedDoctorId ? theme.successLight : theme.background },
-                                    ]}
-                                    onPress={() => setSelectedDoctorId(undefined)}
-                                >
-                                    <Text style={[styles.chipText, { color: !selectedDoctorId ? theme.tint : theme.textSecondary }]}>Unassigned</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[
-                                        styles.chip,
-                                        { borderColor: theme.tint, backgroundColor: isAddingDocInline ? theme.successLight : theme.background },
-                                    ]}
-                                    onPress={() => setIsAddingDocInline(!isAddingDocInline)}
-                                >
-                                    <Text style={[styles.chipText, { color: theme.tint }]}>+ Add Doctor</Text>
-                                </TouchableOpacity>
                                 {filteredDoctors.map((doctor) => {
                                     const selected = selectedDoctorId === doctor.doctorId;
                                     return (
@@ -806,7 +856,7 @@ export default function HospitalDashboard() {
                                     <TextInput
                                         value={inlineDocIdentifier}
                                         onChangeText={setInlineDocIdentifier}
-                                        placeholder="Doctor email or Medical registration number"
+                                        placeholder="Doctor full name"
                                         placeholderTextColor={theme.textSecondary}
                                         autoCapitalize="none"
                                         style={[styles.inlineInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
@@ -837,43 +887,24 @@ export default function HospitalDashboard() {
                                 </View>
                             )}
 
-                            <View style={[styles.modeToggleRow, { backgroundColor: isDarkTheme ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)' }]}>
-                                <TouchableOpacity
-                                    style={[styles.modeToggleBtn, isTriageActive && { backgroundColor: theme.tint }]}
-                                    onPress={() => {
-                                        setIsTriageActive(true);
-                                        setTriageStep(0);
-                                    }}
-                                >
-                                    <Text style={[styles.modeToggleText, { color: isTriageActive ? theme.buttonText : theme.textSecondary }]}>
-                                        Voice Triage Q&A
-                                    </Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.modeToggleBtn, !isTriageActive && { backgroundColor: theme.tint }]}
-                                    onPress={() => {
-                                        setIsTriageActive(false);
-                                    }}
-                                >
-                                    <Text style={[styles.modeToggleText, { color: !isTriageActive ? theme.buttonText : theme.textSecondary }]}>
-                                        Manual / Continuous
-                                    </Text>
-                                </TouchableOpacity>
-                            </View>
-
                             {isTriageActive ? (
                                 <>
                                     {triageStep === 0 && (
                                         <View style={[styles.triageCard, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
-                                            <Text style={[styles.triageCardTitle, { color: theme.text }]}>Patient History Assistant</Text>
+                                            <Text style={[styles.triageCardTitle, { color: theme.text }]}>Ready for clinical history</Text>
                                             <Text style={[styles.triageCardDesc, { color: theme.textSecondary }]}>
-                                                This conversational AI will dynamically interview the patient or staff step-by-step to record complete clinical history (symptoms, duration, past history, medications, vitals) before generating the final report.
+                                                CD4 will ask one relevant question at a time based on the doctor's department and the patient's answers.
                                             </Text>
+                                            {(!selectedPatientId || !selectedDoctorId) && (
+                                                <Text style={[styles.selectionHint, { color: theme.textSecondary }]}>Select both a patient and a doctor to continue.</Text>
+                                            )}
                                             <TouchableOpacity
-                                                style={[styles.triageStartBtn, { backgroundColor: theme.tint }]}
+                                                style={[styles.triageStartBtn, { backgroundColor: theme.tint }, (!selectedPatientId || !selectedDoctorId) && styles.disabledButton]}
                                                 onPress={() => handleStepTransition(1)}
+                                                disabled={!selectedPatientId || !selectedDoctorId}
                                             >
-                                                <Text style={[styles.triageStartBtnText, { color: theme.buttonText }]}>Start Dynamic Triage</Text>
+                                                <Mic size={16} color={theme.buttonText} />
+                                                <Text style={[styles.triageStartBtnText, { color: theme.buttonText }]}>Start live history</Text>
                                             </TouchableOpacity>
                                         </View>
                                     )}
@@ -1135,7 +1166,10 @@ const styles = StyleSheet.create({
     proBadge: { backgroundColor: '#FFFFFF2A', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
     proBadgeText: { color: '#FFFFFF', fontSize: 9, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.5 },
     voiceCardSubtitle: { fontSize: 13, lineHeight: 18, fontWeight: '600', marginBottom: 12 },
-    voiceInputContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6, marginBottom: 10 },
+    voiceInputContainer: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 2 },
+    voicePrimaryIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.22)' },
+    voicePrimaryText: { flex: 1, marginLeft: 10, fontSize: 14, fontWeight: '900' },
+    voicePrimaryArrow: { fontSize: 26, lineHeight: 28, fontWeight: '500', marginLeft: 8 },
     voiceBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 10 },
     voiceCardFooter: { fontSize: 11, lineHeight: 15, fontWeight: '600' },
     statsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, marginTop: 4, marginBottom: 12 },
@@ -1280,6 +1314,11 @@ const styles = StyleSheet.create({
         lineHeight: 18,
         fontWeight: '600',
     },
+    selectionHint: {
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: '700',
+    },
     triageStepList: {
         gap: 6,
         paddingLeft: 4,
@@ -1293,6 +1332,8 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         alignItems: 'center',
         justifyContent: 'center',
+        flexDirection: 'row',
+        gap: 8,
         marginTop: 6,
     },
     triageStartBtnText: {

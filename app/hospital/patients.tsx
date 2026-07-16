@@ -13,41 +13,70 @@ import {
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { UserPlus, Users, Plus, X } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
-import { useHospitalDoctors, useHospitalPatients, useLinkHospitalPatient } from '../../hooks/useHospital';
+import { useHospitalDoctorSearch, useHospitalDoctors, useHospitalPatients, useLinkHospitalPatient } from '../../hooks/useHospital';
+import type { HospitalDoctor } from '../../hooks/useHospital';
 
 export default function HospitalPatientsScreen() {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
     const insets = useSafeAreaInsets();
+    const router = useRouter();
     const patientsQuery = useHospitalPatients();
     const doctorsQuery = useHospitalDoctors();
     const linkPatient = useLinkHospitalPatient();
+    const [name, setName] = React.useState('');
     const [email, setEmail] = React.useState('');
+    const [phone, setPhone] = React.useState('');
     const [notes, setNotes] = React.useState('');
     const [selectedDoctorId, setSelectedDoctorId] = React.useState<string | undefined>(undefined);
+    const [doctorSearch, setDoctorSearch] = React.useState('');
+    const [debouncedDoctorSearch, setDebouncedDoctorSearch] = React.useState('');
     const [isModalVisible, setIsModalVisible] = React.useState(false);
 
     const patients = patientsQuery.data || [];
     const doctors = doctorsQuery.data || [];
+    const doctorSearchQuery = useHospitalDoctorSearch(debouncedDoctorSearch);
+    const visibleDoctors: HospitalDoctor[] = debouncedDoctorSearch.length >= 3 && doctorSearchQuery.data
+        ? doctorSearchQuery.data
+        : doctors;
+
+    React.useEffect(() => {
+        const timer = setTimeout(() => setDebouncedDoctorSearch(doctorSearch.trim().toLowerCase()), 320);
+        return () => clearTimeout(timer);
+    }, [doctorSearch]);
 
     const handleLinkPatient = async () => {
+        const cleanName = name.trim();
         const cleanEmail = email.trim().toLowerCase();
-        if (!cleanEmail) {
-            Toast.show({ type: 'error', text1: 'Patient email required', text2: 'Enter patient CD4 account email.' });
+        const cleanPhone = phone.trim();
+        if (!cleanName || !cleanEmail || !cleanPhone) {
+            Toast.show({ type: 'error', text1: 'Patient details required', text2: 'Enter the patient name, email, and phone number.' });
+            return;
+        }
+        if (!selectedDoctorId) {
+            Toast.show({ type: 'error', text1: 'Doctor assignment required', text2: 'Select the doctor responsible for this patient.' });
             return;
         }
 
         try {
             await linkPatient.mutateAsync({
+                name: cleanName,
                 email: cleanEmail,
+                phone: cleanPhone,
                 doctorId: selectedDoctorId,
                 notes: notes.trim() || undefined,
             });
+            setName('');
             setEmail('');
+            setPhone('');
             setNotes('');
+            setSelectedDoctorId(undefined);
+            setDoctorSearch('');
+            setDebouncedDoctorSearch('');
             setIsModalVisible(false);
             Toast.show({ type: 'success', text1: 'Patient linked', text2: 'Patient is now visible in hospital panel.' });
         } catch (error: any) {
@@ -112,9 +141,17 @@ export default function HospitalPatientsScreen() {
                             </TouchableOpacity>
                         </View>
                         <Text style={[styles.modalSubtitle, { color: theme.textSecondary, marginBottom: 16 }]}>
-                            Link a patient using their CD4 email address.
+                            Link the patient and assign the responsible hospital doctor. This keeps history and reports connected correctly.
                         </Text>
 
+                        <TextInput
+                            value={name}
+                            onChangeText={setName}
+                            placeholder="Patient full name"
+                            placeholderTextColor={theme.textSecondary}
+                            autoCapitalize="words"
+                            style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                        />
                         <TextInput
                             value={email}
                             onChangeText={setEmail}
@@ -125,24 +162,35 @@ export default function HospitalPatientsScreen() {
                             style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
                         />
                         <TextInput
+                            value={phone}
+                            onChangeText={setPhone}
+                            placeholder="Patient phone number"
+                            placeholderTextColor={theme.textSecondary}
+                            keyboardType="phone-pad"
+                            style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                        />
+                        <TextInput
                             value={notes}
                             onChangeText={setNotes}
                             placeholder="Notes, UHID, ward, or visit context"
                             placeholderTextColor={theme.textSecondary}
                             style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
                         />
-                        <Text style={[styles.smallLabel, { color: theme.textSecondary, marginBottom: 4 }]}>Assign doctor</Text>
+                        <View style={styles.doctorLabelRow}>
+                            <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>Assign responsible doctor (required)</Text>
+                            <TextInput
+                                value={doctorSearch}
+                                onChangeText={setDoctorSearch}
+                                placeholder="Search doctor"
+                                placeholderTextColor={theme.textSecondary}
+                                autoCapitalize="none"
+                                style={[styles.doctorSearchInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
+                            />
+                        </View>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-                            <TouchableOpacity
-                                style={[
-                                    styles.chip,
-                                    { borderColor: theme.borderColor, backgroundColor: selectedDoctorId ? theme.background : theme.successLight },
-                                ]}
-                                onPress={() => setSelectedDoctorId(undefined)}
-                            >
-                                <Text style={[styles.chipText, { color: selectedDoctorId ? theme.textSecondary : theme.tint }]}>Unassigned</Text>
-                            </TouchableOpacity>
-                            {doctors.map((doctor) => {
+                            {doctorSearchQuery.isFetching ? (
+                                <ActivityIndicator color={theme.tint} style={{ marginHorizontal: 12 }} />
+                            ) : visibleDoctors.map((doctor) => {
                                 const selected = selectedDoctorId === doctor.doctorId;
                                 return (
                                     <TouchableOpacity
@@ -159,12 +207,12 @@ export default function HospitalPatientsScreen() {
                             })}
                         </ScrollView>
                         <TouchableOpacity
-                            style={[styles.primaryButton, { backgroundColor: theme.tint }, linkPatient.isPending && styles.disabledButton]}
+                            style={[styles.primaryButton, { backgroundColor: theme.tint }, (linkPatient.isPending || !selectedDoctorId) && styles.disabledButton]}
                             onPress={handleLinkPatient}
-                            disabled={linkPatient.isPending}
+                            disabled={linkPatient.isPending || !selectedDoctorId}
                         >
                             {linkPatient.isPending ? <ActivityIndicator color={theme.buttonText} /> : <Plus size={17} color={theme.buttonText} />}
-                            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Add patient</Text>
+                            <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Link patient</Text>
                         </TouchableOpacity>
                     </Pressable>
                 </Pressable>
@@ -179,7 +227,12 @@ export default function HospitalPatientsScreen() {
                 <ActivityIndicator color={theme.tint} style={{ marginTop: 24 }} />
             ) : patients.length ? (
                 patients.map((patient) => (
-                    <View key={patient.id} style={[styles.patientCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                    <TouchableOpacity
+                        key={patient.id}
+                        style={[styles.patientCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
+                        onPress={() => router.push({ pathname: '/hospital/patient-profile', params: { patientId: patient.patientId } })}
+                        activeOpacity={0.82}
+                    >
                         <View style={[styles.avatar, { backgroundColor: theme.successLight }]}>
                             <Users size={18} color={theme.tint} />
                         </View>
@@ -192,13 +245,13 @@ export default function HospitalPatientsScreen() {
                                 {patient.doctorName ? `Doctor: ${patient.doctorName}` : 'Doctor not assigned'}
                             </Text>
                         </View>
-                    </View>
+                    </TouchableOpacity>
                 ))
             ) : (
                 <View style={[styles.emptyCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                     <Text style={[styles.emptyTitle, { color: theme.text }]}>No patients linked yet</Text>
                     <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-                        Link patients after they have a CD4 patient account.
+                        Link an existing CD4 patient account to this hospital.
                     </Text>
                 </View>
             )}
@@ -217,6 +270,8 @@ const styles = StyleSheet.create({
     formTitle: { fontSize: 17, fontWeight: '900' },
     input: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, fontWeight: '600', marginBottom: 10 },
     smallLabel: { fontSize: 12, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 4 },
+    doctorLabelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+    doctorSearchInput: { width: 132, height: 32, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, fontSize: 12, fontWeight: '600' },
     chipRow: { gap: 8, paddingVertical: 10 },
     chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 9 },
     chipText: { fontSize: 12, fontWeight: '800' },

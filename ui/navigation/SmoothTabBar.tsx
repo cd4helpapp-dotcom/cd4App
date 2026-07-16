@@ -15,6 +15,12 @@ type RouteWithIndex = BottomTabBarProps['state']['routes'][number] & {
 
 type SmoothTabBarProps = BottomTabBarProps & {
   visibleRouteNames?: readonly string[];
+  themeColors?: {
+    background: string;
+    border: string;
+    active: string;
+    inactive: string;
+  };
 };
 
 const DEFAULT_HEIGHT = 64;
@@ -57,8 +63,8 @@ export default function SmoothTabBar(props: SmoothTabBarProps) {
   const visibleRoutes = React.useMemo(() => getVisibleRoutes(props), [props]);
   const tabBarStyle = getFlattenedTabBarStyle(props) as any;
   const focusedRoute = state.routes[state.index];
-  const activeTint = String(tabBarStyle?.tintColor || descriptors[focusedRoute?.key || '']?.options?.tabBarActiveTintColor || '#0F8F5F');
-  const inactiveTint = String(descriptors[focusedRoute?.key || '']?.options?.tabBarInactiveTintColor || '#94A3B8');
+  const activeTint = String(props.themeColors?.active || tabBarStyle?.tintColor || descriptors[focusedRoute?.key || '']?.options?.tabBarActiveTintColor || '#0F8F5F');
+  const inactiveTint = String(props.themeColors?.inactive || descriptors[focusedRoute?.key || '']?.options?.tabBarInactiveTintColor || '#94A3B8');
 
   if (!visibleRoutes.length || tabBarStyle?.display === 'none') {
     return null;
@@ -80,8 +86,8 @@ export default function SmoothTabBar(props: SmoothTabBarProps) {
           height: containerHeight,
           paddingBottom: Math.max(insets.bottom, Number(tabBarStyle?.paddingBottom) || 4),
           paddingTop: Number(tabBarStyle?.paddingTop) || 6,
-          backgroundColor: tabBarStyle?.backgroundColor || '#FFFFFF',
-          borderTopColor: tabBarStyle?.borderTopColor || 'rgba(15, 23, 42, 0.10)',
+          backgroundColor: props.themeColors?.background || tabBarStyle?.backgroundColor || '#FFFFFF',
+          borderTopColor: props.themeColors?.border || tabBarStyle?.borderTopColor || 'rgba(15, 23, 42, 0.10)',
         },
       ]}
     >

@@ -11,12 +11,15 @@ import {
 import { router } from 'expo-router';
 import { useAuthContext } from '../../context/AuthContext';
 import { useLogout, useProfile } from '../../hooks/useAuth';
-import { User, LogOut, Mail, Phone, Calendar, CheckCircle } from 'lucide-react-native';
+import { User, LogOut, Mail, Phone, Calendar, CheckCircle, FileText } from 'lucide-react-native';
+import { usePatientHospitalVoiceIntakes } from '../../hooks/useHospital';
+import { openAiReport } from '../../src/utils/reportDownload';
 
 const ProfileScreen: React.FC = () => {
   const { user, refreshAuth } = useAuthContext();
   const logoutMutation = useLogout();
   const { data: profileData, isLoading: profileLoading, refetch: refetchProfile } = useProfile();
+  const hospitalHistoryQuery = usePatientHospitalVoiceIntakes();
 
   const handleLogout = () => {
     Alert.alert(
@@ -106,6 +109,39 @@ const ProfileScreen: React.FC = () => {
             <Text style={styles.infoValue}>{formatDate(user.createdAt)}</Text>
           </View>
         </View>
+      </View>
+
+      <View style={styles.infoSection}>
+        <Text style={styles.sectionTitle}>Hospital clinical history</Text>
+        {hospitalHistoryQuery.isLoading ? (
+          <ActivityIndicator size="small" color="#4CAF50" />
+        ) : hospitalHistoryQuery.data?.length ? (
+          hospitalHistoryQuery.data.map((item) => (
+            <View key={item.id} style={styles.historyItem}>
+              <FileText size={19} color="#4CAF50" />
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>{item.title}</Text>
+                <Text style={styles.infoValue}>{item.aiSummary || 'Clinical history saved for doctor review.'}</Text>
+                {item.pdfUrl ? (
+                  <TouchableOpacity
+                    style={styles.historyReportButton}
+                    onPress={async () => {
+                      try {
+                        await openAiReport(item.pdfUrl!);
+                      } catch (error: any) {
+                        Alert.alert('Report unavailable', error?.message || 'Could not open the hospital report.');
+                      }
+                    }}
+                  >
+                    <Text style={styles.historyReportButtonText}>View hospital report</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.emptyHistoryText}>No hospital clinical history is available yet.</Text>
+        )}
       </View>
 
       <View style={styles.actionsSection}>
@@ -237,6 +273,33 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
     fontWeight: '500',
+  },
+  historyItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E5E7EB',
+  },
+  emptyHistoryText: {
+    color: '#666',
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 6,
+  },
+  historyReportButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#E8F6F3',
+  },
+  historyReportButtonText: {
+    color: '#2E7D32',
+    fontSize: 12,
+    fontWeight: '700',
   },
   actionsSection: {
     marginBottom: 20,

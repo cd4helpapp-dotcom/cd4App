@@ -23,6 +23,35 @@ const isLikelyNoiseTranscript = (value: string): boolean => {
   return false;
 };
 
+// WebRTC can briefly capture a small part of the assistant audio before the
+// local track is muted. Collapse only obvious repeated chunks so normal
+// clinical wording and the user's meaning remain unchanged.
+const collapseRepeatedTranscript = (value: string): string => {
+  const words = value.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+  if (words.length < 3) return words.join(' ');
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let size = Math.min(8, Math.floor(words.length / 2)); size >= 2; size -= 1) {
+      let found = false;
+      for (let start = 0; start + size * 2 <= words.length; start += 1) {
+        const left = words.slice(start, start + size).map((word) => word.toLowerCase());
+        const right = words.slice(start + size, start + size * 2).map((word) => word.toLowerCase());
+        if (left.join(' ') === right.join(' ')) {
+          words.splice(start + size, size);
+          changed = true;
+          found = true;
+          break;
+        }
+      }
+      if (found) break;
+    }
+  }
+
+  return words.join(' ');
+};
+
 export type RealtimeVoiceHandle = {
   close: () => Promise<void>;
   sendText: (text: string) => void;
@@ -185,13 +214,30 @@ export async function connectRealtimeVoice(
     const payload = parseEvent(typeof event.data === 'string' ? event.data : '');
     if (!payload) return;
     const type = String(payload.type || '');
+    if (type === 'response.cancelled' || type === 'response.canceled') {
+      // A cancelled partial response (especially an emergency override) must
+      // never become a visible second assistant bubble.
+      assistantAudioActive = false;
+      assistantTranscriptBuffer = '';
+      assistantTranscriptMode = null;
+      assistantResponseId = null;
+      callbacks.onAssistantInterrupted?.();
+      return;
+    }
+    if (type === 'response.created' || type === 'response.output_audio.started' || type === 'response.audio.started') {
+      assistantAudioActive = true;
+      localStream.getAudioTracks().forEach((track: any) => {
+        track.enabled = false;
+      });
+      callbacks.onStatus?.('speaking');
+    }
     // Only persist the completed user turn. Processing delta/committed events
     // here creates duplicate user messages and can trigger duplicate replies.
     if (
       (type === 'conversation.item.input_audio_transcription.completed' || type.endsWith('.input_audio_transcription.completed')) &&
       typeof payload.transcript === 'string'
     ) {
-      const transcript = payload.transcript.trim();
+      const transcript = collapseRepeatedTranscript(payload.transcript);
       if (isLikelyNoiseTranscript(transcript)) {
         // Server VAD can occasionally commit a fan/echo syllable. Cancel the
         // automatically-created turn instead of sending a meaningless reply.
@@ -219,7 +265,9 @@ export async function connectRealtimeVoice(
             role: 'user',
             content: [{
               type: 'input_text',
-              text: 'URGENT SAFETY OVERRIDE: The patient reported a possible emergency red flag. Respond immediately and calmly: advise them to call local emergency services now or go to the nearest emergency department, not drive themselves if faint, and not wait for this chat. Ask no routine history questions. Do not diagnose or give medication doses.',
+              text: context?.mode === 'hospital'
+                ? 'URGENT HOSPITAL SAFETY OVERRIDE: The patient reported a possible emergency red flag while already under hospital care. Respond immediately and calmly: tell the patient or staff to alert the assigned doctor or hospital clinical team now and request urgent bedside assessment. Do not redirect them to another hospital, local emergency services, or outside care. Do not diagnose or give medication doses. After the team acknowledges the alert, continue the minimum relevant history one question at a time.'
+                : 'URGENT SAFETY OVERRIDE: The patient reported a possible emergency red flag. Respond immediately and calmly: advise them to call local emergency services now or go to the nearest emergency department, not drive themselves if faint, and not wait for this chat. Ask no routine history questions. Do not diagnose or give medication doses.',
             }],
           },
         }));

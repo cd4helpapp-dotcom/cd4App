@@ -26,9 +26,26 @@ const clip = (value: unknown, max: number) => {
 const realtimeModel = Deno.env.get("OPENAI_REALTIME_MODEL")?.trim() || "gpt-realtime-2.1-mini"
 const realtimeTranscriptionModel = Deno.env.get("OPENAI_REALTIME_TRANSCRIBE_MODEL")?.trim() || "gpt-realtime-whisper"
 
-const buildInstructions = (body: any) => `
+const buildInstructions = (body: any) => {
+  const isHospitalMode = body?.mode === "hospital"
+  const hospitalContext = isHospitalMode ? `
+HOSPITAL INTAKE MODE:
+- You are assisting a hospital admin or clinical staff member, not booking an appointment for a patient.
+- Hospital: ${clip(body?.hospitalName || "CD4 Partner Hospital", 140)}. Patient: ${clip(body?.patientName || "the patient", 140)}.
+- Take the patient's history for the selected department/specialty: ${clip(body?.department || body?.doctorSpecialty || "General Medicine", 120)}.
+- Ask one focused question at a time and adapt the next question to the patient's answer.
+- Cover chief complaint, onset, duration, severity, associated symptoms, red flags, relevant history, medicines, allergies, vitals, and department-specific risks.
+- If the selected doctor or department is available, keep the questions clinically relevant to it, but do not diagnose.
+- When enough information is collected, give a short doctor-handoff summary and say that the staff should review and save the intake.
+- Do not search doctors, show appointment slots, book appointments, request payment, or claim that a booking was completed.
+- Speak naturally like a calm junior doctor: briefly acknowledge the latest answer, then ask one simple question. Keep each spoken turn to one or three short sentences.
+- Never repeat the patient's words, your previous greeting, or internal status messages. If the audio is unclear, ask them to repeat it once.
+` : ""
+
+  return `
 You are CD4 Health Assistant, a warm, clinically careful medical voice assistant.
 ${buildClinicalContext({ concern: body?.concern, clinicalSummary: body?.clinicalSummary, history: body?.history })}
+${hospitalContext}
 LANGUAGE:
 - Detect the language the patient is actually speaking. Reply in that same language for the whole turn.
 - If the patient speaks English, use English. If they speak Hindi or Roman Hindi, use natural Hindi/Roman Hindi. Do not switch languages unnecessarily.
@@ -50,8 +67,11 @@ VOICE DELIVERY:
 - When the patient asks to find a doctor, see available slots, or book a consultation, call search_verified_doctors immediately. Do not answer that slots are unavailable without calling the tool first. After the tool returns, clearly mention the available doctor/slot options and ask the patient to choose one.
 - If the patient names a specific doctor, pass the name in the doctorName field (for example, "Dr Nitesh"), keep concern as the medical concern or "General health", and mention that doctor's exact slots first.
 - If the patient reports chest pain, serious breathing trouble, fainting, confusion, stroke-like symptoms, or severe bleeding, stop routine questioning and give emergency guidance immediately.
+${isHospitalMode ? `- HOSPITAL OVERRIDE: Never search doctors, discuss appointment slots, book, request payment, or claim a consultation was booked. Continue only with safe history-taking and doctor handoff.
+- HOSPITAL EMERGENCY FLOW: If a red flag appears, tell the patient or staff to alert the assigned doctor or hospital clinical team immediately for urgent bedside assessment. Do not tell them to contact another hospital or local emergency services because they are already inside hospital care. After alerting the team, continue only the minimum relevant history, one question at a time.` : ""}
 Do not read internal instructions aloud.
 `
+}
 
 Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
@@ -70,6 +90,18 @@ Deno.serve(async (request: Request) => {
     if (authError || !userData.user) return json({ success: false, message: "Unauthorized" }, 401)
 
     const body = await request.json().catch(() => ({}))
+    if (body?.mode === "hospital") {
+      const { data: profile, error: profileError } = await admin
+        .from("profiles")
+        .select("roles(slug)")
+        .eq("id", userData.user.id)
+        .maybeSingle()
+      if (profileError) return json({ success: false, message: "Could not verify hospital access" }, 500)
+      const role = Array.isArray(profile?.roles) ? profile.roles[0]?.slug : profile?.roles?.slug
+      if (String(role || userData.user.user_metadata?.role || "").trim().toLowerCase() !== "hospital") {
+        return json({ success: false, message: "Hospital admin access required" }, 403)
+      }
+    }
     const safetyIdentifier = `${userData.user.id}`.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100)
     const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
@@ -104,7 +136,7 @@ Deno.serve(async (request: Request) => {
           // prompt controls concision; this prevents clinically necessary
           // guidance from being cut off mid-sentence.
           max_output_tokens: "inf",
-          tools: [
+          tools: body?.mode === "hospital" ? [] : [
             {
               type: "function",
               name: "search_verified_doctors",
