@@ -119,7 +119,10 @@ const normalizeHistory = (value: unknown): TriageHistoryItem[] => {
       content: clipText(item?.content || "", 320),
     }))
     .filter((item) => item.content.length > 0)
-    .slice(-24)
+    // Keep the complete consultation context. The PDF is generated after the
+    // patient books, so dropping older turns here can remove an AI question
+    // or the answer that belongs to it.
+    .slice(-80)
 }
 
 const isUuid = (value: string): boolean =>
@@ -443,6 +446,31 @@ const toProfessionalEnglishAnswer = (value: string): string => {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
+const toProfessionalEnglishQuestion = (value: string): string => {
+  let text = cleanQuestionCandidate(normalizeTranscriptNoise(value), 220)
+  const replacements: Array<[RegExp, string]> = [
+    [/\bkab se\b/gi, "Since when"],
+    [/\bkitne din se\b/gi, "For how many days"],
+    [/\bkitna severe\b/gi, "How severe"],
+    [/\bkitni severity\b/gi, "How severe"],
+    [/\bkitna dard\b/gi, "How much pain"],
+    [/\baur koi symptom\b/gi, "Any other symptom"],
+    [/\bsaath me\b/gi, "along with"],
+    [/\bkya\b/gi, "Is there"],
+    [/\bbukhar\b/gi, "fever"],
+    [/\bkhansi\b/gi, "cough"],
+    [/\bsaans\b/gi, "breathing"],
+    [/\bdard\b/gi, "pain"],
+    [/\bdawai|dava\b/gi, "medicine"],
+    [/\ballergy hai\b/gi, "any allergy"],
+  ]
+  for (const [pattern, replacement] of replacements) text = text.replace(pattern, replacement)
+  text = text.replace(/\s+/g, " ").trim()
+  if (!text) return "AI clinical question not clearly captured"
+  if (!/[?]$/.test(text)) text = `${text}?`
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 const QUESTION_PROMPT_PATTERNS = [
   /\?/,
   /\b(please tell|tell me|which|what|when|how|can you share|can you tell|would you|do you|kya|kaun|kaunsa|kab|kitna|kitni|batao|bataye|batayein)\b/i,
@@ -562,7 +590,7 @@ const buildVoiceChatQaSnapshotLines = (historyInput: TriageHistoryItem[], concer
     const item = history[index]
     if (item.role !== "assistant" || !isAssistantQuestionLike(item.content || "")) continue
 
-    const question = extractQuestionText(item.content || "")
+    const question = toProfessionalEnglishQuestion(extractQuestionText(item.content || ""))
     if (!question) continue
     const answer = findNearestUserAnswer(history, index)
     if (!isHealthQaPair(question, answer)) continue
@@ -604,21 +632,18 @@ const buildGeminiSummary = async (geminiApiKey: string, history: TriageHistoryIt
   const prompt = `You are a clinical documentation assistant.
 Create a concise doctor-facing triage summary from the chat history.
 
-Output format (plain text only, in professional English only):
-1) Chief concern:
-2) Onset/duration:
-3) Severity and progression:
-4) Associated symptoms:
-5) Pattern, triggers, lifestyle, or aggravating/relieving factors:
-6) Functional impact on routine, work, sleep, eating, walking, or activity:
-7) Relevant medical context (medicines/history/allergies/family history if mentioned):
-8) Why doctor review may be needed:
+Output format (plain text only, professional English only):
+- Return concise bullet points, one clinical point per bullet.
+- Include the AI questions that were actually asked and the patient's captured answer where available.
+- Keep the AI-question/answer information inside the summary; do not invent questions or answers.
+- Cover chief concern, onset/duration, severity, associated symptoms, triggers, functional impact, medicines/history/allergies, and why doctor review may be needed when present.
 
 Rules:
 - If data is missing, write "Not clearly stated".
 - Translate Hindi/Hinglish content into clear professional English.
 - Keep objective, no definitive diagnosis.
-- Maximum 140 words.
+- Never omit a clinically relevant captured detail just to make the summary shorter.
+- Maximum 220 words; if information is missing, write "Not clearly stated".
 
 Chat History:
 ${historyText}`
@@ -643,11 +668,11 @@ ${historyText}`
 
 const buildHeuristicSummary = (snapshot: TriageSnapshot): string => {
   const lines = [
-    `Chief concern: ${snapshot.chiefConcern}.`,
-    `Onset/duration: ${snapshot.duration}.`,
-    `Severity: ${snapshot.severity}.`,
-    `Associated symptoms: ${snapshot.associatedSymptoms.length ? snapshot.associatedSymptoms.join(", ") : "Not clearly stated"}.`,
-    `Medicine/allergy context: ${snapshot.medicationContext}.`,
+    `Chief concern: ${toProfessionalEnglishAnswer(snapshot.chiefConcern)}`,
+    `Onset/duration: ${toProfessionalEnglishAnswer(snapshot.duration)}`,
+    `Severity: ${toProfessionalEnglishAnswer(snapshot.severity)}`,
+    `Associated symptoms: ${toProfessionalEnglishAnswer(snapshot.associatedSymptoms.length ? snapshot.associatedSymptoms.join(", ") : "Not clearly stated")}`,
+    `Medicine/allergy context: ${toProfessionalEnglishAnswer(snapshot.medicationContext)}`,
     `Risk note: ${snapshot.riskNote}.`,
   ]
 
@@ -894,8 +919,70 @@ const buildReportPdfBytes = async (args: {
     88,
   )
 
-  page.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green })
-  drawText("Your health. Our priority.", 244, 8, 9, true, white)
+  // Keep the first page clean, while placing the complete AI question/answer
+  // record on continuation page(s). This prevents the PDF from silently
+  // dropping questions when the voice conversation is long.
+  let qaPage = pdfDoc.addPage([595, 842])
+  let qaY = 790
+  const drawQaHeader = (targetPage: any) => {
+    targetPage.drawText("CD4 AI", { x: 34, y: 807, size: 18, font: boldFont, color: green })
+    targetPage.drawText("AI QUESTION SUMMARY (ENGLISH)", {
+      x: 34,
+      y: 778,
+      size: 17,
+      font: boldFont,
+      color: dark,
+    })
+    targetPage.drawText("Questions asked by the AI and the patient's captured answers.", {
+      x: 34,
+      y: 758,
+      size: 9.5,
+      font,
+      color: muted,
+    })
+    targetPage.drawLine({ start: { x: 34, y: 744 }, end: { x: 561, y: 744 }, thickness: 1, color: border })
+  }
+  drawQaHeader(qaPage)
+  qaY = 720
+
+  const qaRows = args.qaSnapshotLines.length ? args.qaSnapshotLines : ["No explicit symptom triage Q&A captured from transcript"]
+  qaRows.forEach((row) => {
+    const isQuestion = /^Q:/i.test(row)
+    const label = isQuestion ? "QUESTION" : "ANSWER"
+    const body = row.replace(/^(Q|A):\s*/i, "").trim() || "Not clearly captured"
+    const textSize = isQuestion ? 9.2 : 9
+    const wrapped = wrap(`${label}: ${body}`, 505, textSize, isQuestion)
+    const blockHeight = wrapped.length * 13 + 7
+    if (qaY - blockHeight < 48) {
+      qaPage = pdfDoc.addPage([595, 842])
+      drawQaHeader(qaPage)
+      qaY = 720
+    }
+    wrapped.forEach((line, index) => {
+      qaPage.drawText(line, {
+        x: 44,
+        y: qaY,
+        size: textSize,
+        font: isQuestion ? boldFont : font,
+        color: isQuestion ? green : dark,
+      })
+      qaY -= 13
+    })
+    qaY -= 7
+  })
+
+  // Add the footer after all continuation pages have been created.
+  const allPages = pdfDoc.getPages()
+  allPages.forEach((targetPage: any, index: number) => {
+    targetPage.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green })
+    targetPage.drawText(`CD4 AI | Doctor review only | Page ${index + 1} of ${allPages.length}`, {
+      x: 34,
+      y: 8,
+      size: 8.5,
+      font,
+      color: white,
+    })
+  })
 
   return await pdfDoc.save()
 }
@@ -964,7 +1051,7 @@ Deno.serve(async (req) => {
         : []
     const compactHistory = choosePreferredHistory(payloadHistory, conversationHistory)
     const triageSnapshot = extractTriageSnapshot({ concern: safeConcern, history: compactHistory })
-    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 6)
+    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 20)
     const aiChatTimelineLines = buildAiChatTimelineLines(compactHistory, 4)
 
     let summary = ""

@@ -1251,6 +1251,26 @@ export default function AiGuidanceScreen() {
   const voiceLiveSpeechQueueRef = useRef<string[]>([]);
   const voiceLiveSpeechBusyRef = useRef(false);
   const voiceLiveSpokenCharsRef = useRef(0);
+  const voiceSpeakerRouteReadyRef = useRef(false);
+
+  const ensureVoiceSpeakerOutput = async () => {
+    if (voiceSpeakerRouteReadyRef.current) return;
+    try {
+      // Android may route Expo AV playback to the call earpiece when the
+      // app has recently used microphone/voice APIs. Explicitly request the
+      // media speaker route for AI voice responses.
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+      });
+      voiceSpeakerRouteReadyRef.current = true;
+    } catch (error) {
+      console.warn('[AI Voice] Could not set speaker audio route:', error);
+    }
+  };
   const voiceOpenAiAudioOnlyRef = useRef(true);
   const activeAgentProgressHint = AGENT_PROGRESS_HINTS[agentProgressIndex] || AGENT_PROGRESS_HINTS[0];
   const setVoiceStage = React.useCallback((stage: VoiceLiveStage, customHint?: string) => {
@@ -3842,6 +3862,8 @@ export default function AiGuidanceScreen() {
       return;
     }
 
+    await ensureVoiceSpeakerOutput();
+
     // 3. Play Backend Audio if provided
     const playedBackendAudio = audioBase64
       ? await playVoiceAudioBase64(audioBase64, audioMimeType)
@@ -3890,6 +3912,7 @@ export default function AiGuidanceScreen() {
 
     try {
       setVoiceStage('speaking');
+      await ensureVoiceSpeakerOutput();
     const sourceUri = `data:${chunk.mimeType || 'audio/mpeg'};base64,${chunk.audio}`;
       
       const created = await Audio.Sound.createAsync(
@@ -3975,6 +3998,7 @@ export default function AiGuidanceScreen() {
     if (!trimmed) return false;
     try {
       await stopActiveVoicePlayback({ resetStage: false });
+      await ensureVoiceSpeakerOutput();
       const mimeType = (audioMimeType || 'audio/wav').trim() || 'audio/wav';
       const sourceUri = `data:${mimeType};base64,${trimmed}`;
       const created = await Audio.Sound.createAsync(

@@ -91,6 +91,19 @@ const listItems = (value: unknown): string[] =>
     ? value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 8)
     : [];
 
+const formatQuestionAnswers = (value: any): string => {
+  if (!Array.isArray(value?.question_answers)) return "";
+  return value.question_answers
+    .map((item: any) => {
+      const question = asText(item?.question, 260);
+      const answer = asText(item?.answer, 360) || "Answer not clearly captured";
+      return question ? `Question: ${question}\nAnswer: ${answer}` : "";
+    })
+    .filter(Boolean)
+    .slice(0, 12)
+    .join("\n\n");
+};
+
 const buildFallbackSummary = (transcript: string): string => {
   const clean = clipText(transcript, 900);
   return [
@@ -119,7 +132,6 @@ const formatStructuredSummary = (value: any, fallback: string): string => {
   if (department) lines.push(`Suggested department: ${department}`);
   if (doctorNote) lines.push(`Doctor handoff: ${doctorNote}`);
   if (questions.length) lines.push(`Questions for patient: ${questions.join("; ")}`);
-
   return lines.length ? lines.join("\n\n") : fallback;
 };
 
@@ -158,10 +170,14 @@ const wrapPdfText = (text: string, font: any, size: number, maxWidth: number): s
 
 const buildHospitalIntakePdfBytes = async (args: {
   hospitalName: string;
+  patientName?: string;
+  doctorName?: string;
+  doctorDepartment?: string;
   title: string;
   status: string;
   language: string;
   summary: string;
+  questionAnswers?: string;
   transcript: string;
   createdAt: string;
 }) => {
@@ -226,7 +242,7 @@ const buildHospitalIntakePdfBytes = async (args: {
     font: bold,
     color: rgb(0.0, 0.48, 0.42),
   });
-  page.drawText("Hospital Voice Intake Report", {
+  page.drawText("AI SNAPSHOT | Hospital Intake", {
     x: margin,
     y: y - 26,
     size: 22,
@@ -267,9 +283,34 @@ const buildHospitalIntakePdfBytes = async (args: {
   });
   y -= 96;
 
-  drawSection("Intake Title", args.title);
-  drawSection("AI Doctor Summary", args.summary);
-  drawSection("Captured Transcript", clipText(args.transcript, 7000));
+  const summaryBullets = (args.summary || "Not clearly captured")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => (line.startsWith("-") ? line : `- ${line}`))
+    .join("\n");
+
+  drawSection(
+    "Patient / Doctor Details",
+    `Patient: ${args.patientName || "Not linked"}\nDoctor: ${args.doctorName || "Not assigned"}${args.doctorDepartment ? ` (${args.doctorDepartment})` : ""}\nIntake: ${args.title}\nLanguage: ${args.language || "Hindi / English"}`,
+  );
+  drawSection("AI Summary (English Bullet Points)", summaryBullets);
+  drawSection(
+    "AI Questions and Patient Answers",
+    args.questionAnswers || "No relevant AI question-and-answer data was captured.",
+  );
+  drawSection(
+    "Risk / Context",
+    "Doctor review is required before diagnosis or treatment. Verify symptoms, duration, severity, vitals, medicines, allergies, and red flags directly with the patient.",
+  );
+  drawSection(
+    "Doctor Quick Review",
+    "Confirm the chief concern and timeline. Clarify any unanswered AI question. Screen red flags and verify medicines/allergies before clinical decisions.",
+  );
+  drawSection(
+    "Source Note",
+    "Only clinically relevant information is shown in this doctor PDF. The original voice transcript remains available in the hospital record if verification is required.",
+  );
   drawSection(
     "Clinical Note",
     "This intake is an AI-assisted handoff for doctor review. It is not a diagnosis or prescription. The doctor should verify symptoms, vitals, medicines, allergies, and red flags directly with the patient."
@@ -302,9 +343,13 @@ Create a concise doctor-ready handoff from a hospital staff transcript.
 
 Important rules:
 - Understand Hindi, Hinglish, and English.
+- Write the doctor summary in professional English, even when the transcript is Hindi or Hinglish.
+- Format the summary as concise bullet points and include every captured clinical detail.
 - Do not diagnose.
 - Do not prescribe medicines.
 - Do not invent vitals, allergies, or test results.
+- Include only clinically relevant content; exclude greetings, filler, confirmations, booking talk, and repeated AI speech.
+- Capture each clinically relevant AI question with the patient's answer in the question_answers field.
 - If emergency symptoms are mentioned, mark them as red flags to verify.
 - Keep the output useful for a doctor reviewing the patient later.
 - Return ONLY valid JSON.
@@ -324,7 +369,8 @@ JSON format:
   "red_flags": [],
   "suggested_department": "",
   "doctor_note": "",
-  "questions_for_patient": []
+  "questions_for_patient": [],
+  "question_answers": [{ "question": "", "answer": "" }]
 }
 
 Transcript:
@@ -655,10 +701,14 @@ Interaction Rules:
     const pdfPath = `${user.id}/hospital-intakes/${intakeId}.pdf`;
     const pdfBytes = await buildHospitalIntakePdfBytes({
       hospitalName,
+      patientName: patientDetails?.name,
+      doctorName: doctorDetails?.name,
+      doctorDepartment: doctorDetails?.department || doctorDetails?.specialization,
       title,
       status: "ready_for_doctor",
       language,
       summary,
+      questionAnswers: formatQuestionAnswers(structured),
       transcript,
       createdAt,
     });

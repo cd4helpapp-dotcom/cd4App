@@ -1,6 +1,7 @@
 import React from 'react';
 import {
     ActivityIndicator,
+    KeyboardAvoidingView,
     Modal,
     Pressable,
     RefreshControl,
@@ -9,6 +10,7 @@ import {
     Text,
     TextInput,
     TouchableOpacity,
+    Platform,
     useColorScheme,
     View,
 } from 'react-native';
@@ -90,18 +92,23 @@ export default function HospitalDoctorsScreen() {
                 animationType="slide"
                 onRequestClose={() => setIsModalVisible(false)}
             >
-                <Pressable style={styles.modalOverlay} onPress={() => setIsModalVisible(false)}>
-                    <Pressable
-                        style={[
-                            styles.modalCard,
-                            {
-                                backgroundColor: theme.cardBackground,
-                                borderColor: theme.borderColor,
-                                paddingBottom: Math.max(insets.bottom, 20),
-                            },
-                        ]}
-                        onPress={() => {}}
-                    >
+                <KeyboardAvoidingView
+                    style={styles.keyboardLayer}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+                >
+                    <Pressable style={styles.modalOverlay} onPress={() => setIsModalVisible(false)}>
+                        <Pressable
+                            style={[
+                                styles.modalCard,
+                                {
+                                    backgroundColor: theme.cardBackground,
+                                    borderColor: theme.borderColor,
+                                    paddingBottom: Math.max(insets.bottom, 20),
+                                },
+                            ]}
+                            onPress={() => {}}
+                        >
                         <View style={[styles.modalGrabber, { backgroundColor: theme.borderColor }]} />
                         <View style={styles.modalHeader}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -139,8 +146,9 @@ export default function HospitalDoctorsScreen() {
                             {linkDoctor.isPending ? <ActivityIndicator color={theme.buttonText} /> : <Plus size={17} color={theme.buttonText} />}
                             <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Link doctor</Text>
                         </TouchableOpacity>
+                        </Pressable>
                     </Pressable>
-                </Pressable>
+                </KeyboardAvoidingView>
             </Modal>
 
             <View style={styles.sectionHeader}>
@@ -211,7 +219,8 @@ const styles = StyleSheet.create({
     addButton: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12 },
     addButtonText: { fontSize: 13, fontWeight: '900' },
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-    modalCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 20, paddingTop: 12, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.15, shadowRadius: 5 },
+    keyboardLayer: { flex: 1 },
+    modalCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 20, paddingTop: 12, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.15, shadowRadius: 5, maxHeight: '92%' },
     modalGrabber: { width: 42, height: 5, borderRadius: 2.5, alignSelf: 'center', marginBottom: 14 },
     modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
     modalTitle: { fontSize: 17, fontWeight: '900' },

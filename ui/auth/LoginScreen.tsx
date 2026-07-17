@@ -626,11 +626,18 @@ const LoginScreen: React.FC = () => {
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           bounces={false}
         >
-          <View style={[styles.heroSection, isCompact && styles.heroSectionCompact]}>
-            <View style={[styles.logoWrapper, isCompact && styles.logoWrapperCompact, { shadowColor: theme.tint }]}>
+          <View style={[styles.heroSection, isCompact ? styles.heroSectionCompact : null]}>
+            <View style={[
+              styles.logoWrapper, 
+              isCompact ? styles.logoWrapperCompact : null, 
+              { shadowColor: theme.tint }
+            ]}>
               <Image
                 source={require('../../assets/images/cd4_logo.png')}
-                style={[styles.logo, isCompact && styles.logoCompact]}
+                style={[
+                  styles.logo, 
+                  isCompact ? styles.logoCompact : null
+                ]}
                 resizeMode="contain"
               />
             </View>
@@ -938,18 +945,22 @@ const styles = StyleSheet.create({
   },
   heroSection: {
     alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 8,
+    marginTop: 2,
+    marginBottom: 4,
   },
   heroSectionCompact: {
-    marginTop: 4,
-    marginBottom: 12,
+    marginTop: 2,
+    marginBottom: 4,
   },
   logoWrapper: {
     width: 72,
     height: 72,
+    minWidth: 72,
+    maxWidth: 72,
+    minHeight: 72,
+    maxHeight: 72,
     borderRadius: 36,
-    marginBottom: 10,
+    marginBottom: 6,
     backgroundColor: '#FFFFFF',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
@@ -957,34 +968,52 @@ const styles = StyleSheet.create({
     elevation: 6,
     alignItems: 'center',
     justifyContent: 'center',
+    alignSelf: 'center',
+    aspectRatio: 1,
     overflow: 'hidden',
   },
   logoWrapperCompact: {
     width: 64,
     height: 64,
+    minWidth: 64,
+    maxWidth: 64,
+    minHeight: 64,
+    maxHeight: 64,
     borderRadius: 32,
-    marginBottom: 8,
+    marginBottom: 4,
+    alignSelf: 'center',
+    aspectRatio: 1,
   },
   logo: {
-    width: '65%',
-    height: '65%',
+    width: 46,
+    height: 46,
+    minWidth: 46,
+    maxWidth: 46,
+    minHeight: 46,
+    maxHeight: 46,
+    aspectRatio: 1,
   },
   logoCompact: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
+    minWidth: 40,
+    maxWidth: 40,
+    minHeight: 40,
+    maxHeight: 40,
+    aspectRatio: 1,
   },
   title: {
     fontSize: 28,
     fontWeight: '700',
     lineHeight: 34,
     textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
     maxWidth: 360,
   },
   titleCompact: {
     fontSize: 24,
     lineHeight: 30,
-    marginBottom: 8,
+    marginBottom: 2,
     maxWidth: 320,
   },
   subtitle: {
@@ -1074,12 +1103,12 @@ const styles = StyleSheet.create({
   },
   socialSection: {
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 10,
     width: '100%',
   },
   socialTitle: {
     fontSize: 13,
-    marginBottom: 8,
+    marginBottom: 6,
     fontWeight: '500',
   },
   socialButtonsContainer: {
@@ -1105,13 +1134,13 @@ const styles = StyleSheet.create({
     height: 28,
   },
   footerBlock: {
-    marginTop: 'auto',
-    paddingTop: 16,
-    gap: 8,
+    marginTop: 20,
+    paddingTop: 10,
+    gap: 6,
   },
   footerBlockCompact: {
-    paddingTop: 12,
-    gap: 6,
+    paddingTop: 6,
+    gap: 4,
   },
   signupLinkButton: {
     alignItems: 'center',

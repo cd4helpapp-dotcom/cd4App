@@ -1,8 +1,10 @@
 import React from 'react';
 import {
     ActivityIndicator,
+    KeyboardAvoidingView,
     Linking,
     Modal,
+    Platform,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -110,16 +112,16 @@ export default function HospitalDashboard() {
         const docSpec = activeDoctor ? activeDoctor.specialization || activeDoctor.department : '';
         const patName = activePatient ? activePatient.patientName : '';
 
-        let msg = 'Hello!';
+        let msg = 'Namaste!';
         if (patName) {
-            msg += ` I will help record the history for patient ${patName}.`;
+            msg += ` Main patient ${patName} ki medical history record karne mein madad karunga.`;
         } else {
-            msg += ' I will help record the patient history.';
+            msg += ' Main patient ki medical history record karne mein madad karunga.';
         }
         if (docName) {
-            msg += ` This will prepare details for ${docName}${docSpec ? ` (${docSpec})` : ''}.`;
+            msg += ` Isse ${docName}${docSpec ? ` (${docSpec})` : ''} ke liye details prepare hongi.`;
         }
-        msg += ' What are the chief complaints or symptoms? (मुख्य लक्षण क्या हैं?)';
+        msg += ' Patient ko sabse zyada kya takleef ya symptoms hain?';
         return msg;
     }, [activeDoctor, activePatient]);
 
@@ -342,6 +344,7 @@ export default function HospitalDashboard() {
                 doctorSpecialty: activeDoctor?.specialization || activeDoctor?.department || 'General Medicine',
                 hospitalName: profileQuery.data?.displayName || profileQuery.data?.registeredName || 'CD4 Partner Hospital',
                 patientName: activePatient?.patientName || 'the patient',
+                initialLanguage: 'hi',
                 history: [],
             }, {
                 onStatus: (status) => {
@@ -396,6 +399,15 @@ export default function HospitalDashboard() {
             hospitalRealtimeStartingRef.current = false;
         }
     }, [activeDoctor, activePatient, profileQuery.data]);
+
+    // Warm the voice connection as soon as the modal opens. The first Hindi
+    // greeting can then start immediately after the WebRTC channel is ready,
+    // instead of waiting for the user to press Start and paying the handshake
+    // delay at that point.
+    React.useEffect(() => {
+        if (!isVoiceModalVisible) return;
+        void startHospitalRealtimeTriage();
+    }, [isVoiceModalVisible, startHospitalRealtimeTriage]);
 
     const handleStepTransition = (nextStep: number) => {
         if (isListening) {
@@ -721,18 +733,23 @@ export default function HospitalDashboard() {
                 animationType="slide"
                 onRequestClose={() => setIsVoiceModalVisible(false)}
             >
-                <Pressable style={styles.modalOverlay} onPress={() => setIsVoiceModalVisible(false)}>
-                    <Pressable
-                        style={[
-                            styles.modalCard,
-                            {
-                                backgroundColor: theme.cardBackground,
-                                borderColor: theme.borderColor,
-                                paddingBottom: Math.max(insets.bottom, 20),
-                            },
-                        ]}
-                        onPress={() => {}}
-                    >
+                <KeyboardAvoidingView
+                    style={styles.keyboardLayer}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+                >
+                    <Pressable style={styles.modalOverlay} onPress={() => setIsVoiceModalVisible(false)}>
+                        <Pressable
+                            style={[
+                                styles.modalCard,
+                                {
+                                    backgroundColor: theme.cardBackground,
+                                    borderColor: theme.borderColor,
+                                    paddingBottom: Math.max(insets.bottom, 20),
+                                },
+                            ]}
+                            onPress={() => {}}
+                        >
                         <View style={[styles.modalGrabber, { backgroundColor: theme.borderColor }]} />
                         <View style={styles.modalHeader}>
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -747,7 +764,12 @@ export default function HospitalDashboard() {
                             Select the patient and doctor. CD4 will take the clinical history by voice.
                         </Text>
 
-                        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+                        <ScrollView
+                            keyboardShouldPersistTaps="handled"
+                            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                            showsVerticalScrollIndicator={false}
+                            contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 28) }}
+                        >
                             <View style={styles.selectorLabelRow}>
                                 <Text style={[styles.smallLabel, { color: theme.textSecondary }]}>1. Patient</Text>
                                 <TextInput
@@ -1077,8 +1099,9 @@ export default function HospitalDashboard() {
                                 </>
                             )}
                         </ScrollView>
+                        </Pressable>
                     </Pressable>
-                </Pressable>
+                </KeyboardAvoidingView>
             </Modal>
         </ScrollView>
     );
@@ -1195,6 +1218,7 @@ const styles = StyleSheet.create({
 
     // Modal Specific Styles
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    keyboardLayer: { flex: 1 },
     modalCard: { borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderBottomWidth: 0, paddingHorizontal: 20, paddingTop: 12, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: -2 }, shadowOpacity: 0.15, shadowRadius: 5, maxHeight: '90%' },
     modalGrabber: { width: 42, height: 5, borderRadius: 2.5, alignSelf: 'center', marginBottom: 14 },
     modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
