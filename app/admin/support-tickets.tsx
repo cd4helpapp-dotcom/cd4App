@@ -40,10 +40,12 @@ export default function AdminSupportTicketsScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const [tickets, setTickets] = React.useState<SupportTicket[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
   const [updatingId, setUpdatingId] = React.useState<string | null>(null);
 
   const loadTickets = React.useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const { data, error } = await supabase
         .from('support_tickets')
@@ -52,8 +54,9 @@ export default function AdminSupportTicketsScreen() {
         .limit(150);
       if (error) throw error;
       setTickets(Array.isArray(data) ? (data as SupportTicket[]) : []);
-    } catch {
+    } catch (error: any) {
       setTickets([]);
+      setLoadError(error?.message || 'Could not load support tickets.');
     } finally {
       setIsLoading(false);
     }
@@ -99,6 +102,13 @@ export default function AdminSupportTicketsScreen() {
         {isLoading ? (
           <View style={styles.loader}>
             <ActivityIndicator color={theme.tint} />
+          </View>
+        ) : loadError ? (
+          <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+            <Text style={[styles.emptyText, { color: theme.error }]}>{loadError}</Text>
+            <TouchableOpacity style={[styles.actionButton, { backgroundColor: theme.buttonPrimary }]} onPress={() => void loadTickets()}>
+              <Text style={[styles.actionButtonText, { color: theme.buttonText }]}>Retry</Text>
+            </TouchableOpacity>
           </View>
         ) : tickets.length === 0 ? (
           <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>

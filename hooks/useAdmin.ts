@@ -19,7 +19,9 @@ type AdminRevenueSnapshot = {
     platformCommission: number;
     subscriptionRevenue: number;
     totalRevenue: number;
-    doctorRevenue: Array<{ doctorId: string; gross: number; payout: number; commission: number }>;
+    doctorRevenue: Array<{ doctorId: string; doctorName: string; gross: number; payout: number; commission: number; pendingPayout: number; settledPayout: number; lastPaymentAt: string | null }>;
+    payoutHistory: Array<{ id: string; doctorId: string; amount: number; status: string; reference: string | null; paidAt: string | null; createdAt: string }>;
+    monthlyTrend: Array<{ label: string; platform: number; doctorPayout: number; subscriptions: number }>;
 };
 
 const parseOptionalNumber = (value: unknown): number | undefined => {
@@ -149,26 +151,36 @@ export const useAdminRevenue = () => {
     return useQuery({
         queryKey: ADMIN_QUERY_KEYS.revenue,
         queryFn: async (): Promise<AdminRevenueSnapshot> => {
-            const [{ data: appointmentPayments, error: appointmentError }, { data: subscriptionPayments, error: subError }] = await Promise.all([
+            const [{ data: appointmentPayments, error: appointmentError }, { data: subscriptionPayments, error: subError }, { data: payouts, error: payoutError }, { data: doctors }] = await Promise.all([
                 supabase
                     .from('appointment_payments')
-                    .select('doctor_id, gross_amount, doctor_share, platform_commission, status')
+                    .select('doctor_id, gross_amount, doctor_share, platform_commission, status, payout_status, paid_at, created_at')
                     .eq('status', 'paid')
                     .limit(20000),
                 supabase
                     .from('subscription_payments')
-                    .select('amount, status')
+                    .select('amount, status, paid_at, created_at, billing_cycle, payment_id, user_id')
                     .eq('status', 'paid')
                     .limit(20000),
+                supabase.from('doctor_payouts').select('id, doctor_id, amount, status, payment_reference, paid_at, created_at').order('created_at', { ascending: false }).limit(500),
+                supabase.from('doctors').select('id, profiles(first_name, last_name)').limit(500),
             ]);
 
             if (appointmentError) throw appointmentError;
             if (subError) throw subError;
+            if (payoutError) throw payoutError;
 
             let appointmentGross = 0;
             let doctorPayout = 0;
             let platformCommission = 0;
-            const doctorMap = new Map<string, { gross: number; payout: number; commission: number }>();
+            const doctorMap = new Map<string, { gross: number; payout: number; commission: number; pendingPayout: number; settledPayout: number; lastPaymentAt: string | null }>();
+            const trendMap = new Map<string, { label: string; platform: number; doctorPayout: number; subscriptions: number }>();
+            const now = new Date();
+            for (let index = 5; index >= 0; index -= 1) {
+                const date = new Date(now.getFullYear(), now.getMonth() - index, 1);
+                const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                trendMap.set(key, { label: date.toLocaleDateString('en-IN', { month: 'short' }), platform: 0, doctorPayout: 0, subscriptions: 0 });
+            }
 
             (appointmentPayments || []).forEach((row: any) => {
                 const doctorId = String(row?.doctor_id || '');
@@ -178,15 +190,30 @@ export const useAdminRevenue = () => {
                 appointmentGross += gross;
                 doctorPayout += payout;
                 platformCommission += commission;
+                const date = new Date(row?.paid_at || row?.created_at || '');
+                const key = Number.isNaN(date.getTime()) ? '' : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                const trend = trendMap.get(key);
+                if (trend) { trend.platform += commission; trend.doctorPayout += payout; }
                 if (!doctorId) return;
-                const current = doctorMap.get(doctorId) || { gross: 0, payout: 0, commission: 0 };
+                const current = doctorMap.get(doctorId) || { gross: 0, payout: 0, commission: 0, pendingPayout: 0, settledPayout: 0, lastPaymentAt: null };
                 current.gross += gross;
                 current.payout += payout;
                 current.commission += commission;
+                if (row?.payout_status === 'paid') current.settledPayout += payout;
+                else current.pendingPayout += payout;
+                const paymentAt = row?.paid_at || row?.created_at || null;
+                if (paymentAt && (!current.lastPaymentAt || new Date(paymentAt).getTime() > new Date(current.lastPaymentAt).getTime())) current.lastPaymentAt = paymentAt;
                 doctorMap.set(doctorId, current);
             });
 
-            const subscriptionRevenue = (subscriptionPayments || []).reduce((sum: number, row: any) => sum + Number(row?.amount || 0), 0);
+            const subscriptionRevenue = (subscriptionPayments || []).reduce((sum: number, row: any) => {
+                const amount = Number(row?.amount || 0);
+                const date = new Date(row?.paid_at || row?.created_at || '');
+                const key = Number.isNaN(date.getTime()) ? '' : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                const trend = trendMap.get(key);
+                if (trend) { trend.platform += amount; trend.subscriptions += amount; }
+                return sum + amount;
+            }, 0);
             return {
                 appointmentGross,
                 doctorPayout,
@@ -195,15 +222,70 @@ export const useAdminRevenue = () => {
                 totalRevenue: platformCommission + subscriptionRevenue,
                 doctorRevenue: Array.from(doctorMap.entries()).map(([doctorId, values]) => ({
                     doctorId,
+                    doctorName: (() => { const doctor: any = (doctors || []).find((item: any) => String(item.id) === doctorId); const profile = Array.isArray(doctor?.profiles) ? (doctor.profiles[0] || {}) : (doctor?.profiles || {}); return [profile.first_name, profile.last_name].filter(Boolean).join(' ').trim() || doctor?.name || doctorId; })(),
                     gross: values.gross,
                     payout: values.payout,
                     commission: values.commission,
+                    pendingPayout: values.pendingPayout,
+                    settledPayout: values.settledPayout,
+                    lastPaymentAt: values.lastPaymentAt,
                 })),
+                payoutHistory: (payouts || []).map((row: any) => ({ id: String(row.id), doctorId: String(row.doctor_id), amount: Number(row.amount || 0), status: String(row.status || ''), reference: row.payment_reference || null, paidAt: row.paid_at || null, createdAt: row.created_at })),
+                monthlyTrend: Array.from(trendMap.values()),
             };
         },
         staleTime: 20 * 1000,
     });
 };
+
+export const useSettleDoctorPayout = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async (payload: { doctorId: string; paymentReference?: string; notes?: string }) => {
+            const { data, error } = await supabase.rpc('admin_settle_doctor_payout', {
+                p_doctor_id: payload.doctorId,
+                p_payment_reference: payload.paymentReference || null,
+                p_notes: payload.notes || null,
+            });
+            if (error) throw error;
+            const result = Array.isArray(data) ? data[0] : data;
+            if (!result?.success) throw new Error(result?.message || 'Could not settle payout.');
+            return result;
+        },
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ADMIN_QUERY_KEYS.revenue }),
+    });
+};
+
+export type PatientPaymentHistoryItem = {
+    id: string;
+    kind: 'appointment' | 'subscription';
+    amount: number;
+    currency: string;
+    status: string;
+    paymentId: string | null;
+    orderId: string | null;
+    paidAt: string | null;
+    createdAt: string;
+    doctorId?: string;
+};
+
+export const usePatientPaymentHistory = (userId?: string) => useQuery({
+    queryKey: ['payments', 'history', userId || ''],
+    enabled: Boolean(userId),
+    queryFn: async (): Promise<PatientPaymentHistoryItem[]> => {
+        const [{ data: appointments, error: appointmentError }, { data: subscriptions, error: subscriptionError }] = await Promise.all([
+            supabase.from('appointment_payments').select('id, doctor_id, gross_amount, currency, status, payment_id, order_id, paid_at, created_at').eq('patient_id', userId!).order('created_at', { ascending: false }).limit(200),
+            supabase.from('subscription_payments').select('id, amount, currency, status, payment_id, order_id, paid_at, created_at').eq('user_id', userId!).order('created_at', { ascending: false }).limit(200),
+        ]);
+        if (appointmentError) throw appointmentError;
+        if (subscriptionError) throw subscriptionError;
+        return [
+            ...(appointments || []).map((row: any) => ({ id: String(row.id), kind: 'appointment' as const, amount: Number(row.gross_amount || 0), currency: row.currency || 'INR', status: row.status, paymentId: row.payment_id || null, orderId: row.order_id || null, paidAt: row.paid_at || null, createdAt: row.created_at, doctorId: row.doctor_id })),
+            ...(subscriptions || []).map((row: any) => ({ id: String(row.id), kind: 'subscription' as const, amount: Number(row.amount || 0), currency: row.currency || 'INR', status: row.status, paymentId: row.payment_id || null, orderId: row.order_id || null, paidAt: row.paid_at || null, createdAt: row.created_at })),
+        ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    },
+    staleTime: 20 * 1000,
+});
 
 export type AdminTrendRange = '7d' | '30d' | '12m';
 

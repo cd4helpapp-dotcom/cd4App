@@ -24,7 +24,7 @@ function ModernTabIcon({
     return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
 }
 
-const ADMIN_VISIBLE_TABS = ['dashboard', 'doctors', 'app-settings'] as const;
+const ADMIN_VISIBLE_TABS = ['dashboard', 'doctors', 'revenue', 'app-settings'] as const;
 
 export default function AdminLayout() {
     const colorScheme = useColorScheme();
@@ -169,6 +169,16 @@ export default function AdminLayout() {
                 }}
             />
             <Tabs.Screen
+                name="revenue"
+                options={{
+                    title: 'Revenue',
+                    tabBarLabel: 'Revenue',
+                    tabBarIcon: ({ color, focused }) => (
+                        <ModernTabIcon focused={focused} color={color} activeName="analytics" inactiveName="analytics-outline" />
+                    ),
+                }}
+            />
+            <Tabs.Screen
                 name="ads"
                 options={{
                     href: null,
@@ -188,6 +198,10 @@ export default function AdminLayout() {
                     href: null,
                     title: 'Support Tickets',
                 }}
+            />
+            <Tabs.Screen
+                name="doctor-revenue"
+                options={{ href: null, title: 'All Doctor Revenue' }}
             />
         </Tabs>
     );

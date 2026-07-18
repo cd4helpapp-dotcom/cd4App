@@ -8,6 +8,7 @@ import { SUPABASE_PROFILE_MEDIA_BUCKET } from '../constants/Config';
 export const DOCTOR_QUERY_KEYS = {
     all: ['doctors'] as const,
     profile: ['doctor', 'profile'] as const,
+    earnings: ['doctor', 'earnings'] as const,
 };
 const PROFILE_MEDIA_BUCKET = SUPABASE_PROFILE_MEDIA_BUCKET;
 const PROFILE_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
@@ -198,6 +199,43 @@ export const useDoctorProfile = () => {
             return { success: true, data: doctor };
         },
         enabled: !!session?.user?.id,
+    });
+};
+
+export type DoctorEarnings = {
+    paidConsultations: number;
+    totalPaid: number;
+    doctorPayout: number;
+    pendingPayout: number;
+    settledPayout: number;
+};
+
+export const useDoctorEarnings = () => {
+    const { session } = useAuthContext();
+    return useQuery({
+        queryKey: [...DOCTOR_QUERY_KEYS.earnings, session?.user?.id || ''],
+        enabled: Boolean(session?.user?.id),
+        queryFn: async (): Promise<DoctorEarnings> => {
+            const { data, error } = await supabase
+                .from('appointment_payments')
+                .select('gross_amount, doctor_share, payout_status')
+                .eq('doctor_id', session!.user.id)
+                .eq('status', 'paid')
+                .limit(20000);
+            if (error) throw error;
+
+            return (data || []).reduce<DoctorEarnings>((summary, row: any) => {
+                const gross = Number(row?.gross_amount || 0);
+                const share = Number(row?.doctor_share || 0);
+                summary.paidConsultations += 1;
+                summary.totalPaid += gross;
+                summary.doctorPayout += share;
+                if (row?.payout_status === 'paid') summary.settledPayout += share;
+                else summary.pendingPayout += share;
+                return summary;
+            }, { paidConsultations: 0, totalPaid: 0, doctorPayout: 0, pendingPayout: 0, settledPayout: 0 });
+        },
+        staleTime: 20 * 1000,
     });
 };
 

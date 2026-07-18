@@ -98,12 +98,15 @@ const renderDate = (value?: string): string => {
   return parsed.toLocaleString();
 };
 
-const DetailRow = ({ label, value }: { label: string; value: unknown }) => (
-  <View style={styles.detailRow}>
-    <Text style={styles.detailLabel}>{label}</Text>
-    <Text style={styles.detailValue}>{renderValue(value)}</Text>
-  </View>
-);
+const DetailRow = ({ label, value }: { label: string; value: unknown }) => {
+  const theme = Colors[useColorScheme() ?? 'light'];
+  return (
+    <View style={styles.detailRow}>
+      <Text style={[styles.detailLabel, { color: theme.textSecondary }]}>{label}</Text>
+      <Text style={[styles.detailValue, { color: theme.text }]}>{renderValue(value)}</Text>
+    </View>
+  );
+};
 
 export default function AdminDoctorProfileScreen() {
   const { doctorId } = useLocalSearchParams<{ doctorId?: string }>();
@@ -197,7 +200,7 @@ export default function AdminDoctorProfileScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: theme.borderColor }]}>
         <TouchableOpacity onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: theme.cardBackground }]}>
           <Ionicons name="arrow-back" size={18} color={theme.text} />
         </TouchableOpacity>
@@ -212,7 +215,7 @@ export default function AdminDoctorProfileScreen() {
       ) : (
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={[styles.profileHero, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-            <Image source={{ uri: resolvedProfileImage || doctor.image || 'https://via.placeholder.com/80' }} style={styles.avatar} />
+            <Image source={{ uri: resolvedProfileImage || doctor.image || 'https://via.placeholder.com/80' }} style={[styles.avatar, { backgroundColor: theme.borderColor }]} />
             <View style={{ flex: 1 }}>
               <Text style={[styles.name, { color: theme.text }]}>Dr. {doctor.firstName} {doctor.lastName}</Text>
               <Text style={[styles.sub, { color: theme.textSecondary }]}>{renderValue(doctor.specialization)}</Text>

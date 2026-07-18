@@ -15,7 +15,7 @@ import Colors from '../../constants/Colors';
 import { useAuthContext } from '../../context/AuthContext';
 import { Calendar, Clock, Video, Bot, FileText, ExternalLink, Users, MessageCircle, Menu, X, LogOut } from 'lucide-react-native';
 import { useDoctorAppointments } from '../../hooks/useAppointment';
-import { useDoctorProfile } from '../../hooks/useDoctor';
+import { useDoctorProfile, useDoctorEarnings } from '../../hooks/useDoctor';
 import { useChatRooms } from '../../hooks/useChat';
 import { Appointment } from '../../src/types';
 import { useRouter } from 'expo-router';
@@ -65,6 +65,7 @@ export default function DoctorDashboard() {
     const { data: appointments = [], isLoading, refetch: refetchAppointments, isRefetching } = useDoctorAppointments();
     const { data: chatRooms = [], refetch: refetchRooms } = useChatRooms();
     const { data: doctorProfileResponse, refetch: refetchDoctorProfile } = useDoctorProfile();
+    const { data: earnings, refetch: refetchEarnings } = useDoctorEarnings();
 
     const [isRefreshing, setIsRefreshing] = React.useState(false);
     const [menuVisible, setMenuVisible] = React.useState(false);
@@ -132,6 +133,7 @@ export default function DoctorDashboard() {
                 refetchAppointments(),
                 refetchRooms(),
                 refetchDoctorProfile(),
+                refetchEarnings(),
             ]);
         } finally {
             setIsRefreshing(false);
@@ -201,9 +203,9 @@ export default function DoctorDashboard() {
         },
         {
             key: 'revenue',
-            label: 'Est. Revenue',
-            value: formatCurrency(metrics.estimatedRevenue),
-            helper: `Realized ${formatCurrency(metrics.realizedRevenue)}`,
+            label: 'Paid Revenue',
+            value: formatCurrency(earnings?.totalPaid || 0),
+            helper: `${earnings?.paidConsultations || 0} paid consultations • Payout ${formatCurrency(earnings?.doctorPayout || 0)}`,
             icon: FileText,
         },
     ];
@@ -779,4 +781,3 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
 });
-

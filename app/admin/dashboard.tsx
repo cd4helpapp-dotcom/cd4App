@@ -10,15 +10,15 @@ import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 
 const { width } = Dimensions.get('window');
 
-const StatCard = ({ title, value, icon, tint }: { title: string, value: string | number, icon: any, tint: string }) => (
-    <View style={styles.card}>
+const StatCard = ({ title, value, icon, tint, theme }: { title: string, value: string | number, icon: any, tint: string, theme: typeof Colors.light }) => (
+    <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
         <View style={styles.cardHeader}>
-            <View style={styles.iconContainer}>
+            <View style={[styles.iconContainer, { backgroundColor: theme.tint + '16' }]}>
                 <Ionicons name={icon} size={20} color={tint} />
             </View>
         </View>
-        <Text style={styles.cardTitle}>{title}</Text>
-        <Text style={styles.cardValue}>{value}</Text>
+        <Text style={[styles.cardTitle, { color: theme.textSecondary }]}>{title}</Text>
+        <Text style={[styles.cardValue, { color: theme.text }]}>{value}</Text>
     </View>
 );
 
@@ -74,14 +74,20 @@ export default function AdminDashboard() {
     }
 
     const chartConfig = {
-        backgroundGradientFrom: "#1e1e1e",
-        backgroundGradientTo: "#1e1e1e",
+        backgroundGradientFrom: theme.cardBackground,
+        backgroundGradientTo: theme.cardBackground,
         color: (opacity = 1) => `rgba(67, 233, 123, ${opacity})`,
         strokeWidth: 2, // optional, default 3
         barPercentage: 0.5,
         useShadowColorFromDataset: false, // optional
         decimalPlaces: 0,
-        labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+        labelColor: (opacity = 1) => {
+            const hex = theme.textSecondary.replace('#', '');
+            const red = parseInt(hex.slice(0, 2), 16);
+            const green = parseInt(hex.slice(2, 4), 16);
+            const blue = parseInt(hex.slice(4, 6), 16);
+            return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+        },
         propsForDots: {
             r: "4",
             strokeWidth: "2",
@@ -100,8 +106,8 @@ export default function AdminDashboard() {
             >
             <View style={styles.header}>
                 <View>
-                    <Text style={styles.welcomeText}>Welcome back,</Text>
-                    <Text style={styles.adminText}>System Admin</Text>
+                    <Text style={[styles.welcomeText, { color: theme.textSecondary }]}>Welcome back,</Text>
+                    <Text style={[styles.adminText, { color: theme.text }]}>System Admin</Text>
                 </View>
                 <TouchableOpacity style={styles.profileButton} onPress={() => router.push('/admin/profile')}>
                     <Ionicons name="person-circle-outline" size={40} color={theme.text} />
@@ -109,57 +115,57 @@ export default function AdminDashboard() {
             </View>
 
             <View style={styles.statsGrid}>
-                <StatCard title="Total Doctors" value={stats?.totalDoctors || 0} icon="medical" tint={theme.tint} />
-                <StatCard title="Verified" value={(stats as any)?.verifiedDoctors || 0} icon="checkmark-circle" tint={theme.tint} />
-                <StatCard title="Pending" value={(stats as any)?.pendingDoctors || 0} icon="time" tint={theme.tint} />
-                <StatCard title="Total Users" value={stats?.totalUsers || 0} icon="people" tint={theme.tint} />
+                <StatCard title="Total Doctors" value={stats?.totalDoctors || 0} icon="medical" tint={theme.tint} theme={theme} />
+                <StatCard title="Verified" value={(stats as any)?.verifiedDoctors || 0} icon="checkmark-circle" tint={theme.tint} theme={theme} />
+                <StatCard title="Pending" value={(stats as any)?.pendingDoctors || 0} icon="time" tint={theme.tint} theme={theme} />
+                <StatCard title="Total Users" value={stats?.totalUsers || 0} icon="people" tint={theme.tint} theme={theme} />
             </View>
 
             {revenue ? (
                 <View style={styles.section}>
                     <View style={styles.sectionHeader}>
-                        <Text style={styles.sectionTitle}>Revenue</Text>
+                        <Text style={[styles.sectionTitle, { color: theme.text }]}>Revenue</Text>
                         <TouchableOpacity onPress={() => router.push('/admin/revenue')}>
-                            <Text style={styles.viewAllText}>Open Revenue Tab</Text>
+                            <Text style={[styles.viewAllText, { color: theme.tint }]}>Open Revenue Tab</Text>
                         </TouchableOpacity>
                     </View>
                     <View style={styles.statsGrid}>
-                        <StatCard title="Appt Gross" value={`₹${Math.round(revenue.appointmentGross)}`} icon="cash" tint={theme.tint} />
-                        <StatCard title="Doctor Payout" value={`₹${Math.round(revenue.doctorPayout)}`} icon="wallet" tint={theme.tint} />
-                        <StatCard title="Platform Commission" value={`₹${Math.round(revenue.platformCommission)}`} icon="analytics" tint={theme.tint} />
-                        <StatCard title="Subscriptions" value={`₹${Math.round(revenue.subscriptionRevenue)}`} icon="card" tint={theme.tint} />
+                        <StatCard title="Appt Gross" value={`₹${Math.round(revenue.appointmentGross)}`} icon="cash" tint={theme.tint} theme={theme} />
+                        <StatCard title="Doctor Payout" value={`₹${Math.round(revenue.doctorPayout)}`} icon="wallet" tint={theme.tint} theme={theme} />
+                        <StatCard title="Platform Commission" value={`₹${Math.round(revenue.platformCommission)}`} icon="analytics" tint={theme.tint} theme={theme} />
+                        <StatCard title="Subscriptions" value={`₹${Math.round(revenue.subscriptionRevenue)}`} icon="card" tint={theme.tint} theme={theme} />
                     </View>
                 </View>
             ) : null}
 
             <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                    <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Review Queue</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Review Queue</Text>
                 </View>
-                <View style={styles.reviewCard}>
+                <View style={[styles.reviewCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                     <View style={styles.reviewLeft}>
                         <View style={styles.reviewIconWrap}>
                             <Ionicons name="shield-checkmark-outline" size={18} color={theme.tint} />
                         </View>
                         <View style={{ flex: 1 }}>
-                            <Text style={styles.reviewTitle}>Doctor Verification Review</Text>
-                            <Text style={styles.reviewSubtitle}>
+                            <Text style={[styles.reviewTitle, { color: theme.text }]}>Doctor Verification Review</Text>
+                            <Text style={[styles.reviewSubtitle, { color: theme.textSecondary }]}>
                                 Pending profiles: {(stats as any)?.pendingDoctors || 0}
                             </Text>
                         </View>
                     </View>
                     <TouchableOpacity
-                        style={styles.reviewActionBtn}
+                        style={[styles.reviewActionBtn, { borderColor: theme.tint, backgroundColor: theme.successLight }]}
                         onPress={() => router.push('/admin/doctors')}
                     >
-                        <Text style={styles.reviewActionText}>Open</Text>
+                        <Text style={[styles.reviewActionText, { color: theme.tint }]}>Open</Text>
                     </TouchableOpacity>
                 </View>
             </View>
 
             <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                    <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Users & Doctors Growth</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Users & Doctors Growth</Text>
                 </View>
                 <View style={styles.filterRow}>
                     {[
@@ -171,6 +177,7 @@ export default function AdminDashboard() {
                             key={item.key}
                             style={[
                                 styles.filterChip,
+                                { borderColor: theme.borderColor, backgroundColor: theme.cardBackground },
                                 trendRange === item.key && styles.filterChipActive,
                             ]}
                             onPress={() => setTrendRange(item.key as AdminTrendRange)}
@@ -178,6 +185,7 @@ export default function AdminDashboard() {
                             <Text
                                 style={[
                                     styles.filterChipText,
+                                    { color: theme.textSecondary },
                                     trendRange === item.key && styles.filterChipTextActive,
                                 ]}
                             >
@@ -188,15 +196,15 @@ export default function AdminDashboard() {
                 </View>
                 {trendRange === '30d' && (
                     <View style={styles.monthPickerRow}>
-                        <Text style={styles.monthPickerLabel}>Month:</Text>
+                        <Text style={[styles.monthPickerLabel, { color: theme.textSecondary }]}>Month:</Text>
                         <TouchableOpacity
-                            style={styles.monthPickerButton}
+                            style={[styles.monthPickerButton, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
                             onPress={() => setIsMonthPickerVisible(true)}
                             activeOpacity={0.85}
                         >
                             <Ionicons name="calendar-outline" size={15} color={theme.tint} />
-                            <Text style={styles.monthPickerButtonText}>{selectedMonthLabel}</Text>
-                            <Ionicons name="chevron-down" size={14} color="#bbb" />
+                            <Text style={[styles.monthPickerButtonText, { color: theme.text }]}>{selectedMonthLabel}</Text>
+                            <Ionicons name="chevron-down" size={14} color={theme.textSecondary} />
                         </TouchableOpacity>
                     </View>
                 )}
@@ -207,8 +215,8 @@ export default function AdminDashboard() {
                     </View>
                 ) : registrationTrends ? (
                     <>
-                        <View style={styles.chartContainer}>
-                            <Text style={styles.miniTitle}>Users Registrations</Text>
+                        <View style={[styles.chartContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                            <Text style={[styles.miniTitle, { color: theme.text }]}>Users Registrations</Text>
                             <LineChart
                                 data={registrationTrends.usersChart}
                                 width={width - 40}
@@ -227,8 +235,8 @@ export default function AdminDashboard() {
                             />
                         </View>
 
-                        <View style={[styles.chartContainer, { marginTop: 14 }]}>
-                            <Text style={styles.miniTitle}>Doctors Registrations</Text>
+                        <View style={[styles.chartContainer, { marginTop: 14, backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                            <Text style={[styles.miniTitle, { color: theme.text }]}>Doctors Registrations</Text>
                             <LineChart
                                 data={registrationTrends.doctorsChart}
                                 width={width - 40}
@@ -248,9 +256,9 @@ export default function AdminDashboard() {
                 onRequestClose={() => setIsMonthPickerVisible(false)}
             >
                 <Pressable style={styles.monthPickerBackdrop} onPress={() => setIsMonthPickerVisible(false)} />
-                <View style={styles.monthPickerModal}>
+                <View style={[styles.monthPickerModal, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                     <View style={styles.monthPickerModalHeader}>
-                        <Text style={styles.monthPickerModalTitle}>Select Month</Text>
+                        <Text style={[styles.monthPickerModalTitle, { color: theme.text }]}>Select Month</Text>
                         <TouchableOpacity onPress={() => setIsMonthPickerVisible(false)}>
                             <Text style={styles.monthPickerClose}>Close</Text>
                         </TouchableOpacity>
@@ -260,7 +268,8 @@ export default function AdminDashboard() {
                             <TouchableOpacity
                                 key={item.key}
                                 style={[
-                                    styles.monthPickerItem,
+                                        styles.monthPickerItem,
+                                        { borderColor: theme.borderColor },
                                     selectedMonth === item.key && styles.monthPickerItemActive,
                                 ]}
                                 onPress={() => {
@@ -271,6 +280,7 @@ export default function AdminDashboard() {
                                 <Text
                                     style={[
                                         styles.monthPickerItemText,
+                                        { color: theme.textSecondary },
                                         selectedMonth === item.key && styles.monthPickerItemTextActive,
                                     ]}
                                 >
@@ -288,8 +298,8 @@ export default function AdminDashboard() {
             {/* Revenue Chart */}
             {analytics?.revenue && (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Revenue Trend (6 Months)</Text>
-                    <View style={styles.chartContainer}>
+                    <Text style={[styles.sectionTitle, { color: theme.text }]}>Revenue Trend (6 Months)</Text>
+                    <View style={[styles.chartContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                         <LineChart
                             data={analytics.revenue}
                             width={width - 40}
@@ -308,9 +318,9 @@ export default function AdminDashboard() {
             {SHOW_ADS_ANALYTICS && (
             <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                    <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Community Ads Analytics</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 0 }]}>Community Ads Analytics</Text>
                     <TouchableOpacity onPress={() => router.push('/admin/ads')}>
-                        <Text style={styles.viewAllText}>Manage Ads</Text>
+                            <Text style={[styles.viewAllText, { color: theme.tint }]}>Manage Ads</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -321,14 +331,14 @@ export default function AdminDashboard() {
                 ) : adAnalytics ? (
                     <>
                         <View style={styles.statsGrid}>
-                            <StatCard title="Total Ads" value={adAnalytics.totalAds} icon="megaphone" tint={theme.tint} />
-                            <StatCard title="Active Ads" value={adAnalytics.activeAds} icon="radio" tint={theme.tint} />
-                            <StatCard title="Impressions (30d)" value={adAnalytics.impressions30d} icon="eye" tint={theme.tint} />
-                            <StatCard title="CTR (30d)" value={`${adAnalytics.ctr30d}%`} icon="stats-chart" tint={theme.tint} />
+                            <StatCard title="Total Ads" value={adAnalytics.totalAds} icon="megaphone" tint={theme.tint} theme={theme} />
+                            <StatCard title="Active Ads" value={adAnalytics.activeAds} icon="radio" tint={theme.tint} theme={theme} />
+                            <StatCard title="Impressions (30d)" value={adAnalytics.impressions30d} icon="eye" tint={theme.tint} theme={theme} />
+                            <StatCard title="CTR (30d)" value={`${adAnalytics.ctr30d}%`} icon="stats-chart" tint={theme.tint} theme={theme} />
                         </View>
 
-                        <View style={styles.chartContainer}>
-                            <Text style={styles.miniTitle}>Impressions (Last 7 Days)</Text>
+                        <View style={[styles.chartContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                            <Text style={[styles.miniTitle, { color: theme.text }]}>Impressions (Last 7 Days)</Text>
                             <LineChart
                                 data={adAnalytics.impressionsTrend}
                                 width={width - 40}
@@ -339,8 +349,8 @@ export default function AdminDashboard() {
                             />
                         </View>
 
-                        <View style={[styles.chartContainer, { marginTop: 14 }]}>
-                            <Text style={styles.miniTitle}>Clicks (Last 7 Days)</Text>
+                        <View style={[styles.chartContainer, { marginTop: 14, backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                            <Text style={[styles.miniTitle, { color: theme.text }]}>Clicks (Last 7 Days)</Text>
                             <LineChart
                                 data={adAnalytics.clicksTrend}
                                 width={width - 40}
@@ -354,17 +364,17 @@ export default function AdminDashboard() {
                             />
                         </View>
 
-                        <View style={[styles.topAdsCard]}>
-                            <Text style={styles.topAdsTitle}>Top Ads by Impressions</Text>
+                        <View style={[styles.topAdsCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                            <Text style={[styles.topAdsTitle, { color: theme.text }]}>Top Ads by Impressions</Text>
                             {adAnalytics.topAds.length === 0 ? (
-                                <Text style={styles.topAdsEmpty}>No ad events yet.</Text>
+                                <Text style={[styles.topAdsEmpty, { color: theme.textSecondary }]}>No ad events yet.</Text>
                             ) : (
                                 adAnalytics.topAds.map((ad: any, idx: number) => (
-                                    <View key={ad.adId} style={styles.topAdsRow}>
-                                        <Text style={styles.topAdsName} numberOfLines={1}>
+                                    <View key={ad.adId} style={[styles.topAdsRow, { borderBottomColor: theme.borderColor }]}>
+                                        <Text style={[styles.topAdsName, { color: theme.text }]} numberOfLines={1}>
                                             {idx + 1}. {ad.title}
                                         </Text>
-                                        <Text style={styles.topAdsMeta}>
+                                        <Text style={[styles.topAdsMeta, { color: theme.textSecondary }]}>
                                             {ad.impressions} imp • {ad.clicks} clk • {ad.ctr.toFixed(1)}%
                                         </Text>
                                     </View>
@@ -379,8 +389,8 @@ export default function AdminDashboard() {
             {/* User Growth Chart */}
             {analytics?.userGrowth && (
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>User Registrations (Last 7 Days)</Text>
-                    <View style={styles.chartContainer}>
+                    <Text style={[styles.sectionTitle, { color: theme.text }]}>User Registrations (Last 7 Days)</Text>
+                    <View style={[styles.chartContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                         <LineChart
                             data={analytics.userGrowth}
                             width={width - 40}
@@ -402,27 +412,27 @@ export default function AdminDashboard() {
             {/* Recent Doctors */}
             <View style={styles.section}>
                 <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>Recent Registrations</Text>
+                    <Text style={[styles.sectionTitle, { color: theme.text }]}>Recent Registrations</Text>
                     <TouchableOpacity onPress={() => router.push('/admin/doctors')}>
-                        <Text style={styles.viewAllText}>View All</Text>
+                        <Text style={[styles.viewAllText, { color: theme.tint }]}>View All</Text>
                     </TouchableOpacity>
                 </View>
 
                 {recentDoctors.map((doc: any, index: number) => (
-                    <View key={doc._id || index} style={styles.doctorItem}>
+                    <View key={doc._id || index} style={[styles.doctorItem, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                         <View style={styles.doctorInfo}>
-                            <View style={[styles.avatarPlaceholder]}>
-                                <Text style={styles.avatarText}>
+                            <View style={[styles.avatarPlaceholder, { backgroundColor: theme.borderColor }]}>
+                                <Text style={[styles.avatarText, { color: theme.text }]}>
                                     {doc.firstName?.[0]}{doc.lastName?.[0]}
                                 </Text>
                             </View>
                             <View>
-                                <Text style={styles.doctorName}>Dr. {doc.firstName} {doc.lastName}</Text>
-                                <Text style={styles.doctorSpec}>{doc.specialization} • {doc.experience}</Text>
+                                <Text style={[styles.doctorName, { color: theme.text }]}>Dr. {doc.firstName} {doc.lastName}</Text>
+                                <Text style={[styles.doctorSpec, { color: theme.textSecondary }]}>{doc.specialization} • {doc.experience}</Text>
                             </View>
                         </View>
-                        <View style={[styles.statusBadge, { backgroundColor: doc.isVerified ? 'rgba(67, 233, 123, 0.1)' : 'rgba(250, 112, 154, 0.1)' }]}>
-                            <Text style={[styles.statusText, { color: doc.isVerified ? '#43e97b' : '#fa709a' }]}>
+                        <View style={[styles.statusBadge, { backgroundColor: doc.isVerified ? theme.successLight : theme.badgeBackground }]}>
+                            <Text style={[styles.statusText, { color: doc.isVerified ? theme.tint : theme.badgeText }]}>
                                 {doc.isVerified ? 'Verified' : 'Pending'}
                             </Text>
                         </View>
@@ -848,4 +858,3 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
 });
-
