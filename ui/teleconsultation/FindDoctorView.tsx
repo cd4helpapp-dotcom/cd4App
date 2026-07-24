@@ -222,6 +222,8 @@ interface AgentDepartmentSuggestion {
 
 interface AgentBookingSlotOption {
     id: string;
+    doctorId?: string;
+    doctorName?: string;
     label: string;
     date?: string;
     startTime?: string;
@@ -844,7 +846,7 @@ const createInitialAgentMessages = (): AgentMessage[] => [
     {
         id: 'agent-welcome',
         role: 'ai',
-        text: 'Hello, I am your CD4 AI Agent. Share your symptoms or ask for the best doctor, and I will guide you.',
+        text: 'Namaste. Main CD4 AI Voice Assistant hoon. Main aapki health concern ko analyze karne, sahi department aur verified specialist dhoondhne, aur doctor ke saath appointment book karne mein aapki madad kar sakta hoon. Aap Hindi, English ya apni pasand ki language mein bol sakte hain.',
         createdAt: nowIso(),
     },
 ];
@@ -1422,6 +1424,8 @@ const normalizeAgentBookingSlotOptions = (value: any): AgentBookingSlotOption[] 
 
             return {
                 id,
+                doctorId: typeof item?.doctorId === 'string' ? item.doctorId : typeof item?.doctor_id === 'string' ? item.doctor_id : undefined,
+                doctorName: typeof item?.doctorName === 'string' ? item.doctorName : undefined,
                 label,
                 date: typeof item?.date === 'string' ? item.date : undefined,
                 startTime: typeof item?.startTime === 'string' ? item.startTime : undefined,
@@ -1430,6 +1434,22 @@ const normalizeAgentBookingSlotOptions = (value: any): AgentBookingSlotOption[] 
         })
         .filter((slot: AgentBookingSlotOption | null): slot is AgentBookingSlotOption => Boolean(slot))
         .slice(0, 6);
+};
+
+const getAgentSlotGroups = (
+    doctors: AgentRecommendedDoctor[] = [],
+    slots: AgentBookingSlotOption[] = [],
+): Array<{ doctor: AgentRecommendedDoctor | null; slots: AgentBookingSlotOption[] }> => {
+    const groups: Array<{ doctor: AgentRecommendedDoctor | null; slots: AgentBookingSlotOption[] }> = doctors
+        .map((doctor) => ({
+            doctor,
+            slots: slots.filter((slot) => String(slot.doctorId || '') === String(doctor.id || '')),
+        }))
+        .filter((group) => group.slots.length > 0);
+    const groupedIds = new Set(groups.flatMap((group) => group.slots.map((slot) => String(slot.id))));
+    const ungrouped = slots.filter((slot) => !groupedIds.has(String(slot.id)));
+    if (ungrouped.length) groups.push({ doctor: null, slots: ungrouped });
+    return groups;
 };
 
 const extractAgentBookingSlotOptions = (responseData: any): AgentBookingSlotOption[] => {
@@ -1705,6 +1725,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const realtimeAssistantBeforeInputRef = React.useRef(false);
     const realtimeVoiceLastInputRef = React.useRef('');
     const realtimeVoicePersistenceRef = React.useRef<Set<string>>(new Set());
+    const realtimeVoiceHasUserTurnRef = React.useRef(false);
     const microphonePermissionRequestedRef = React.useRef(false);
     const voicePulse = React.useRef(new Animated.Value(1)).current;
     const premiumWaitPulse = React.useRef(new Animated.Value(0)).current;
@@ -1722,6 +1743,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const persistRealtimeMessage = React.useCallback(async (sender: 'user' | 'ai', text: string) => {
         const cleanText = text.trim();
         if (!user?.id || !cleanText) return;
+        // Opening and closing the voice sheet without a patient turn must not
+        // create a database conversation containing only the welcome message.
+        if (sender === 'ai' && !realtimeVoiceHasUserTurnRef.current) return;
         const key = `${sender}:${cleanText}`;
         if (realtimeVoicePersistenceRef.current.has(key)) return;
         realtimeVoicePersistenceRef.current.add(key);
@@ -1775,21 +1799,23 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         const attemptId = Date.now();
         realtimeVoiceAttemptRef.current = attemptId;
 
-        // A welcome turn must never be generated from the previous user's
-        // last message. The visible history remains in the UI; only the
-        // clinical summary is carried into the fresh Realtime turn.
-        const history = realtimeGreetingPendingRef.current
-            ? []
-            : agentMessagesRef.current.slice(-5).map((message) => ({
+        // Keep existing patient history available when reopening the modal,
+        // while using an empty history for a genuinely fresh welcome-only
+        // session.
+        const hasUserTurn = agentMessagesRef.current.some((item) => item.role === 'user' && item.text.trim());
+        const history = hasUserTurn
+            ? agentMessagesRef.current.slice(-5).map((message) => ({
                 role: message.role === 'ai' ? 'assistant' : 'user',
                 content: message.text.slice(0, 900),
-            }));
+            }))
+            : [];
 
         const handle = await connectRealtimeVoice(supabase, {
             concern: 'General Assistant',
             locationCity,
             clinicalSummary: voiceClinicalSummary,
             history,
+            initialLanguage: 'hi',
             voicePersona: 'female',
             autoStartResponse: realtimeGreetingPendingRef.current,
         }, {
@@ -1830,6 +1856,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 const cleanText = text.trim();
                 if (!cleanText || cleanText === realtimeVoiceLastInputRef.current) return;
                 realtimeVoiceLastInputRef.current = cleanText;
+                realtimeVoiceHasUserTurnRef.current = true;
                 const shouldPlaceBeforePendingAssistant = realtimeAssistantBeforeInputRef.current;
                 realtimeAssistantBeforeInputRef.current = false;
                 const message: AgentMessage = {
@@ -1862,7 +1889,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 // transcript. Mark this draft so the late user transcript is
                 // inserted immediately before it instead of below it.
                 realtimeAssistantBeforeInputRef.current = true;
-                const draftId = realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
+                const hasUserTurn = agentMessagesRef.current.some((item) => item.role === 'user');
+                const draftId = realtimeVoiceDraftIdRef.current || (!hasUserTurn ? 'agent-welcome' : nextAgentMessageId('a'));
                 realtimeVoiceDraftIdRef.current = draftId;
                 realtimeLastAssistantIdRef.current = draftId;
                 setAgentMessages((previous) => {
@@ -1896,12 +1924,17 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             onAssistantDone: (text) => {
                 const cleanText = text.trim();
                 if (!cleanText) return;
+                // De-duplicate only within one realtime turn. Keeping this
+                // value across turns makes a legitimate repeated question
+                // or answer disappear from the conversation.
+                realtimeVoiceLastInputRef.current = '';
                 realtimeAssistantBeforeInputRef.current = true;
                 // The text UI already has a local welcome placeholder. When
                 // Realtime speaks the real welcome, replace that placeholder
                 // instead of appending a second greeting bubble.
                 const isAutomaticGreeting = realtimeGreetingPendingRef.current;
-                const draftId = isAutomaticGreeting
+                const hasUserTurn = agentMessagesRef.current.some((item) => item.role === 'user');
+                const draftId = isAutomaticGreeting || !hasUserTurn
                     ? 'agent-welcome'
                     : realtimeVoiceDraftIdRef.current || nextAgentMessageId('a');
                 realtimeLastAssistantIdRef.current = draftId;
@@ -1920,7 +1953,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     agentMessagesRef.current = next;
                     return next;
                 });
-                void persistRealtimeMessage('ai', cleanText);
+                // A modal greeting is UI-only. Persist only actual assistant
+                // answers to a patient turn, not repeated greetings.
+                if (!isAutomaticGreeting) {
+                    void persistRealtimeMessage('ai', cleanText);
+                }
                 setIsVoiceReplyPlaying(false);
                 if (realtimeGreetingPendingRef.current) {
                     realtimeGreetingPendingRef.current = false;
@@ -1966,6 +2003,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         });
                     });
                     return;
+                }
+                const suggestedDepartment = result?.departmentSuggestion;
+                if (suggestedDepartment?.id) {
+                    setSelectedDepartmentId(String(suggestedDepartment.id));
                 }
                 const doctors = normalizeAgentRecommendedDoctors(result?.doctorRecommendations);
                 const slots = extractAgentBookingSlotOptions(result);
@@ -3842,6 +3883,19 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
         await stopActiveVoicePlayback();
 
+        const hasPatientTurn = realtimeVoiceHasUserTurnRef.current || agentMessagesRef.current.some((item) => item.role === 'user' && item.text.trim());
+        if (!hasPatientTurn) {
+            // A welcome-only session is temporary. Keep it out of history and
+            // make the next popup open as a genuinely fresh conversation.
+            const initialMessages = createInitialAgentMessages();
+            agentConversationIdRef.current = createClientConversationId();
+            agentMessagesRef.current = initialMessages;
+            realtimeVoiceHasUserTurnRef.current = false;
+            realtimeVoicePersistenceRef.current.clear();
+            setAgentMessages(initialMessages);
+            setVoiceClinicalSummary('');
+        }
+
         if (showToast) {
             Toast.show({
                 type: 'info',
@@ -5037,8 +5091,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         setIsChatInputActive(false);
         setModalTextInput('');
         setVoiceStatusText('Tap the mic to start speaking');
-        // Every modal opening gets one short welcome. Previous user messages
-        // are deliberately excluded from that automatic greeting turn.
+        // Speak a short welcome every time the modal opens. If the patient has
+        // already asked something, the existing history is still carried into
+        // the new Realtime connection.
+        const hasExistingUserTurn = realtimeVoiceHasUserTurnRef.current || agentMessagesRef.current.some((item) => item.role === 'user' && item.text.trim());
+        realtimeVoiceHasUserTurnRef.current = hasExistingUserTurn;
         const shouldAutoGreet = true;
 
         // Request microphone permission before opening the Realtime session.
@@ -5116,6 +5173,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         const initialMessages = createInitialAgentMessages();
         agentConversationIdRef.current = createClientConversationId();
         agentMessagesRef.current = initialMessages;
+        realtimeVoiceHasUserTurnRef.current = false;
+        realtimeVoicePersistenceRef.current.clear();
         setAgentMessages(initialMessages);
         setVoiceClinicalSummary('');
         setModalTextInput('');
@@ -5684,7 +5743,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [agentMessages]);
     const handleAgentSlotPress = React.useCallback((slot: AgentBookingSlotOption, index: number, sourceMessage?: AgentMessage | null) => {
         const source = sourceMessage || latestAgentVisualMessage;
-        const doctor = source?.recommendedDoctors?.[0] || null;
+        const doctor = source?.recommendedDoctors?.find((item) => String(item.id || '') === String(slot.doctorId || ''))
+            || source?.recommendedDoctors?.[0]
+            || null;
         const doctorId = typeof doctor?.id === 'string' ? doctor.id.trim() : '';
 
         if (
@@ -6299,30 +6360,31 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 ) : null}
                                 {latestAgentVisualMessage?.bookingSlotOptions && latestAgentVisualMessage.bookingSlotOptions.length > 0 ? (
                                     <View style={[styles.agentSlotListWrap, styles.voiceRobotSlotListWrap, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
-                                        <Text style={[styles.agentSlotListTitle, { color: theme.text }]}>Available slots</Text>
+                                        <Text style={[styles.agentSlotListTitle, { color: theme.text }]}>Doctor-wise available slots</Text>
                                         {latestAgentVisualMessage.bookingPrompt ? (
                                             <Text style={[styles.agentSlotListHint, { color: theme.textSecondary }]}>{latestAgentVisualMessage.bookingPrompt}</Text>
                                         ) : null}
-                                        {latestAgentVisualMessage.bookingSlotOptions.map((slot, index) => (
-                                                <TouchableOpacity
-                                                    key={String(slot.id || `slot-${index}`)}
-                                                    style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
-                                                    activeOpacity={0.82}
-                                                    disabled={isAgentSending}
-                                                    onPress={() => handleAgentSlotPress(slot, index, latestAgentVisualMessage)}
-                                                >
-                                                <View style={styles.agentSlotHeaderRow}>
-                                                    <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>
-                                                        Slot {index + 1}
-                                                    </Text>
-                                                    <Text style={[styles.agentSlotTapHint, { color: theme.textSecondary }]}>
-                                                        Tap to book
-                                                    </Text>
-                                                </View>
-                                                <Text style={[styles.agentSlotLabel, { color: theme.text }]} numberOfLines={2}>
-                                                    {slot.label}
+                                        {getAgentSlotGroups(latestAgentVisualMessage.recommendedDoctors || [], latestAgentVisualMessage.bookingSlotOptions).map((group, groupIndex) => (
+                                            <View key={`slot-group-${groupIndex}`} style={{ marginTop: groupIndex ? 12 : 0 }}>
+                                                <Text style={[styles.agentSlotListHint, { color: theme.tint, fontWeight: '800' }]}>
+                                                    {group.doctor ? getDoctorDisplayName(group.doctor, { includePrefix: true, fallbackName: 'Doctor' }) : group.slots[0]?.doctorName || 'Doctor'}
                                                 </Text>
-                                            </TouchableOpacity>
+                                                {group.slots.map((slot, index) => (
+                                                    <TouchableOpacity
+                                                        key={String(slot.id || `slot-${groupIndex}-${index}`)}
+                                                        style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
+                                                        activeOpacity={0.82}
+                                                        disabled={isAgentSending}
+                                                        onPress={() => handleAgentSlotPress(slot, index, group.doctor ? { ...latestAgentVisualMessage, recommendedDoctors: [group.doctor] } : latestAgentVisualMessage)}
+                                                    >
+                                                        <View style={styles.agentSlotHeaderRow}>
+                                                            <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>Slot {index + 1}</Text>
+                                                            <Text style={[styles.agentSlotTapHint, { color: theme.textSecondary }]}>Tap to book</Text>
+                                                        </View>
+                                                        <Text style={[styles.agentSlotLabel, { color: theme.text }]} numberOfLines={2}>{slot.label}</Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
                                         ))}
                                     </View>
                                 ) : null}
@@ -6562,27 +6624,28 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             )}
                                             {message.role === 'ai' && message.bookingSlotOptions && message.bookingSlotOptions.length > 0 && (
                                                 <View style={[styles.agentSlotListWrap, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
-                                                    <Text style={[styles.agentSlotListTitle, { color: theme.text }]}>Available slots</Text>
-                                                    {message.bookingSlotOptions.map((slot, index) => (
-                                                        <TouchableOpacity
-                                                            key={String(slot.id || `msg-slot-${message.id}-${index}`)}
-                                                            style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
-                                                            activeOpacity={0.82}
-                                                            disabled={isAgentSending}
-                                                            onPress={() => handleAgentSlotPress(slot, index, message)}
-                                                        >
-                                                            <View style={styles.agentSlotHeaderRow}>
-                                                                <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>
-                                                                    Slot {index + 1}
-                                                                </Text>
-                                                                <Text style={[styles.agentSlotTapHint, { color: theme.textSecondary }]}>
-                                                                    Tap to book
-                                                                </Text>
-                                                            </View>
-                                                            <Text style={[styles.agentSlotLabel, { color: theme.text }]} numberOfLines={2}>
-                                                                {slot.label}
+                                                    <Text style={[styles.agentSlotListTitle, { color: theme.text }]}>Doctor-wise available slots</Text>
+                                                    {getAgentSlotGroups(message.recommendedDoctors || [], message.bookingSlotOptions).map((group, groupIndex) => (
+                                                        <View key={`message-slot-group-${message.id}-${groupIndex}`} style={{ marginTop: groupIndex ? 12 : 0 }}>
+                                                            <Text style={[styles.agentSlotListHint, { color: theme.tint, fontWeight: '800' }]}>
+                                                                {group.doctor ? getDoctorDisplayName(group.doctor, { includePrefix: true, fallbackName: 'Doctor' }) : group.slots[0]?.doctorName || 'Doctor'}
                                                             </Text>
-                                                        </TouchableOpacity>
+                                                            {group.slots.map((slot, index) => (
+                                                                <TouchableOpacity
+                                                                    key={String(slot.id || `msg-slot-${message.id}-${groupIndex}-${index}`)}
+                                                                    style={[styles.agentSlotItem, { borderColor: theme.borderColor }]}
+                                                                    activeOpacity={0.82}
+                                                                    disabled={isAgentSending}
+                                                                    onPress={() => handleAgentSlotPress(slot, index, group.doctor ? { ...message, recommendedDoctors: [group.doctor] } : message)}
+                                                                >
+                                                                    <View style={styles.agentSlotHeaderRow}>
+                                                                        <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>Slot {index + 1}</Text>
+                                                                        <Text style={[styles.agentSlotTapHint, { color: theme.textSecondary }]}>Tap to book</Text>
+                                                                    </View>
+                                                                    <Text style={[styles.agentSlotLabel, { color: theme.text }]} numberOfLines={2}>{slot.label}</Text>
+                                                                </TouchableOpacity>
+                                                            ))}
+                                                        </View>
                                                     ))}
                                                 </View>
                                             )}

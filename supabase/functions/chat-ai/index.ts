@@ -34,23 +34,29 @@ const clip = (value: unknown, max: number): string => {
 }
 
 const hasDevanagari = (value: string): boolean => /[\u0900-\u097F]/.test(value)
+const hasTamil = (value: string): boolean => /[\u0B80-\u0BFF]/.test(value)
 
 const hasRomanHindiSignal = (value: string): boolean =>
   /\b(kya|kyun|kyu|kaise|kab|kahan|mujhe|mera|meri|mere|main|mai|aap|aapko|hai|hain|nahi|nahin|haan|han|dard|bukhar|khansi|dawai|ilaaj|takleef|doctor|batao|chahiye|sehat|pet|saans)\b/i.test(value)
 
-type LanguageStyle = "english" | "roman_hindi" | "devanagari_hindi"
+type LanguageStyle = "english" | "roman_hindi" | "devanagari_hindi" | "tamil"
 type ConversationIntent = "educational" | "symptom_report" | "follow_up" | "consult_request"
 
 const detectLanguage = (message: string, history: Array<{ role: string; content: string }>): LanguageStyle => {
+  if (hasTamil(message)) return "tamil"
   if (hasDevanagari(message)) return "devanagari_hindi"
   if (hasRomanHindiSignal(message)) return "roman_hindi"
   const recent = history.filter((item) => item.role === "user").slice(-3).reverse()
+  if (recent.some((item) => hasTamil(item.content))) return "tamil"
   if (recent.some((item) => hasDevanagari(item.content))) return "devanagari_hindi"
   if (recent.some((item) => hasRomanHindiSignal(item.content))) return "roman_hindi"
   return "english"
 }
 
 const languageInstruction = (style: LanguageStyle): string => {
+  if (style === "tamil") {
+    return "Reply entirely in natural Tamil. Do not switch to English or Hindi except unavoidable medical terms."
+  }
   if (style === "devanagari_hindi") {
     return "Reply entirely in natural Devanagari Hindi. Do not switch to English or Roman Hindi except unavoidable medical abbreviations."
   }
@@ -61,6 +67,9 @@ const languageInstruction = (style: LanguageStyle): string => {
 }
 
 const nonMedicalReply = (style: LanguageStyle): string => {
+  if (style === "tamil") {
+    return "நான் உங்கள் உடல்நலம் தொடர்பான கேள்விகளுக்கு உதவ முடியும். உங்கள் அறிகுறிகள், மருத்துவ அறிக்கை, மருந்து அல்லது உடல்நலக் கவலை பற்றி சொல்லுங்கள்."
+  }
   if (style === "devanagari_hindi") {
     return "मैं केवल आपके चुने हुए स्वास्थ्य संबंधी concern और medical questions में मदद कर सकता हूँ। कृपया अपने symptoms, report, medicine या health concern के बारे में बताइए।"
   }
@@ -86,6 +95,10 @@ const buildSystemPrompt = (
 ): string => `
 You are CD4 Health Assistant, a warm and clinically careful medical conversation assistant.
 
+Brand and abbreviation rule:
+- CD4 is the product/assistant brand name. Do not expand it or say "CD4 stands for..." unless the patient explicitly asks what CD4 means.
+- Do not explain medical abbreviations merely because they appear in the conversation. Explain an abbreviation only when the patient asks or when it is necessary to safely answer the patient's medical question.
+
 The patient selected this concern: "${clip(concern || "General health", 120)}".
 Your job is to understand the patient's concern and collect a useful clinical history for a doctor.
 Current conversation intent: ${context.intent}
@@ -105,6 +118,7 @@ Conversation behavior:
 - Make every answer meaningfully specific to the latest concern: include a brief likely explanation, what the patient can do now, what to avoid or monitor, and when to seek care when those sections are clinically relevant. Avoid generic filler like "I am here to help" after the first turn and never replace practical guidance with "please consult a doctor" alone.
 - Treat the selected concern as background context, but always prioritize the patient's latest clear medical question. If the latest message names another medical symptom or condition, answer that current question naturally; do not force the old concern into the answer. Connect it to the selected concern only when clinically relevant.
 - When the patient reports a personal symptom or asks what to do, conduct clinical history-taking: ask specific questions about onset, severity, associated symptoms, triggers, impact, medicines, allergies, and relevant history. Ask only one question at a time while information is incomplete.
+- When the useful history is complete, stop asking symptom questions. Give a concise handoff summary, state the inferred department (for example, fever usually routes to General Physician/General Medicine), and ask only whether the patient wants you to search for a verified doctor and available slots. Do not ask another clinical question after this handoff unless the patient provides new information.
 - When the patient asks a direct educational question such as "what are the basic symptoms?", "symptoms of cough", or "symptoms of fever", you MUST answer the latest named condition first with a short Markdown bullet list. Add warning signs when relevant, then optionally ask one personal follow-up question. Never answer an educational question with only a request for the patient's own symptoms, and never say you are focusing on the old selected concern when the latest question is clear.
 - Understand ordinary spelling mistakes, missing words, phonetic typing, speech-to-text errors, Roman Hindi, and mixed language from context. Silently infer the most likely meaning; do not criticize or mention the typo. If two meanings are genuinely possible, state your best interpretation briefly and ask a gentle clarification.
 - Do not claim a confirmed diagnosis. Give general safety guidance only when appropriate.
@@ -337,6 +351,22 @@ const detectEmergencySignal = (message: string, history: Array<{ role: string; c
 const wantsDoctorOrBooking = (message: string): boolean =>
   /\b(doctor|dr\.?|specialist|consult|appointment|book|slot|clinic|hospital|dikhao|dikhaiye|milao|bulao|doctor se|इलाज|डॉक्टर|अपॉइंटमेंट)\b/i.test(message)
 
+const hasDoctorSearchConfirmation = (message: string, history: Array<{ role: string; content: string }>): boolean => {
+  if (!/^(yes|yeah|yep|sure|okay|ok|haan|han|ji|bilkul|kar do|search kar do|haan search karo|हाँ|जी|कर दो)\s*[.!]?$/i.test(message.trim())) return false
+  const lastAssistant = history.filter((item) => item.role === "assistant").slice(-1)[0]?.content || ""
+  return /search|find|verified doctor|available slot|doctor|specialist|\bडॉक्टर\b|\bस्लॉट\b/i.test(lastAssistant)
+}
+
+const extractRequestedDoctorName = (message: string, history: Array<{ role: string; content: string }>): string => {
+  const context = [...history.slice(-8).map((item) => item.content), message].join(" ")
+  const matches = Array.from(context.matchAll(/\b(?:dr\.?|doctor)\s+([a-z][a-z.'-]*(?:\s+[a-z][a-z.'-]*){0,3})/gi))
+  const candidate = matches.at(-1)?.[1]?.trim() || ""
+  return candidate
+    .replace(/[’']s\b/gi, "")
+    .replace(/\s+(?:available|slots?|appointment|in|at|for|please|now)\b.*$/i, "")
+    .trim()
+}
+
 const hasExplicitBookingConfirmation = (message: string, history: Array<{ role: string; content: string }>): boolean => {
   const recentUserText = history
     .filter((item) => item.role === "user")
@@ -350,8 +380,9 @@ const hasExplicitBookingConfirmation = (message: string, history: Array<{ role: 
 
 const resolveSpecialtySearchTerms = (value: string): string[] => {
   const text = normalize(value)
+  if (/general physician|general medicine|primary care/.test(text)) return ["general physician", "general medicine", "internal medicine", "physician"]
   if (/diabet|sugar|thyroid|hormone|insulin/.test(text)) return ["endocrin", "diabet", "metabolic"]
-  if (/typhoid|malaria|dengue|infection|infectious|prolonged fever|high fever/.test(text)) return ["infectious", "internal medicine", "general medicine", "physician"]
+  if (/fever|bukhar|temperature|typhoid|malaria|dengue|infection|infectious|prolonged fever|high fever/.test(text)) return ["infectious", "internal medicine", "general medicine", "physician"]
   if (/heart|cardiac|chest|bp|blood pressure|palpitation/.test(text)) return ["cardio", "heart", "internal medicine"]
   if (/cough|breath|lung|asthma|copd|saans/.test(text)) return ["pulmon", "respiratory", "chest physician"]
   if (/skin|rash|acne|allerg|eczema|itch/.test(text)) return ["dermat", "skin", "allerg"]
@@ -367,6 +398,26 @@ const resolveSpecialtySearchTerms = (value: string): string[] => {
   return []
 }
 
+const inferDepartmentSuggestion = (value: string): { id: string; label: string } | null => {
+  const text = normalize(value)
+  if (!text) return null
+  if (/child|baby|infant|pediatric|बच्च/.test(text)) return { id: "Pediatrician", label: "Pediatrician" }
+  if (/pregnan|period|women|gynec|menstrual|pcos/.test(text)) return { id: "Gynecologist", label: "Gynecologist" }
+  if (/chest|heart|cardiac|palpitation/.test(text)) return { id: "Cardiologist", label: "Cardiologist" }
+  if (/breath|cough|lung|asthma|copd|saans/.test(text)) return { id: "Pulmonologist", label: "Pulmonologist" }
+  if (/skin|rash|acne|eczema|itch/.test(text)) return { id: "Dermatologist", label: "Dermatologist" }
+  if (/diabet|sugar|thyroid|hormone|insulin/.test(text)) return { id: "Endocrinologist", label: "Endocrinologist" }
+  if (/stomach|gastric|liver|digestion|diarr|constipation|vomit/.test(text)) return { id: "Gastroenterologist", label: "Gastroenterologist" }
+  if (/brain|headache|migraine|seizure|nerve|numbness|stroke/.test(text)) return { id: "Neurologist", label: "Neurologist" }
+  if (/kidney|urine|urinary|bladder|prostate/.test(text)) return { id: "Urologist", label: "Urologist" }
+  if (/ear|nose|throat|sinus|hearing/.test(text)) return { id: "ENT Specialist", label: "ENT Specialist" }
+  // Fever and an unclear/general illness should route to primary care.
+  if (/fever|bukhar|temperature|body ache|body pain|viral|infection|general health|general check/.test(text)) {
+    return { id: "General Physician", label: "General Physician" }
+  }
+  return null
+}
+
 const formatSlotLabel = (slot: any): string => {
   const date = typeof slot?.date === "string" ? slot.date : ""
   const start = typeof slot?.start_time === "string" ? slot.start_time.slice(0, 5) : ""
@@ -374,33 +425,47 @@ const formatSlotLabel = (slot: any): string => {
   return `${date}${start ? ` • ${start}${end ? `–${end}` : ""}` : ""}`.trim()
 }
 
-const loadDoctorRecommendations = async (admin: any, topic: string, requestedCity: string): Promise<any> => {
+const loadDoctorRecommendations = async (admin: any, topic: string, requestedCity: string, requestedDoctorName = ""): Promise<any> => {
   const city = clip(requestedCity, 80)
   const specialtyTerms = resolveSpecialtySearchTerms(topic)
+  const doctorTokens = requestedDoctorName.toLowerCase().split(/\s+/).filter(Boolean)
+  const firstDoctorToken = doctorTokens[0] || ""
   const fields = "id,city,specialization,experience,fee,rating,first_name,last_name,profile_picture"
   let query = admin.from("doctors_public").select(fields).limit(6)
   if (city) query = query.ilike("city", `%${city}%`)
-  if (specialtyTerms.length) {
+  if (specialtyTerms.length && !requestedDoctorName) {
     query = query.or(specialtyTerms.map((term) => `specialization.ilike.%${term}%`).join(","))
+  }
+  if (firstDoctorToken) {
+    query = query.or(`first_name.ilike.%${firstDoctorToken}%,last_name.ilike.%${firstDoctorToken}%`)
   }
   let { data: doctors } = await query
   let mode = city ? "local" : "app"
 
   // Location is first priority, but do not leave the patient without an app doctor.
-  if ((!doctors || doctors.length === 0) && city && specialtyTerms.length) {
+  if ((!doctors || doctors.length === 0) && !requestedDoctorName && city && specialtyTerms.length) {
     const fallback = await admin.from("doctors_public").select(fields)
       .or(specialtyTerms.map((term) => `specialization.ilike.%${term}%`).join(","))
       .limit(6)
     doctors = fallback.data || []
     mode = "app_specialty_fallback"
   }
-  if ((!doctors || doctors.length === 0) && city) {
+  if ((!doctors || doctors.length === 0) && !requestedDoctorName && city) {
     const fallback = await admin.from("doctors_public").select(fields).limit(6)
     doctors = fallback.data || []
     mode = "app_fallback"
   }
   doctors = Array.isArray(doctors) ? doctors : []
-  const normalizedDoctors = doctors.map((doctor: any) => ({
+  const exactDoctors = requestedDoctorName
+    ? doctors.filter((doctor: any) => {
+        const fullName = `${doctor.first_name || ""} ${doctor.last_name || ""}`.toLowerCase()
+        return doctorTokens.every((token) => fullName.includes(token))
+      })
+    : doctors
+  const selectedDoctors = requestedDoctorName
+    ? (exactDoctors.length ? exactDoctors.slice(0, 1) : doctors.slice(0, 1))
+    : doctors
+  const normalizedDoctors = selectedDoctors.map((doctor: any) => ({
     id: doctor.id,
     firstName: doctor.first_name || "",
     lastName: doctor.last_name || "",
@@ -562,6 +627,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return stream ? streamResponse(scopePayload) : new Response(JSON.stringify(scopePayload), { headers: jsonHeaders })
     }
     const clinicalSummary = decision.clinicalSummary || previousSummary || initialClinicalContext
+    const departmentSuggestion = inferDepartmentSuggestion(`${decision.activeTopic || ""} ${message} ${clinicalSummary}`)
     if (emergencySignal) {
       decision.consultRecommended = true
       decision.consultPriority = "immediate"
@@ -570,10 +636,11 @@ Deno.serve(async (request: Request): Promise<Response> => {
       decision.reviewReason = "emergency_signal"
     }
     const locationCity = clip(body?.searchAreaCity || body?.preferredCity || body?.locationCity, 80)
+    const requestedDoctorName = extractRequestedDoctorName(message, history)
     const shouldFindDoctors = Boolean(
       body?.showDoctors === true ||
       wantsDoctorOrBooking(message) ||
-      (decision.consultRecommended && (body?.replyInVoice || body?.voiceMode)),
+      hasDoctorSearchConfirmation(message, history),
     )
     let doctorRecommendations: any[] = []
     let bookingPreparation: any = null
@@ -589,7 +656,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       }
     }
     if (shouldFindDoctors && !bookingConfirmation) {
-      const doctorSearch = await loadDoctorRecommendations(admin, decision.activeTopic || concern, locationCity)
+      const doctorSearch = await loadDoctorRecommendations(admin, decision.activeTopic || concern, locationCity, requestedDoctorName)
       doctorRecommendations = doctorSearch.doctors
       if (doctorSearch.slotOptions.length > 0) {
         bookingPreparation = {
@@ -609,6 +676,30 @@ Deno.serve(async (request: Request): Promise<Response> => {
           ? `✅ Aapka appointment **${bookingConfirmation.doctorName}** ke saath **${bookingConfirmation.slotLabel}** par confirm ho gaya hai. Koi payment nahi liya gaya hai.`
           : `✅ Your appointment with **${bookingConfirmation.doctorName}** is confirmed for **${bookingConfirmation.slotLabel}**. No payment was taken.`
     }
+    if (shouldFindDoctors && !bookingConfirmation) {
+      const foundSlots = bookingPreparation?.slotOptions?.length > 0
+      const foundDoctors = doctorRecommendations.length > 0
+      if (foundSlots) {
+        const doctorLabel = requestedDoctorName || bookingPreparation?.slotOptions?.[0]?.doctorName || "the selected doctor"
+        decision.reply = language === "devanagari_hindi"
+          ? `${doctorLabel} के उपलब्ध स्लॉट मिल गए हैं। कृपया एक स्लॉट चुनें।`
+          : language === "roman_hindi"
+            ? `${doctorLabel} ke available slots mil gaye hain. Kripya ek slot choose kijiye.`
+            : `I found ${doctorLabel}'s available slots. Please choose a slot.`
+      } else if (requestedDoctorName) {
+        decision.reply = language === "devanagari_hindi"
+          ? `${requestedDoctorName} का अभी कोई खुला स्लॉट नहीं मिला।`
+          : language === "roman_hindi"
+            ? `${requestedDoctorName} ka abhi koi open slot nahi mila.`
+            : `I could not find an open slot for ${requestedDoctorName} right now.`
+      } else if (foundDoctors) {
+        decision.reply = language === "devanagari_hindi"
+          ? "मुझे verified doctors मिल गए हैं। पहले एक doctor चुनें, फिर मैं उसी के slots दिखाऊँगा।"
+          : language === "roman_hindi"
+            ? "Mujhe verified doctors mil gaye hain. Pehle ek doctor choose kijiye, phir main usi ke slots dikhaunga."
+            : "I found verified doctors. Please choose a doctor first, then I will show that doctor's slots."
+      }
+    }
     if (bookingConfirmation?.status === "needs_confirmation") {
       decision.reply = language === "devanagari_hindi"
         ? "कृपया इस डॉक्टर और इसी स्लॉट की booking के लिए साफ़ तौर पर हाँ कहें।"
@@ -625,6 +716,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         intent: decision.intent,
         activeTopic: decision.activeTopic || concern,
         clinicalSummary,
+        departmentSuggestion,
         model: generation.model,
         selectedModel: generation.model,
         doctorRecommendations,

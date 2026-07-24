@@ -85,6 +85,7 @@ type TriageSnapshot = {
   chiefConcern: string;
   duration: string;
   severity: string;
+  temperature: string;
   associatedSymptoms: string[];
   medicationContext: string;
   riskNote: string;
@@ -1255,12 +1256,10 @@ const buildPrescriptionStyleSnapshotPdfBytes = async (args: {
 
   // Header mirrors prescription PDF proportions.
   drawText("CD4", 34, 807, 24, true, green);
-  drawText("Teleconsultation", 34, 792, 11, false, dark);
   page.drawRectangle({ x: 202, y: 790, width: 190, height: 28, color: green });
   drawText("AI SNAPSHOT", 257, 799, 13, true, white);
   drawText(`Date: ${new Date().toLocaleDateString("en-IN")}`, 410, 807, 10, false, dark);
   drawText(`Time: ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`, 410, 793, 10, false, dark);
-  drawText(`Report ID: ${fitText(reportId, 110, 10)}`, 410, 779, 10, false, dark);
 
   // Doctor + patient card.
   drawBox(28, 675, 539, 104, white, border);
@@ -1285,6 +1284,7 @@ const buildPrescriptionStyleSnapshotPdfBytes = async (args: {
       args.triageSnapshot.chiefConcern,
       `Duration: ${args.triageSnapshot.duration}`,
       `Severity: ${args.triageSnapshot.severity}`,
+      `Temperature: ${args.triageSnapshot.temperature}`,
     ],
     4,
     9,
@@ -1292,30 +1292,32 @@ const buildPrescriptionStyleSnapshotPdfBytes = async (args: {
     548,
   );
 
-  drawText("AI SUMMARY", 230, 645, 11, true, green);
-  drawBullets(230, 627, 175, summaryLines, 4, 9, dark, 548);
+  drawText("AI SUMMARY", 220, 645, 11, true, green);
+  drawBullets(220, 627, 185, summaryLines, 4, 8.7, dark, 548);
 
-  drawText("RISK / CONTEXT", 430, 645, 11, true, green);
+  drawText("RISK / CONTEXT", 425, 645, 11, true, green);
   drawBullets(
-    430,
+    425,
     627,
-    128,
+    125,
     [
       redFlagText,
       `Data: ${args.triageSnapshot.captureScore}/${args.triageSnapshot.answeredTopics.length}`,
       `Missing: ${missingPoints}`,
     ],
     3,
-    8.4,
+    8.1,
     dark,
     548,
   );
-  drawText(`Concern: ${fitText(args.concern, 500, 9)}`, 40, 560, 9, true, dark);
+  drawText(`Concern: ${fitText(args.triageSnapshot.chiefConcern, 500, 9)}`, 40, 560, 9, true, dark);
   drawText(`Symptoms: ${fitText(associatedSymptoms, 480, 9)}`, 40, 546, 9, false, dark);
 
   // Doctor quick-review table.
   drawText("DOCTOR QUICK REVIEW", 28, 515, 12, true, green);
-  drawBox(28, 350, 539, 156, white, border);
+  // Six review rows need more vertical room than the previous fixed box.
+  // Keep the final note outside the table so it cannot overlap the Booking row.
+  drawBox(28, 326, 539, 180, white, border);
   page.drawRectangle({ x: 29, y: 485, width: 537, height: 20, color: green });
   drawText("Field", 38, 491, 9, true, white);
   drawText("Captured Detail", 146, 491, 9, true, white);
@@ -1339,13 +1341,7 @@ const buildPrescriptionStyleSnapshotPdfBytes = async (args: {
     drawText(fitText(row[2], 150, 8.8), 382, rowY, 8.8, false, dark);
     rowY -= 22;
   });
-  drawText("This AI snapshot supports clinical review and should be verified by the treating doctor.", 36, 357, 8.5, false, muted);
-
-  // Short doctor-readable Q&A row.
-  drawBox(28, 234, 539, 106, white, border);
-  drawText("AI QUESTIONS & PATIENT ANSWERS", 40, 322, 11, true, green);
-  drawText("Short transcript summary for quick doctor review.", 40, 307, 8.5, false, muted);
-  drawCompactLines(40, 291, 500, args.qaSnapshotLines, 5, 8.3, dark);
+  drawText("This AI snapshot supports clinical review and should be verified by the treating doctor.", 36, 334, 8.5, false, muted);
 
   // Signature + declaration.
   drawText("AI-assisted summary for doctor review only. Not a diagnosis or prescription.", 28, 208, 9, false, muted);
@@ -1373,60 +1369,6 @@ const buildPrescriptionStyleSnapshotPdfBytes = async (args: {
 
   page.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green });
   drawText("Your health. Our priority.", 244, 8, 9, true, white);
-
-  // Keep the first page quick to scan, but attach the complete clinical
-  // conversation on following pages so the doctor does not lose triage
-  // answers that do not fit in the snapshot card.
-  const transcriptLines = [
-    "TRIAGE QUESTIONS & PATIENT ANSWERS",
-    "The following answers are taken from the patient's AI/voice conversation.",
-    ...args.qaSnapshotLines,
-    "",
-    "COMPLETE AI / PATIENT CHAT TIMELINE",
-    "The timeline preserves the full conversation context available at booking.",
-    ...args.chatTimelineLines,
-  ];
-  let transcriptPage = pdf.addPage([595, 842]);
-  let transcriptY = 790;
-  let transcriptPageNumber = 2;
-  const drawTranscriptHeader = () => {
-    transcriptPage.drawRectangle({ x: 0, y: 790, width: 595, height: 52, color: green });
-    transcriptPage.drawText("CD4 AI CLINICAL HANDOFF", { x: 34, y: 815, size: 16, font: bold, color: white });
-    transcriptPage.drawText(sanitizePdfText(`${args.concern} • ${args.doctorName}`, 105), { x: 34, y: 800, size: 8.5, font, color: lightGreen });
-    transcriptY = 765;
-  };
-  const startTranscriptPage = () => {
-    transcriptPage = pdf.addPage([595, 842]);
-    transcriptPageNumber += 1;
-    drawTranscriptHeader();
-  };
-  drawTranscriptHeader();
-  for (const rawLine of transcriptLines) {
-    const line = sanitizePdfText(rawLine);
-    if (!line) {
-      transcriptY -= 9;
-      continue;
-    }
-    const heading = /^(TRIAGE QUESTIONS|COMPLETE AI)/.test(line);
-    const wrapped = wrap(line, 515, heading ? 11 : 8.6, heading);
-    for (const wrappedLine of wrapped.slice(0, 4)) {
-      if (transcriptY < 48) startTranscriptPage();
-      transcriptPage.drawText(wrappedLine, {
-        x: 40,
-        y: transcriptY,
-        size: heading ? 11 : 8.6,
-        font: heading ? bold : font,
-        color: heading ? green : dark,
-      });
-      transcriptY -= heading ? 16 : 12;
-    }
-  }
-  // Add a clear page marker to every appended transcript page.
-  for (const transcript of pdf.getPages().slice(1)) {
-    transcript.drawLine({ start: { x: 40, y: 31 }, end: { x: 555, y: 31 }, thickness: 0.7, color: border });
-    transcript.drawText("Generated by CD4 AI Clinical Snapshot", { x: 40, y: 18, size: 8, font, color: muted });
-    transcript.drawText(`Page ${pdf.getPages().indexOf(transcript) + 1}`, { x: 510, y: 18, size: 8, font: bold, color: muted });
-  }
 
   return await pdf.save();
 };
@@ -1601,7 +1543,7 @@ const CLINICAL_SYMPTOM_RULES: Array<{ regex: RegExp; label: string }> = [
   { regex: /\b(dizziness|vertigo|faint)\b/i, label: "Dizziness" },
 ];
 
-const NEGATION_PATTERN = /\b(no|not|denies?|without|never|nahin|nahi|na|mat|none)\b/i;
+const NEGATION_PATTERN = /\b(no|not|denies?|without|never|nahin|nahi|na|mat|none|dont|don't|doesnt|doesn't|didnt|didn't)\b/i;
 
 const hasNegatedMatch = (text: string, regex: RegExp): boolean => {
   const source = String(text || "");
@@ -1626,6 +1568,15 @@ const extractAssociatedSymptoms = (text: string): string[] => {
     .map((entry) => entry.label)
     .slice(0, 8);
   return Array.from(new Set(labels));
+};
+
+const extractTemperature = (text: string): string => {
+  const normalized = normalizeTranscriptNoise(text);
+  const match = normalized.match(/\b(\d{2,3}(?:\.\d+)?)\s*(?:degrees?\s*)?(fahrenheit|f|celsius|c)\b/i);
+  if (!match) return "Not clearly stated";
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 80 || value > 115) return "Not clearly stated";
+  return `${value}${/^c/i.test(match[2]) ? "°C" : "°F"}`;
 };
 
 const extractMedicationMentions = (text: string): string[] => {
@@ -1712,6 +1663,7 @@ const extractTriageSnapshot = (args: {
     ]) || "Not clearly stated";
 
   const associatedSymptoms = extractAssociatedSymptoms(combinedUser);
+  const temperature = extractTemperature(combinedUser);
   const medicationContext = extractMedicationContext(combinedUser);
 
   const emergencyFlag = /\b(chest pain|difficulty breathing|shortness of breath|faint|unconscious|stroke|severe bleeding)\b/i.test(
@@ -1734,6 +1686,7 @@ const extractTriageSnapshot = (args: {
   const answeredTopics: Array<{ label: string; value: string }> = [
     { label: "Onset / Duration", value: duration },
     { label: "Severity", value: severity },
+    { label: "Temperature / Vitals", value: temperature },
     {
       label: "Associated Symptoms",
       value: associatedSymptoms.length ? associatedSymptoms.join(", ") : "Not clearly stated",
@@ -1764,10 +1717,15 @@ const extractTriageSnapshot = (args: {
 
   const captureScore = Math.max(0, answeredTopics.length - missingDataPoints.filter((item) => item !== "Chat-backed clinical triage").length);
 
+  const resolvedChiefConcern = /^(general assistant|general consultation|general)$/i.test(chiefConcern)
+    ? (associatedSymptoms[0] || "General consultation")
+    : chiefConcern;
+
   return {
-    chiefConcern,
+    chiefConcern: resolvedChiefConcern,
     duration,
     severity,
+    temperature,
     associatedSymptoms,
     medicationContext,
     riskNote,
@@ -1778,15 +1736,37 @@ const extractTriageSnapshot = (args: {
   };
 };
 
+const extractPatientReportedFacts = (historyInput: TriageHistoryItem[]): string[] => {
+  const history = Array.isArray(historyInput) ? historyInput : [];
+  const seen = new Set<string>();
+  const facts: string[] = [];
+  for (const item of history) {
+    if (item.role !== "user") continue;
+    const text = normalizeTranscriptNoise(item.content || "")
+      .replace(/\b(?:can you|could you|please recommend|recommend me|i want to|i wanted to|would you like|book(?: me)?|make an appointment)[\s\S]*$/i, "")
+      .trim();
+    if (!text || text.length < 4 || !HEALTH_QA_PATTERN.test(text)) continue;
+    const key = text.toLowerCase().replace(/\s+/g, " ").trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    facts.push(toProfessionalEnglishAnswer(text));
+    if (facts.length >= 5) break;
+  }
+  return facts;
+};
+
 const buildHeuristicSummary = (args: {
   concern: string;
   history: TriageHistoryItem[];
 }): string => {
   const snapshot = extractTriageSnapshot(args);
+  const patientFacts = extractPatientReportedFacts(args.history);
   const lines = [
     `Chief concern: ${snapshot.chiefConcern}.`,
+    `Patient-reported details: ${patientFacts.length ? patientFacts.join("; ") : "Not clearly stated"}.`,
     `Onset/Duration: ${snapshot.duration}.`,
     `Severity: ${snapshot.severity}.`,
+    `Temperature/Vitals: ${snapshot.temperature}.`,
     `Associated symptoms: ${snapshot.associatedSymptoms.length ? snapshot.associatedSymptoms.join(", ") : "Not clearly stated"}.`,
     `Clinical context: ${snapshot.medicationContext}`,
     `Booking context: ${snapshot.bookingContext}`,

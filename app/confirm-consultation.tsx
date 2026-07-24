@@ -87,6 +87,7 @@ export default function ConfirmConsultationScreen() {
   const [quote, setQuote] = React.useState<QuoteSnapshot | null>(null);
   const [isPreparing, setIsPreparing] = React.useState(true);
   const [isPaying, setIsPaying] = React.useState(false);
+  const quoteRequestRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const loadQuote = React.useCallback(async () => {
     if (!doctorId || !slotId) {
@@ -95,15 +96,29 @@ export default function ConfirmConsultationScreen() {
       return;
     }
 
+    const requestKey = `${doctorId}:${slotId}:${session?.access_token || 'no-session'}`;
+    const existingRequest = quoteRequestRef.current;
+    if (existingRequest?.key === requestKey) {
+      await existingRequest.promise;
+      return;
+    }
+
     setIsPreparing(true);
-    try {
+    const request = (async () => {
       if (!session?.access_token) {
         throw new Error('Authentication session missing. Please login again and retry booking.');
       }
       supabase.functions.setAuth(session.access_token);
-      const { data, error } = await supabase.functions.invoke('manage-appointment-payment', {
-        body: { action: 'create_order', doctorId, slotId },
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Payment setup timed out. Please retry.')), 15000);
       });
+      const requestResult = await Promise.race([
+        supabase.functions.invoke('manage-appointment-payment', {
+          body: { action: 'create_order', doctorId, slotId },
+        }),
+        timeout,
+      ]);
+      const { data, error } = requestResult;
 
       if (error || data?.success === false) {
         throw new Error(data?.message || error?.message || 'Could not prepare payment order.');
@@ -123,10 +138,18 @@ export default function ConfirmConsultationScreen() {
         grossAmount,
         currency: String(data?.payment?.currency || 'INR'),
       });
+    })();
+
+    quoteRequestRef.current = { key: requestKey, promise: request };
+    try {
+      await request;
     } catch (error: any) {
       showUiAlert('Payment setup failed', error?.message || 'Could not prepare payment right now.');
       router.replace('/(tabs)/appointments');
     } finally {
+      if (quoteRequestRef.current?.key === requestKey) {
+        quoteRequestRef.current = null;
+      }
       setIsPreparing(false);
     }
   }, [doctorId, fallbackGrossAmount, router, session?.access_token, slotId]);

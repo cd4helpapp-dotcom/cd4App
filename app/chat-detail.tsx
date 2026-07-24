@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Toast from 'react-native-toast-message';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView, LayoutAnimation, UIManager } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { useColorScheme } from 'react-native';
 import Colors from '../constants/Colors';
 import { getImageUrl } from '../constants/Config';
-import { ArrowLeft, Video, Phone, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, Maximize2, MessageCircle } from 'lucide-react-native';
+import { ArrowLeft, Video, Phone, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, ChevronUp, ChevronDown, Maximize2, MessageCircle } from 'lucide-react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { PanResponder, Animated } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -18,6 +18,7 @@ import { useChatMessages, useSendMessage, useGetOrCreateRoom, useMarkAsRead, use
 import { useCall } from '../hooks/useCall';
 import { usePresence } from '../hooks/usePresence';
 import { useFileTransfer } from '../hooks/useFileTransfer';
+import { useParseDoctorPrescription, type ParsedPrescriptionSummary } from '../hooks/useMedicalReports';
 import { setActiveRoomId } from '../hooks/usePushNotifications';
 import { supabase } from '../src/lib/supabase';
 import { RtcSurfaceView, RtcTextureView } from '../src/lib/agora';
@@ -196,6 +197,9 @@ PRECAUTIONS:
 -
 
 FOLLOW-UP:
+-
+
+DOCTOR NOTES:
 -`;
 
 const toUniqueLines = (rows: string[], max = 3): string[] => {
@@ -204,7 +208,12 @@ const toUniqueLines = (rows: string[], max = 3): string[] => {
     for (const row of rows) {
         const line = row.trim();
         if (!line) continue;
-        const key = line.toLowerCase();
+        const key = line.toLowerCase()
+            .replace(/^(?:like|it is|i said|medicine is|prescribe)\s+/i, '')
+            .replace(/\b(?:tablet|tab|capsule|cap)\b/g, ' ')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(line);
@@ -213,7 +222,94 @@ const toUniqueLines = (rows: string[], max = 3): string[] => {
     return out;
 };
 
-const buildStructuredPrescriptionDraft = (rawText: string): string => {
+const MEDICATION_DICTATION_PATTERN = /\b(paracetamol|pcm|dolo|azithromycin|amoxicillin|cetirizine|levocetirizine|montelukast|pantoprazole|rabeprazole|ibuprofen|tablet|tab\.?|capsule|cap\.?|syrup|injection|ointment|cream|drops?|inhaler|mg|mcg|ml|od|bd|tds|sos|once daily|twice daily|three times daily|after food|before food)\b/i;
+
+const cleanMedicineDraftLine = (value: string): string => value
+    .replace(/^\s*(?:like|it is|i said|medicine is|prescribe|the medicine is|this is|is)\s+/i, '')
+    .replace(/^\s*(?:a|an|the)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const medicineNameKey = (value: string): string => {
+    const normalized = cleanMedicineDraftLine(value)
+    .toLowerCase()
+    .replace(/\b(?:tablet|tab|capsule|cap|syrup|syp|injection|inj|cream|ointment|drops?)\b/g, ' ')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g|gm|%)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+    // Common dictation variants must collapse before the generic fuzzy check.
+    if (/^(?:azithromycin|azithro|azee|azentrom|azentromycin)$/.test(normalized)) return 'azithromycin';
+    if (/^(?:paracetamol|paracitamol|pcm|dolo|tolo)$/.test(normalized)) return 'paracetamol';
+    return normalized;
+};
+
+const medicineNameDistance = (left: string, right: string): number => {
+    const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+    for (let i = 0; i < left.length; i += 1) {
+        const current = [i + 1];
+        for (let j = 0; j < right.length; j += 1) {
+            current.push(Math.min(current[j] + 1, previous[j + 1] + 1, previous[j] + (left[i] === right[j] ? 0 : 1)));
+        }
+        for (let j = 0; j < current.length; j += 1) previous[j] = current[j];
+    }
+    return previous[right.length];
+};
+
+const dedupeMedicineDraftLines = (rows: string[], max = 6): string[] => {
+    const output: string[] = [];
+    const keys: string[] = [];
+    const noise = new Set(['is', 'is a', 'is an', 'a', 'an', 'the', 'medicine', 'medication', 'dose', 'frequency', 'duration', 'tablet', 'capsule']);
+    for (const rawRow of rows) {
+        const cleaned = cleanMedicineDraftLine(rawRow);
+        const medicinePart = cleaned.split('|')[0]?.trim() || cleaned;
+        const key = medicineNameKey(medicinePart);
+        if (!key || key.length < 3 || noise.has(key)) continue;
+        const duplicate = keys.some((existing) => {
+            if (existing === key) return true;
+            const distance = medicineNameDistance(existing, key);
+            return Math.max(existing.length, key.length) >= 7 && distance / Math.max(existing.length, key.length) <= 0.22;
+        });
+        if (duplicate) continue;
+        keys.push(key);
+        output.push(cleaned);
+        if (output.length >= max) break;
+    }
+    return output;
+};
+
+type PrescriptionSectionKey = 'complaints' | 'history' | 'examination' | 'diagnosis' | 'medications' | 'advice' | 'precautions' | 'followUp' | 'notes';
+
+const extractExplicitPrescriptionSections = (text: string): Partial<Record<PrescriptionSectionKey, string[]>> => {
+    const markerPattern = /\b(chief complaints?|complaints?|history(?:\s*summary)?(?:\s*\([^)]*\))?|examination|exam|diagnosis|medications?|medicines?|general advice|advice|precautions?|follow[-\s]?up|doctor notes?|additional notes?)\s*[:\-]?/gi;
+    const matches = Array.from(text.matchAll(markerPattern));
+    const result: Partial<Record<PrescriptionSectionKey, string[]>> = {};
+    const sectionFor = (label: string): PrescriptionSectionKey => {
+        const key = label.toLowerCase().replace(/[-\s]+/g, ' ');
+        if (key.includes('chief') || key === 'complaint' || key === 'complaints') return 'complaints';
+        if (key.startsWith('history')) return 'history';
+        if (key === 'exam' || key === 'examination') return 'examination';
+        if (key === 'diagnosis') return 'diagnosis';
+        if (key.startsWith('medic')) return 'medications';
+        if (key.startsWith('advice')) return 'advice';
+        if (key.startsWith('precaution')) return 'precautions';
+        if (key.startsWith('follow')) return 'followUp';
+        return 'notes';
+    };
+
+    matches.forEach((match, index) => {
+        const start = (match.index || 0) + match[0].length;
+        const end = index + 1 < matches.length ? (matches[index + 1].index || text.length) : text.length;
+        const value = text.slice(start, end).replace(/[,:;]+/g, ' ').trim();
+        if (!value) return;
+        const key = sectionFor(match[1]);
+        const rows = value.split(/[.!?\n]+/).map((item) => item.trim()).filter(Boolean);
+        result[key] = [...(result[key] || []), ...rows];
+    });
+    return result;
+};
+
+const buildStructuredPrescriptionDraft = (rawText: string, aiSummary?: ParsedPrescriptionSummary, aiMedicines?: Array<{ medicine_name?: string | null; dosage?: string | null; frequency?: string | null; duration?: string | null; instructions?: string | null }>): string => {
     const raw = normalizeMedicalDictation(rawText);
     if (!raw) return RX_TEMPLATE;
 
@@ -221,19 +317,36 @@ const buildStructuredPrescriptionDraft = (rawText: string): string => {
         .split(/[.?!]\s+/)
         .map((item) => item.trim())
         .filter(Boolean);
+    const explicit = extractExplicitPrescriptionSections(raw);
 
-    const complaints = toUniqueLines(parts.filter((p) => /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat)/i.test(p)), 4);
-    const history = toUniqueLines(parts.filter((p) => /(since|from last|day|days|week|history|onset)/i.test(p)), 4);
-    const exam = toUniqueLines(parts.filter((p) => /(bp|pulse|temperature|spo2|exam|examination)/i.test(p)), 3);
-    const diagnosis = toUniqueLines(parts.filter((p) => /(viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes|diagnosis)/i.test(p)), 2);
-    const advice = toUniqueLines(parts.filter((p) => /(rest|water|hydrate|sleep|diet|steam|light food)/i.test(p)), 4);
-    const precautions = toUniqueLines(parts.filter((p) => /(avoid|don't|dont|mat|careful|precaution)/i.test(p)), 4);
-    const followUp = toUniqueLines(parts.filter((p) => /(follow up|review|revisit|dobara|wapis|after \d+ day)/i.test(p)), 2);
-    const meds = formatPrescriptionForDisplay(raw)
-        .split('\n')
-        .map((line) => line.replace(/^-+\s*/, '').trim())
-        .filter(Boolean)
-        .slice(0, 6);
+    // Keep a spoken clinical sentence in its relevant section only. The old
+    // builder converted the entire dictation into medicine rows, which caused
+    // complaints, history, and advice to be duplicated in the PDF.
+    const medicationParts = parts.filter((part) => MEDICATION_DICTATION_PATTERN.test(part));
+    // Keep mixed sentences in the clinical scan so "fever for 2 days, give
+    // paracetamol" does not lose the fever/duration details; only pure
+    // medication instructions stay out of symptom sections.
+    const clinicalParts = parts.filter((part) =>
+        !MEDICATION_DICTATION_PATTERN.test(part) || /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat|since|day|days|week|history|onset|bp|pulse|temperature|spo2|exam|diagnosis|viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes)/i.test(part)
+    );
+    const aiMedicineLines = dedupeMedicineDraftLines((aiMedicines || []).map((item) => [item.medicine_name, item.dosage, item.frequency, item.duration, item.instructions].filter(Boolean).join(' | ')));
+    const complaints = toUniqueLines([...(aiSummary?.chief_complaints || []), ...(explicit.complaints || []), ...clinicalParts.filter((p) => /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat)/i.test(p))], 4);
+    const history = toUniqueLines([...(aiSummary?.history_summary || []), ...(explicit.history || []), ...clinicalParts.filter((p) => /(since|from last|day|days|week|history|onset)/i.test(p))], 4);
+    const exam = toUniqueLines([...(aiSummary?.examination || []), ...(explicit.examination || []), ...clinicalParts.filter((p) => /(bp|pulse|temperature|spo2|exam|examination)/i.test(p))], 3);
+    const diagnosis = toUniqueLines([...(aiSummary?.diagnosis ? [aiSummary.diagnosis] : []), ...(explicit.diagnosis || []), ...clinicalParts.filter((p) => /(viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes|diagnosis)/i.test(p))], 2);
+    const advice = toUniqueLines([...(aiSummary?.general_advice || []), ...(explicit.advice || []), ...clinicalParts.filter((p) => /(rest|water|hydrate|sleep|diet|steam|light food)/i.test(p))], 4);
+    const precautions = toUniqueLines([...(aiSummary?.precautions || []), ...(explicit.precautions || []), ...clinicalParts.filter((p) => /(avoid|don't|dont|mat|careful|precaution)/i.test(p))], 4);
+    const followUp = toUniqueLines([...(aiSummary?.follow_up || []), ...(explicit.followUp || []), ...clinicalParts.filter((p) => /(follow up|review|revisit|dobara|wapis|after \d+ day)/i.test(p))], 2);
+    // Prefer verified AI medicine rows. Raw local rows are only a fallback;
+    // otherwise speech noise such as "like Dolo 650" gets added beside the
+    // normalized "Dolo | 650" row.
+    const meds = dedupeMedicineDraftLines([
+        ...aiMedicineLines,
+        ...(explicit.medications || []),
+        ...(aiMedicineLines.length ? [] : medicationParts),
+    ], 6);
+    const knownClinicalSignal = /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat|since|day|days|week|history|onset|bp|pulse|temperature|spo2|exam|diagnosis|viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes|rest|water|hydrate|sleep|diet|steam|light food|avoid|don't|dont|mat|careful|precaution|follow up|review|revisit|dobara|wapis|after \d+ day)/i;
+    const notes = toUniqueLines([...(explicit.notes || []), ...clinicalParts.filter((p) => !knownClinicalSignal.test(p) && !MEDICATION_DICTATION_PATTERN.test(p))], 6);
 
     const section = (title: string, rows: string[], fallback = '-') =>
         `${title}\n${rows.length ? rows.map((row) => `- ${row}`).join('\n') : fallback}\n`;
@@ -247,6 +360,7 @@ const buildStructuredPrescriptionDraft = (rawText: string): string => {
         section('GENERAL ADVICE:', advice),
         section('PRECAUTIONS:', precautions),
         section('FOLLOW-UP:', followUp),
+        section('DOCTOR NOTES:', notes),
     ].join('\n');
 };
 
@@ -295,6 +409,9 @@ const appendMedicationLineToDraft = (draft: string, line: string): string => {
         `${nextNumber}. ${line}`,
     ];
 
+    const duplicate = existingRows.some((row) => row.replace(/^\d+\.\s*/, '').toLowerCase() === line.toLowerCase());
+    if (duplicate) return base;
+
     return [...start, ...rebuiltMeds, ...end].join('\n').replace(/\n{3,}/g, '\n\n');
 };
 
@@ -319,6 +436,7 @@ const appendBulletToSection = (draft: string, sectionTitle: string, bulletText: 
         .map((row) => row.trim())
         .filter((row) => row.startsWith('-'))
         .filter((row) => row !== '-');
+    if (bullets.some((row) => row.replace(/^-\s*/, '').trim().toLowerCase() === text.toLowerCase())) return base;
     bullets.push(`- ${text}`);
     return [...start, ...bullets, ...end].join('\n').replace(/\n{3,}/g, '\n\n');
 };
@@ -757,6 +875,7 @@ export default function ChatDetailScreen() {
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [replyingTo, setReplyingTo] = useState<any>(null);
     const [isRxVoiceModalVisible, setIsRxVoiceModalVisible] = useState(false);
+    const [isRxReviewModalVisible, setIsRxReviewModalVisible] = useState(false);
     const [isRxListening, setIsRxListening] = useState(false);
     const [rxTranscript, setRxTranscript] = useState('');
     const [rxMedName, setRxMedName] = useState('');
@@ -766,6 +885,35 @@ export default function ChatDetailScreen() {
     const [rxMedInstructions, setRxMedInstructions] = useState('');
     const [isRxMedicineFormOpen, setIsRxMedicineFormOpen] = useState(false);
     const [isRxSectionsFormOpen, setIsRxSectionsFormOpen] = useState(false);
+    const [rxExpandedSection, setRxExpandedSection] = useState<string | null>(null);
+    const rxListeningPulse = useRef(new Animated.Value(1)).current;
+
+    const toggleRxSection = useCallback((section: string) => {
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setRxExpandedSection((current) => current === section ? null : section);
+    }, []);
+
+    useEffect(() => {
+        if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+            UIManager.setLayoutAnimationEnabledExperimental(true);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!isRxListening) {
+            rxListeningPulse.stopAnimation();
+            rxListeningPulse.setValue(1);
+            return;
+        }
+        const pulse = Animated.loop(
+            Animated.sequence([
+                Animated.timing(rxListeningPulse, { toValue: 1.08, duration: 700, useNativeDriver: true }),
+                Animated.timing(rxListeningPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+            ])
+        );
+        pulse.start();
+        return () => pulse.stop();
+    }, [isRxListening, rxListeningPulse]);
     const [rxSectionNotes, setRxSectionNotes] = useState({
         complaints: '',
         history: '',
@@ -780,6 +928,10 @@ export default function ChatDetailScreen() {
     const rxKeepListeningRef = useRef(false);
     const rxModalVisibleRef = useRef(false);
     const rxRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const rxAiParseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const rxAiParseRequestRef = useRef(0);
+    const [isRxAiParsing, setIsRxAiParsing] = useState(false);
+    const [rxMedicineNeedsConfirmation, setRxMedicineNeedsConfirmation] = useState(false);
 
     const {
         data: messages = [],
@@ -790,6 +942,7 @@ export default function ChatDetailScreen() {
     } = useChatMessages(roomId, 40);
     const sendMessageMutation = useSendMessage();
     const sendPrescriptionPdfMutation = useSendPrescriptionPdfToChat();
+    const { mutateAsync: parseDoctorPrescription } = useParseDoctorPrescription();
     const { mutate: markAsRead } = useMarkAsRead();
     const { data: allRooms = [] } = useChatRooms();
     const { isUserOnline } = usePresence();
@@ -990,7 +1143,15 @@ export default function ChatDetailScreen() {
 
     const stopRxVoiceCapture = useCallback((keepTranscript = true) => {
         rxKeepListeningRef.current = false;
+        // Invalidate any parser response that is still in flight. A late AI
+        // response must never overwrite the doctor's reviewed draft.
+        rxAiParseRequestRef.current += 1;
+        setIsRxAiParsing(false);
         clearRxRestartTimer();
+        if (rxAiParseTimerRef.current) {
+            clearTimeout(rxAiParseTimerRef.current);
+            rxAiParseTimerRef.current = null;
+        }
         try {
             ExpoSpeechRecognitionModule?.stop?.();
         } catch {
@@ -1054,10 +1215,52 @@ export default function ChatDetailScreen() {
             const next = buildStructuredPrescriptionDraft(mergedRaw);
             lastRxSpeechRef.current = next;
             setRxTranscript(next);
+            // Any new dictation invalidates the previous medicine review until
+            // the latest parse completes.
+            setRxMedicineNeedsConfirmation(true);
+            if (mergedRaw.length >= 12) {
+                if (rxAiParseTimerRef.current) clearTimeout(rxAiParseTimerRef.current);
+                const requestId = ++rxAiParseRequestRef.current;
+                setIsRxAiParsing(true);
+                rxAiParseTimerRef.current = setTimeout(() => {
+                    rxAiParseTimerRef.current = null;
+                    void parseDoctorPrescription({ doctorText: mergedRaw }).then((parsed) => {
+                        if (requestId !== rxAiParseRequestRef.current || rawRxSpeechRef.current !== mergedRaw) return;
+                        const aiDraft = buildStructuredPrescriptionDraft(mergedRaw, parsed.clinical_summary, parsed.medicines);
+                        lastRxSpeechRef.current = aiDraft;
+                        setRxTranscript(aiDraft);
+                        setRxMedicineNeedsConfirmation(
+                            Array.isArray(parsed?.medicines) && parsed.medicines.some((medicine: any) => medicine?.doctor_confirmation_required)
+                        );
+                    }).catch(() => {
+                        // Local section routing remains available when the AI
+                        // parser is slow or temporarily unavailable, but the
+                        // final PDF must require an explicit doctor review.
+                        if (requestId === rxAiParseRequestRef.current && rawRxSpeechRef.current === mergedRaw) {
+                            setRxMedicineNeedsConfirmation(true);
+                        }
+                    }).finally(() => {
+                        if (requestId === rxAiParseRequestRef.current) setIsRxAiParsing(false);
+                    });
+                }, 900);
+            }
         });
 
         const endSub = ExpoSpeechRecognitionModule.addListener('end', () => {
             setIsRxListening(false);
+            if (!rxKeepListeningRef.current || !rxModalVisibleRef.current) return;
+            clearRxRestartTimer();
+            rxRestartTimerRef.current = setTimeout(() => {
+                rxRestartTimerRef.current = null;
+                if (!rxKeepListeningRef.current || !rxModalVisibleRef.current) return;
+                try {
+                    ExpoSpeechRecognitionModule.start(RX_SPEECH_START_OPTIONS);
+                    setIsRxListening(true);
+                } catch {
+                    rxKeepListeningRef.current = false;
+                    setIsRxListening(false);
+                }
+            }, 250);
         });
         const errorSub = ExpoSpeechRecognitionModule.addListener('error', (event: any) => {
             setIsRxListening(false);
@@ -1083,7 +1286,7 @@ export default function ChatDetailScreen() {
             endSub?.remove?.();
             errorSub?.remove?.();
         };
-    }, [clearRxRestartTimer]);
+    }, [clearRxRestartTimer, parseDoctorPrescription]);
 
 
     const handleAcceptCall = useCallback(async () => {
@@ -1253,6 +1456,7 @@ export default function ChatDetailScreen() {
         setRxTranscript(nextDraft);
         lastRxSpeechRef.current = nextDraft;
         rawRxSpeechRef.current = nextDraft;
+        setRxMedicineNeedsConfirmation(false);
         setRxMedName('');
         setRxMedDose('');
         setRxMedFrequency('BD');
@@ -1279,6 +1483,7 @@ export default function ChatDetailScreen() {
         setRxTranscript(nextDraft);
         lastRxSpeechRef.current = nextDraft;
         rawRxSpeechRef.current = nextDraft;
+        setRxMedicineNeedsConfirmation(false);
         setRxSectionNotes({
             complaints: '',
             history: '',
@@ -1290,7 +1495,25 @@ export default function ChatDetailScreen() {
         });
     };
 
-    const handleSendVoicePrescriptionPdf = async () => {
+    const handleSendVoicePrescriptionPdf = () => {
+        if (!roomId || !isDoctorUser) return;
+        if (!isChatEnabled) {
+            Alert.alert('Chat disabled', chatDisabledReason);
+            return;
+        }
+        if (!hasMeaningfulPrescriptionDraft(rxTranscript.trim())) {
+            Alert.alert('Prescription required', 'Please speak or type prescription first.');
+            return;
+        }
+        if (isRxAiParsing) {
+            Alert.alert('Analysis in progress', 'Please wait for medicine analysis to finish, then review the draft before sending.');
+            return;
+        }
+        if (isRxListening) stopRxVoiceCapture(true);
+        setIsRxReviewModalVisible(true);
+    };
+
+    const handleConfirmSendVoicePrescriptionPdf = async () => {
         if (!roomId || !isDoctorUser) return;
         if (!isChatEnabled) {
             Alert.alert('Chat disabled', chatDisabledReason);
@@ -1301,11 +1524,26 @@ export default function ChatDetailScreen() {
             Alert.alert('Prescription required', 'Please speak prescription first.');
             return;
         }
+        if (isRxAiParsing) {
+            Alert.alert('Analysis in progress', 'Please wait for medicine analysis to finish, then review the draft before sending.');
+            return;
+        }
+        if (rxMedicineNeedsConfirmation) {
+            Alert.alert(
+                'Review medicine name',
+                'AI verification is incomplete or a medicine may be a speech variant. Please verify or edit every medicine name and detail, then confirm before sending the PDF.'
+            );
+            return;
+        }
         if (isRxListening) stopRxVoiceCapture(true);
+        // Freeze the reviewed draft while the final PDF is being generated.
+        rxAiParseRequestRef.current += 1;
+        setIsRxAiParsing(false);
         try {
             const result = await sendPrescriptionPdfMutation.mutateAsync({
                 roomId,
                 doctorText,
+                medicineConfirmationPending: rxMedicineNeedsConfirmation,
                 patientName: currentRoom?.other_party
                     ? `${currentRoom.other_party.firstName || ''} ${currentRoom.other_party.lastName || ''}`.trim()
                     : undefined,
@@ -1313,6 +1551,7 @@ export default function ChatDetailScreen() {
             setRxTranscript('');
             lastRxSpeechRef.current = '';
             setIsRxVoiceModalVisible(false);
+            setIsRxReviewModalVisible(false);
             Toast.show({
                 type: 'success',
                 text1: 'Prescription sent',
@@ -1471,7 +1710,23 @@ export default function ChatDetailScreen() {
                             onPress={() => {
                                 lastRxSpeechRef.current = '';
                                 rawRxSpeechRef.current = '';
+                                // Show the structured fields immediately so
+                                // the doctor knows exactly what will be sent.
+                                // The draft stays non-sendable until real notes are added.
                                 setRxTranscript(RX_TEMPLATE);
+                                setRxMedicineNeedsConfirmation(false);
+                                setIsRxSectionsFormOpen(false);
+                                setRxExpandedSection(null);
+                                setIsRxMedicineFormOpen(false);
+                                setRxSectionNotes({
+                                    complaints: '',
+                                    history: '',
+                                    examination: '',
+                                    diagnosis: '',
+                                    advice: '',
+                                    precautions: '',
+                                    followUp: '',
+                                });
                                 setIsRxVoiceModalVisible(true);
                             }}
                             disabled={!isChatEnabled}
@@ -1772,6 +2027,74 @@ export default function ChatDetailScreen() {
                     )}
                 </View>
             </Modal>
+            <Modal
+                visible={isRxReviewModalVisible}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setIsRxReviewModalVisible(false)}
+            >
+                <View style={styles.rxReviewOverlay}>
+                    <View style={[styles.rxReviewCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                        <View style={[styles.rxReviewHeader, { borderBottomColor: theme.borderColor }]}>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[styles.rxReviewTitle, { color: theme.text }]}>Review prescription</Text>
+                                <Text style={[styles.rxReviewSubtitle, { color: theme.textSecondary }]}>Check every section and medicine field before the PDF is sent.</Text>
+                            </View>
+                            <TouchableOpacity
+                                onPress={() => setIsRxReviewModalVisible(false)}
+                                style={[styles.rxReviewClose, { borderColor: theme.borderColor }]}
+                            >
+                                <X size={16} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView
+                            style={styles.rxReviewScroll}
+                            contentContainerStyle={styles.rxReviewScrollContent}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            <Text style={[styles.rxReviewLabel, { color: theme.textSecondary }]}>Final editable draft</Text>
+                            <TextInput
+                                value={rxTranscript}
+                                onChangeText={(text) => {
+                                    setRxTranscript(text);
+                                    lastRxSpeechRef.current = text;
+                                    rawRxSpeechRef.current = text;
+                                    setRxMedicineNeedsConfirmation(false);
+                                }}
+                                multiline
+                                textAlignVertical="top"
+                                placeholder="Prescription draft"
+                                placeholderTextColor={theme.textSecondary}
+                                style={[styles.rxReviewInput, { color: theme.text, backgroundColor: theme.background, borderColor: theme.borderColor }]}
+                            />
+                            {rxMedicineNeedsConfirmation ? (
+                                <View style={styles.rxReviewWarning}>
+                                    <Text style={styles.rxReviewWarningTitle}>Medicine review required</Text>
+                                    <Text style={styles.rxReviewWarningText}>Verify medicine name, strength, dose, frequency and duration before sending.</Text>
+                                    <TouchableOpacity onPress={() => setRxMedicineNeedsConfirmation(false)} style={styles.rxReviewReviewButton}>
+                                        <Text style={styles.rxReviewReviewButtonText}>I reviewed the medicine fields</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : null}
+                        </ScrollView>
+                        <View style={[styles.rxReviewFooter, { borderTopColor: theme.borderColor }]}>
+                            <TouchableOpacity
+                                onPress={() => setIsRxReviewModalVisible(false)}
+                                style={[styles.rxReviewCancelButton, { borderColor: theme.borderColor }]}
+                            >
+                                <Text style={[styles.rxReviewCancelText, { color: theme.textSecondary }]}>Back to edit</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                onPress={handleConfirmSendVoicePrescriptionPdf}
+                                disabled={rxMedicineNeedsConfirmation || sendPrescriptionPdfMutation.isPending}
+                                style={[styles.rxReviewConfirmButton, { backgroundColor: theme.tint, opacity: rxMedicineNeedsConfirmation || sendPrescriptionPdfMutation.isPending ? 0.45 : 1 }]}
+                            >
+                                {sendPrescriptionPdfMutation.isPending ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.rxReviewConfirmText}>Confirm & Send PDF</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
             {isRxVoiceModalVisible ? (
                 <View style={[styles.rxFullScreenWrap, { backgroundColor: theme.background }]}>
                     <View style={[styles.rxFullScreenHeader, { borderBottomColor: theme.borderColor }]}>
@@ -1780,17 +2103,28 @@ export default function ChatDetailScreen() {
                             onPress={() => {
                                 setIsRxVoiceModalVisible(false);
                                 stopRxVoiceCapture(true);
+                                setRxMedicineNeedsConfirmation(false);
+                                setRxExpandedSection(null);
                             }}
-                            style={[styles.rxHeaderCloseButton, { borderColor: theme.borderColor }]}
+                            style={[styles.rxHeaderCloseButton, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
                         >
+                            <X size={14} color={theme.textSecondary} />
                             <Text style={[styles.rxHeaderCloseText, { color: theme.textSecondary }]}>Close</Text>
                         </TouchableOpacity>
                     </View>
                     <View style={styles.rxFullScreenBody}>
                     <View style={[styles.rxModalCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxModalHint, { color: theme.textSecondary }]}>
-                            Speak continuously. Capture remains active until Pause or Stop. Review and finalize before sending.
-                        </Text>
+                        <View style={[styles.rxInfoBanner, { backgroundColor: theme.successLight, borderColor: theme.success }]}>
+                            <Animated.View
+                                style={[styles.rxInfoBadge, { backgroundColor: theme.successLight, transform: [{ scale: rxListeningPulse }] }]}
+                            >
+                                <Mic size={14} color={theme.success} />
+                            </Animated.View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={[styles.rxInfoTitle, { color: theme.text }]}>Speak the prescription naturally</Text>
+                                <Text style={[styles.rxInfoText, { color: theme.textSecondary }]}>Pause or stop when finished. Review every detail before sending.</Text>
+                            </View>
+                        </View>
                         <View style={styles.rxStatusRow}>
                             <View
                                 style={[
@@ -1800,7 +2134,7 @@ export default function ChatDetailScreen() {
                             >
                                 <View style={[styles.rxStatusDot, { backgroundColor: isRxListening ? theme.success : theme.textSecondary }]} />
                                 <Text style={[styles.rxStatusText, { color: isRxListening ? theme.success : theme.textSecondary }]}>
-                                    {isRxListening ? 'Listening (manual mode)' : 'Stopped'}
+                                    {isRxAiParsing ? 'Analyzing prescription…' : isRxListening ? 'Listening' : 'Ready'}
                                 </Text>
                             </View>
                         </View>
@@ -1810,48 +2144,91 @@ export default function ChatDetailScreen() {
                             keyboardShouldPersistTaps="handled"
                             showsVerticalScrollIndicator={false}
                         >
-                            <Text style={[styles.rxEditorLabel, { color: theme.textSecondary }]}>Clinical Draft</Text>
+                            <View style={styles.rxEditorHeader}>
+                                <Text style={[styles.rxEditorLabel, { color: theme.success }]}>Live transcription</Text>
+                                <Text style={[styles.rxEditorHint, { color: theme.textSecondary }]}>Tap to edit</Text>
+                            </View>
                             <View style={[styles.rxTranscriptBox, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
                                 <TextInput
                                     value={rxTranscript}
                                     onChangeText={(text) => {
-                                        setRxTranscript(text);
-                                        lastRxSpeechRef.current = text;
-                                        rawRxSpeechRef.current = text;
-                                    }}
-                                    placeholder={RX_TEMPLATE}
+                                    setRxTranscript(text);
+                                    lastRxSpeechRef.current = text;
+                                    rawRxSpeechRef.current = text;
+                                    setRxMedicineNeedsConfirmation(false);
+                                }}
+                                    placeholder="Your prescription will appear here after dictation…"
                                     placeholderTextColor={theme.textSecondary}
                                     multiline
                                     textAlignVertical="top"
                                     style={[styles.rxTranscriptInput, { color: theme.text }]}
                                 />
+                                <View style={[styles.rxWaveform, { opacity: isRxListening ? 1 : 0.35 }]} pointerEvents="none">
+                                    {[8, 18, 30, 14, 24].map((height, index) => (
+                                        <View key={index} style={[styles.rxWaveformBar, { height, backgroundColor: theme.success }]} />
+                                    ))}
+                                </View>
+                            </View>
+                            {rxMedicineNeedsConfirmation ? (
+                                <View style={[styles.rxSafetyWarning, { backgroundColor: '#FFF7ED', borderColor: '#F59E0B' }]}>
+                                    <Text style={[styles.rxSafetyWarningTitle, { color: theme.text }]}>Medicine review required</Text>
+                                    <Text style={[styles.rxSafetyWarningText, { color: theme.textSecondary }]}>AI verification is incomplete or a speech variant may be present. Verify every medicine name and detail before sending.</Text>
+                                    <TouchableOpacity onPress={() => setRxMedicineNeedsConfirmation(false)} style={[styles.rxSafetyConfirmButton, { backgroundColor: theme.tint }]}>
+                                        <Text style={styles.rxSafetyConfirmText}>I reviewed the medicine</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : null}
+
+                            <View style={styles.rxClinicalHeader}>
+                                <Text style={[styles.rxClinicalTitle, { color: theme.text }]}>Clinical details</Text>
+                                <TouchableOpacity onPress={() => toggleRxSection('complaints')} style={styles.rxAddSectionButton}>
+                                    <Text style={[styles.rxAddSectionPlus, { color: theme.success }]}>＋</Text>
+                                    <Text style={[styles.rxAddSectionText, { color: theme.success }]}>Add section</Text>
+                                </TouchableOpacity>
                             </View>
 
-                            <View style={[styles.rxMedFormCard, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
-                                <TouchableOpacity
-                                    style={[styles.rxMedToggleRow, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
-                                    onPress={() => setIsRxSectionsFormOpen((prev) => !prev)}
-                                    activeOpacity={0.86}
-                                >
-                                    <Text style={[styles.rxMedFormTitle, { color: theme.text }]}>Quick Section Notes</Text>
-                                    <View style={[styles.rxMedToggleBadge, { backgroundColor: theme.tint }]}>
-                                        <Text style={styles.rxMedToggleBadgeText}>{isRxSectionsFormOpen ? '-' : '+'}</Text>
-                                    </View>
-                                </TouchableOpacity>
-                                {isRxSectionsFormOpen ? (
-                                    <>
-                                        <TextInput value={rxSectionNotes.complaints} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, complaints: text }))} placeholder="Chief complaints" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TextInput value={rxSectionNotes.history} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, history: text }))} placeholder="History summary" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TextInput value={rxSectionNotes.examination} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, examination: text }))} placeholder="Examination finding" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TextInput value={rxSectionNotes.diagnosis} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, diagnosis: text }))} placeholder="Diagnosis" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TextInput value={rxSectionNotes.advice} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, advice: text }))} placeholder="General advice" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TextInput value={rxSectionNotes.precautions} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, precautions: text }))} placeholder="Precautions" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TextInput value={rxSectionNotes.followUp} onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, followUp: text }))} placeholder="Follow-up" placeholderTextColor={theme.textSecondary} style={[styles.rxMedInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]} />
-                                        <TouchableOpacity onPress={handleApplySectionNotes} style={[styles.rxMedAddButton, { backgroundColor: theme.tint }]}>
-                                            <Text style={styles.rxMedAddButtonText}>Apply to Draft</Text>
-                                        </TouchableOpacity>
-                                    </>
-                                ) : null}
+                            <View style={styles.rxClinicalSectionsList}>
+                                {([
+                                    ['complaints', 'Chief complaints', 'Describe current patient complaints...'],
+                                    ['history', 'History summary', 'Enter patient history summary...'],
+                                    ['examination', 'Examination finding', 'Physical examination observations...'],
+                                    ['diagnosis', 'Diagnosis', 'Enter diagnosis...'],
+                                    ['advice', 'General advice', 'Add general advice...'],
+                                    ['precautions', 'Precautions', 'Add precautions...'],
+                                    ['followUp', 'Follow-up', 'Add follow-up plan...'],
+                                ] as const).map(([key, label, placeholder]) => {
+                                    const expanded = rxExpandedSection === key;
+                                    return (
+                                        <View key={key} style={[styles.rxAccordionCard, { backgroundColor: theme.cardBackground, borderColor: expanded ? theme.success : theme.borderColor }]}>
+                                            <TouchableOpacity
+                                                onPress={() => toggleRxSection(key)}
+                                                style={styles.rxAccordionHeader}
+                                                activeOpacity={0.86}
+                                            >
+                                                <Text style={[styles.rxAccordionTitle, { color: expanded ? theme.success : theme.text }]}>{label}</Text>
+                                                <View style={[styles.rxAccordionIcon, { borderColor: expanded ? theme.success : theme.textSecondary }]}>
+                                                    {expanded ? <ChevronUp size={13} color={theme.success} strokeWidth={2.5} /> : <ChevronDown size={13} color={theme.textSecondary} strokeWidth={2.5} />}
+                                                </View>
+                                            </TouchableOpacity>
+                                            {expanded ? (
+                                                <View style={styles.rxAccordionBody}>
+                                                    <TextInput
+                                                        value={rxSectionNotes[key]}
+                                                        onChangeText={(text) => setRxSectionNotes((prev) => ({ ...prev, [key]: text }))}
+                                                        placeholder={placeholder}
+                                                        placeholderTextColor={theme.textSecondary}
+                                                        multiline
+                                                        textAlignVertical="top"
+                                                        style={[styles.rxSectionTextarea, { color: theme.text, borderColor: theme.success, backgroundColor: theme.cardBackground }]}
+                                                    />
+                                                    <TouchableOpacity onPress={handleApplySectionNotes} style={[styles.rxSectionApplyButton, { backgroundColor: theme.success }]}>
+                                                        <Text style={styles.rxMedAddButtonText}>Apply to draft</Text>
+                                                    </TouchableOpacity>
+                                                </View>
+                                            ) : null}
+                                        </View>
+                                    );
+                                })}
                             </View>
 
                             <View style={[styles.rxMedFormCard, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
@@ -1860,7 +2237,15 @@ export default function ChatDetailScreen() {
                                 onPress={() => setIsRxMedicineFormOpen((prev) => !prev)}
                                 activeOpacity={0.86}
                             >
-                                <Text style={[styles.rxMedFormTitle, { color: theme.text }]}>Quick Add Medicine</Text>
+                                <View style={styles.rxMedicationRowContent}>
+                                    <View style={[styles.rxMedicationIcon, { backgroundColor: theme.successLight }]}>
+                                        <FileText size={17} color={theme.success} />
+                                    </View>
+                                <View>
+                                    <Text style={[styles.rxMedFormTitle, { color: theme.text }]}>Medications</Text>
+                                    <Text style={[styles.rxMedFormSubtitle, { color: theme.textSecondary }]}>Add medicine, dose and schedule</Text>
+                                </View>
+                                </View>
                                 <View style={[styles.rxMedToggleBadge, { backgroundColor: theme.tint }]}>
                                     <Text style={styles.rxMedToggleBadgeText}>{isRxMedicineFormOpen ? '-' : '+'}</Text>
                                 </View>
@@ -1923,7 +2308,7 @@ export default function ChatDetailScreen() {
                                 onPress={handleAddMedicationFromForm}
                                 style={[styles.rxMedAddButton, { backgroundColor: theme.tint }]}
                             >
-                                <Text style={styles.rxMedAddButtonText}>Add to MEDICATIONS</Text>
+                                <Text style={styles.rxMedAddButtonText}>Add medicine</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 onPress={() => {
@@ -1948,26 +2333,32 @@ export default function ChatDetailScreen() {
                                 disabled={isRxListening}
                             >
                                 <Mic size={16} color="#fff" />
-                                <Text style={styles.rxVoiceControlButtonText}>Start</Text>
+                                <Text style={styles.rxVoiceControlButtonText}>Start voice</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 onPress={handleRxVoiceStop}
-                                style={[styles.rxVoiceControlButton, { backgroundColor: theme.error }]}
+                                disabled={!isRxListening}
+                                style={[styles.rxVoiceControlButton, styles.rxStopVoiceButton, { borderColor: theme.error, opacity: isRxListening ? 1 : 0.45 }]}
                             >
-                                <X size={16} color="#fff" />
-                                <Text style={styles.rxVoiceControlButtonText}>Stop</Text>
+                                <View style={[styles.rxStopIcon, { borderColor: theme.error }]}>
+                                    <View style={[styles.rxStopIconSquare, { backgroundColor: theme.error }]} />
+                                </View>
+                                <Text style={[styles.rxVoiceControlButtonText, { color: theme.text }]}>Stop</Text>
                             </TouchableOpacity>
                         </View>
                         <View style={styles.rxModalActions}>
                             <TouchableOpacity
                                 onPress={handleSendVoicePrescriptionPdf}
-                                style={[styles.rxSendButton, { backgroundColor: hasMeaningfulPrescriptionDraft(rxTranscript) ? theme.tint : theme.borderColor }]}
+                                style={[styles.rxSendButton, { backgroundColor: hasMeaningfulPrescriptionDraft(rxTranscript) ? '#1E293B' : theme.borderColor, opacity: sendPrescriptionPdfMutation.isPending ? 0.75 : 1 }]}
                                 disabled={!hasMeaningfulPrescriptionDraft(rxTranscript) || sendPrescriptionPdfMutation.isPending}
                             >
                                 {sendPrescriptionPdfMutation.isPending ? (
                                     <ActivityIndicator size="small" color="#fff" />
                                 ) : (
-                                    <Text style={styles.rxSendButtonText}>Send Prescription PDF</Text>
+                                    <>
+                                        <FileText size={16} color={hasMeaningfulPrescriptionDraft(rxTranscript) ? '#fff' : theme.textSecondary} />
+                                        <Text style={[styles.rxSendButtonText, { color: hasMeaningfulPrescriptionDraft(rxTranscript) ? '#fff' : theme.textSecondary }]}>REVIEW & SEND PDF</Text>
+                                    </>
                                 )}
                             </TouchableOpacity>
                         </View>
@@ -2290,10 +2681,14 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
     rxHeaderCloseButton: {
+        width: 74,
+        height: 34,
         borderWidth: 1,
-        borderRadius: 14,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+        borderRadius: 18,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
     },
     rxHeaderCloseText: {
         fontSize: 12,
@@ -2309,12 +2704,131 @@ const styles = StyleSheet.create({
         flex: 1,
         borderRadius: 14,
         borderWidth: 1,
-        padding: 14,
-        gap: 9,
+        padding: 12,
+        gap: 10,
     },
     rxModalHint: {
         fontSize: 12,
+        lineHeight: 16,
+    },
+    rxInfoBanner: {
+        borderRadius: 12,
+        borderWidth: 1,
+        padding: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 9,
+    },
+    rxInfoBadge: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rxInfoTitle: {
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    rxInfoText: {
+        fontSize: 11,
+        lineHeight: 15,
+        marginTop: 2,
+    },
+    rxEditorHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    rxEditorHint: {
+        fontSize: 10,
+        fontWeight: '700',
+    },
+    rxClinicalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 2,
+        paddingTop: 3,
+    },
+    rxClinicalTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        letterSpacing: -0.2,
+    },
+    rxClinicalSectionsList: {
+        gap: 10,
+    },
+    rxAccordionCard: {
+        borderRadius: 13,
+        borderWidth: 1,
+        overflow: 'hidden',
+        shadowColor: '#0B1C30',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.04,
+        shadowRadius: 7,
+        elevation: 1,
+    },
+    rxAccordionHeader: {
+        minHeight: 54,
+        paddingHorizontal: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    rxAccordionTitle: {
+        fontSize: 11,
+        fontWeight: '800',
+        letterSpacing: 0.25,
+        textTransform: 'uppercase',
+    },
+    rxAccordionIcon: {
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        borderWidth: 1.5,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rxAccordionIconText: {
+        fontSize: 14,
+        fontWeight: '800',
         lineHeight: 17,
+    },
+    rxAccordionBody: {
+        paddingHorizontal: 14,
+        paddingBottom: 14,
+        gap: 9,
+    },
+    rxSectionTextarea: {
+        minHeight: 70,
+        borderWidth: 1,
+        borderRadius: 9,
+        padding: 10,
+        fontSize: 12,
+        lineHeight: 17,
+    },
+    rxSectionApplyButton: {
+        alignSelf: 'flex-end',
+        borderRadius: 9,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+    rxAddSectionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 4,
+        paddingHorizontal: 2,
+        gap: 3,
+    },
+    rxAddSectionPlus: {
+        fontSize: 21,
+        lineHeight: 21,
+        fontWeight: '800',
+    },
+    rxAddSectionText: {
+        fontSize: 12,
+        fontWeight: '800',
     },
     rxEditorLabel: {
         fontSize: 11,
@@ -2352,26 +2866,83 @@ const styles = StyleSheet.create({
         fontWeight: '700',
     },
     rxTranscriptBox: {
-        minHeight: 250,
+        minHeight: 175,
         borderRadius: 12,
         borderWidth: 1,
         padding: 10,
     },
     rxTranscriptInput: {
-        minHeight: 228,
-        fontSize: 14,
-        lineHeight: 20,
+        minHeight: 152,
+        fontSize: 13,
+        lineHeight: 18,
+        paddingTop: 2,
+        paddingBottom: 28,
+    },
+    rxWaveform: {
+        position: 'absolute',
+        right: 14,
+        bottom: 13,
+        height: 30,
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: 4,
+    },
+    rxWaveformBar: {
+        width: 3,
+        borderRadius: 99,
+    },
+    rxSafetyWarning: {
+        borderRadius: 10,
+        borderWidth: 1,
+        padding: 10,
+        gap: 6,
+    },
+    rxSafetyWarningTitle: {
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    rxSafetyWarningText: {
+        fontSize: 11,
+        lineHeight: 15,
+    },
+    rxSafetyConfirmButton: {
+        alignSelf: 'flex-start',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+    },
+    rxSafetyConfirmText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '800',
     },
     rxMedFormCard: {
         borderWidth: 1,
         borderRadius: 12,
-        padding: 10,
-        gap: 8,
+        padding: 8,
+        gap: 7,
     },
     rxMedFormTitle: {
         fontSize: 12,
         fontWeight: '800',
         letterSpacing: 0.2,
+    },
+    rxMedFormSubtitle: {
+        fontSize: 10,
+        lineHeight: 14,
+        marginTop: 2,
+    },
+    rxMedicationRowContent: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    rxMedicationIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 9,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     rxMedInput: {
         borderWidth: 1,
@@ -2386,7 +2957,7 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     rxMedToggleRow: {
-        minHeight: 42,
+        minHeight: 40,
         borderRadius: 10,
         borderWidth: 1,
         paddingHorizontal: 10,
@@ -2450,24 +3021,46 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     rxBottomActionBar: {
-        borderTopWidth: 1,
-        paddingTop: 10,
-        gap: 10,
-        marginHorizontal: -14,
-        marginBottom: -14,
-        paddingHorizontal: 14,
-        paddingBottom: 12,
-        borderBottomLeftRadius: 14,
-        borderBottomRightRadius: 14,
+        borderTopWidth: 0,
+        paddingTop: 14,
+        gap: 14,
+        marginHorizontal: -12,
+        marginBottom: -12,
+        paddingHorizontal: 16,
+        paddingBottom: 16,
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        elevation: 8,
+        shadowColor: '#0B1C30',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
     },
     rxVoiceControlButton: {
         flex: 1,
-        height: 40,
-        borderRadius: 12,
+        height: 54,
+        borderRadius: 16,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         gap: 6,
+    },
+    rxStopVoiceButton: {
+        backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+    },
+    rxStopIcon: {
+        width: 23,
+        height: 23,
+        borderRadius: 12,
+        borderWidth: 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rxStopIconSquare: {
+        width: 8,
+        height: 8,
+        borderRadius: 2,
     },
     rxVoiceControlButtonText: {
         color: '#fff',
@@ -2481,16 +3074,18 @@ const styles = StyleSheet.create({
     },
     rxSendButton: {
         flex: 1,
-        height: 44,
-        borderRadius: 12,
+        height: 56,
+        borderRadius: 16,
+        flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: 12,
+        gap: 9,
+        paddingHorizontal: 16,
     },
     rxSendButtonText: {
-        color: '#fff',
         fontSize: 13,
         fontWeight: '800',
+        letterSpacing: 0.1,
     },
     rxCloseButton: {
         height: 42,
@@ -2503,6 +3098,126 @@ const styles = StyleSheet.create({
     rxCloseButtonText: {
         fontSize: 12,
         fontWeight: '600',
+    },
+    rxReviewOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(15, 23, 42, 0.52)',
+        justifyContent: 'flex-end',
+    },
+    rxReviewCard: {
+        maxHeight: '92%',
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderWidth: 1,
+        overflow: 'hidden',
+    },
+    rxReviewHeader: {
+        minHeight: 72,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    rxReviewTitle: {
+        fontSize: 17,
+        fontWeight: '800',
+    },
+    rxReviewSubtitle: {
+        fontSize: 11,
+        lineHeight: 15,
+        marginTop: 3,
+    },
+    rxReviewClose: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rxReviewScroll: {
+        maxHeight: 520,
+    },
+    rxReviewScrollContent: {
+        padding: 16,
+        gap: 8,
+    },
+    rxReviewLabel: {
+        fontSize: 11,
+        fontWeight: '800',
+        textTransform: 'uppercase',
+        letterSpacing: 0.3,
+    },
+    rxReviewInput: {
+        minHeight: 300,
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 12,
+        fontSize: 13,
+        lineHeight: 19,
+    },
+    rxReviewWarning: {
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: '#F59E0B',
+        backgroundColor: '#FFF7ED',
+        padding: 10,
+        gap: 5,
+    },
+    rxReviewWarningTitle: {
+        color: '#9A3412',
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    rxReviewWarningText: {
+        color: '#9A3412',
+        fontSize: 11,
+        lineHeight: 15,
+    },
+    rxReviewReviewButton: {
+        alignSelf: 'flex-start',
+        borderRadius: 8,
+        backgroundColor: '#EA580C',
+        paddingHorizontal: 10,
+        paddingVertical: 7,
+        marginTop: 2,
+    },
+    rxReviewReviewButtonText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '800',
+    },
+    rxReviewFooter: {
+        borderTopWidth: 1,
+        padding: 12,
+        flexDirection: 'row',
+        gap: 8,
+    },
+    rxReviewCancelButton: {
+        flex: 1,
+        height: 44,
+        borderRadius: 11,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rxReviewCancelText: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    rxReviewConfirmButton: {
+        flex: 1.4,
+        height: 44,
+        borderRadius: 11,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rxReviewConfirmText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '800',
     },
 
 });

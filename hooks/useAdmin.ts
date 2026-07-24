@@ -11,7 +11,59 @@ export const ADMIN_QUERY_KEYS = {
     communityAds: ['admin', 'community-ads'] as const,
     communityAdsAnalytics: ['admin', 'community-ads-analytics'] as const,
     revenue: ['admin', 'revenue'] as const,
+    medicines: ['admin', 'medicines'] as const,
 } as const;
+
+export type AdminMedicineDictionaryRow = {
+    id: string;
+    generic_name: string;
+    brand_name: string | null;
+    aliases: string[];
+    speech_variants: string[];
+    clinical_departments: string[];
+    strength_value: number | null;
+    strength_unit: string | null;
+    dosage_form: string | null;
+    route: string | null;
+    normalized_key: string;
+    active: boolean;
+    verification_status: 'pending' | 'verified' | 'rejected' | 'inactive';
+    source_reference: string | null;
+    verified_at: string | null;
+    created_at: string;
+};
+
+export const useAdminMedicines = () => useQuery({
+    queryKey: ADMIN_QUERY_KEYS.medicines,
+    queryFn: async (): Promise<AdminMedicineDictionaryRow[]> => {
+        const { data, error } = await supabase
+            .from('medicine_dictionary')
+            .select('id, generic_name, brand_name, aliases, speech_variants, clinical_departments, strength_value, strength_unit, dosage_form, route, normalized_key, active, verification_status, source_reference, verified_at, created_at')
+            .order('verification_status', { ascending: true })
+            .order('generic_name', { ascending: true });
+        if (error) throw error;
+        return (data || []) as AdminMedicineDictionaryRow[];
+    },
+});
+
+export const useUpdateMedicineVerification = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ id, status }: { id: string; status: AdminMedicineDictionaryRow['verification_status'] }) => {
+            const { data, error } = await supabase
+                .from('medicine_dictionary')
+                .update({ verification_status: status, active: status === 'verified' })
+                .eq('id', id)
+                .select('id, verification_status, active')
+                .single();
+            if (error) throw error;
+            return data;
+        },
+        onSuccess: () => {
+            void queryClient.invalidateQueries({ queryKey: ADMIN_QUERY_KEYS.medicines });
+        },
+    });
+};
 
 type AdminRevenueSnapshot = {
     appointmentGross: number;

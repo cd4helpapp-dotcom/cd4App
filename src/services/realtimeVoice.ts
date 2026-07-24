@@ -174,11 +174,22 @@ export async function connectRealtimeVoice(
   let assistantResponseQueued = false;
   let assistantResponseStarted = false;
   const autoStartResponse = context?.autoStartResponse === true;
+  const sendChannelEvent = (event: unknown): boolean => {
+    if (channel.readyState !== 'open') return false;
+    try {
+      channel.send(JSON.stringify(event));
+      return true;
+    } catch {
+      // The payment handoff and user closing the modal can close the channel
+      // between the readyState check and send(). Voice cleanup must stay
+      // non-fatal to the rest of the app.
+      return false;
+    }
+  };
   const requestAssistantResponse = () => {
     if (assistantResponseStarted) return;
-    if (channel.readyState === 'open') {
+    if (sendChannelEvent({ type: 'response.create' })) {
       assistantResponseStarted = true;
-      channel.send(JSON.stringify({ type: 'response.create' }));
     } else {
       assistantResponseQueued = true;
     }
@@ -241,7 +252,7 @@ export async function connectRealtimeVoice(
       if (isLikelyNoiseTranscript(transcript)) {
         // Server VAD can occasionally commit a fan/echo syllable. Cancel the
         // automatically-created turn instead of sending a meaningless reply.
-        if (channel.readyState === 'open') channel.send(JSON.stringify({ type: 'response.cancel' }));
+        sendChannelEvent({ type: 'response.cancel' });
         return;
       }
       const now = Date.now();
@@ -257,8 +268,8 @@ export async function connectRealtimeVoice(
         // Stop any response already speaking and force an immediate safety
         // turn. The deterministic text prevents the model from continuing a
         // routine triage flow after a red flag is detected.
-        channel.send(JSON.stringify({ type: 'response.cancel' }));
-        channel.send(JSON.stringify({
+        sendChannelEvent({ type: 'response.cancel' });
+        sendChannelEvent({
           type: 'conversation.item.create',
           item: {
             type: 'message',
@@ -270,8 +281,8 @@ export async function connectRealtimeVoice(
                 : 'URGENT SAFETY OVERRIDE: The patient reported a possible emergency red flag. Respond immediately and calmly: advise them to call local emergency services now or go to the nearest emergency department, not drive themselves if faint, and not wait for this chat. Ask no routine history questions. Do not diagnose or give medication doses.',
             }],
           },
-        }));
-        channel.send(JSON.stringify({ type: 'response.create' }));
+        });
+        sendChannelEvent({ type: 'response.create' });
       }
     }
     const isAudioTranscriptDelta = type === 'response.output_audio_transcript.delta' || type === 'response.audio_transcript.delta';
@@ -285,9 +296,7 @@ export async function connectRealtimeVoice(
       if (responseId && responseId === lastCompletedAssistantResponseId) {
         // Only cancel an actually repeated response ID. Transcript timing is
         // asynchronous, so a user-turn counter is not a safe dedupe key.
-        if (channel.readyState === 'open') {
-          channel.send(JSON.stringify({ type: 'response.cancel' }));
-        }
+        sendChannelEvent({ type: 'response.cancel' });
         return;
       }
       // A new response must never inherit the previous response's transcript.
@@ -321,8 +330,11 @@ export async function connectRealtimeVoice(
       toolFollowUpExpected = true;
       const result = await callbacks.onToolCall(String(payload.name || ''), String(payload.call_id || ''), String(payload.arguments || '{}'));
       callbacks.onToolResult?.(String(payload.name || ''), result);
-      channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: payload.call_id, output: JSON.stringify(result || {}) } }));
-      channel.send(JSON.stringify({ type: 'response.create' }));
+      // onToolResult may intentionally close the voice session while handing
+      // off to payment. Never send the function output to a closed channel.
+      if (sendChannelEvent({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: payload.call_id, output: JSON.stringify(result || {}) } })) {
+        sendChannelEvent({ type: 'response.create' });
+      }
     }
     if (type === 'input_audio_buffer.speech_started') {
       // Barge-in: stop the old assistant output, discard its unfinished
@@ -330,9 +342,7 @@ export async function connectRealtimeVoice(
       // This avoids leaving a partial answer in the chat when the user
       // interrupts the assistant.
       if (assistantAudioActive) {
-        if (channel.readyState === 'open') {
-          channel.send(JSON.stringify({ type: 'response.cancel' }));
-        }
+        sendChannelEvent({ type: 'response.cancel' });
         assistantAudioActive = false;
         assistantTranscriptBuffer = '';
         assistantTranscriptMode = null;
@@ -383,18 +393,18 @@ export async function connectRealtimeVoice(
 
   return {
     sendText: (text: string) => {
+      if (channel.readyState !== 'open') return;
       userTurnSequence += 1;
       toolFollowUpExpected = false;
-      channel.send(JSON.stringify({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }));
-      channel.send(JSON.stringify({ type: 'response.create' }));
+      if (sendChannelEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })) {
+        sendChannelEvent({ type: 'response.create' });
+      }
     },
     startAssistantResponse: () => {
       requestAssistantResponse();
     },
     interrupt: () => {
-      if (channel.readyState === 'open') {
-        channel.send(JSON.stringify({ type: 'response.cancel' }));
-      }
+      sendChannelEvent({ type: 'response.cancel' });
     },
     close: async () => {
       localStream.getTracks().forEach((track: any) => track.stop());

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ScrollView, A
 import Colors from '../../constants/Colors';
 import { router } from 'expo-router';
 import { useAuthContext } from '../../context/AuthContext';
-import { LogOut, User, Image as ImageIcon, MessageCircle, Stethoscope, Bell, Globe, HelpCircle, SunMoon, CreditCard, ChevronRight, ReceiptText } from 'lucide-react-native';
+import { LogOut, User, Image as ImageIcon, MessageCircle, Stethoscope, Bell, Globe, HelpCircle, SunMoon, CreditCard, ChevronRight, Receipt } from 'lucide-react-native';
 import { useLogout } from '../../hooks/useAuth';
 import Toast from 'react-native-toast-message';
 import { useThemePreference } from '../../context/ThemePreferenceContext';
@@ -86,7 +86,7 @@ export default function SettingsScreen() {
       icon: CreditCard,
       action: () => router.push('/settings/subscription'),
     },
-    { key: 'paymentHistory', label: 'Payment history', icon: ReceiptText, action: () => router.push('/payment-history') },
+    { key: 'paymentHistory', label: 'Payment history', icon: Receipt, action: () => router.push('/payment-history') },
   ];
 
   // Add Doctor Recruitment for Marketing and Admin roles

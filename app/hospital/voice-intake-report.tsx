@@ -147,7 +147,6 @@ export default function HospitalVoiceIntakeReportScreen() {
                         </View>
 
                         <ReportSection title="AI Doctor Summary" value={intake.aiSummary || 'Summary not available.'} />
-                        <ReportSection title="Captured Transcript" value={intake.transcript || 'Transcript not available.'} />
                         <ReportSection
                             title="Clinical Note"
                             value="This intake is an AI-assisted handoff for doctor review. It is not a diagnosis or prescription. The doctor should verify symptoms, vitals, medicines, allergies, and red flags directly with the patient."

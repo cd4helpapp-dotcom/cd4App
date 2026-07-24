@@ -488,12 +488,15 @@ const styles = StyleSheet.create({
         padding: 5,
     },
     card: {
-        width: (width - 48) / 2,
-        minHeight: 124,
-        padding: 14,
+        // Use the parent width instead of a window-based pixel width. The
+        // admin panel can render inside a narrow web viewport, where
+        // Dimensions.get('window').width is larger than the actual card area.
+        width: '48%',
+        minHeight: 118,
+        padding: 12,
         backgroundColor: '#1E1E1E',
         borderRadius: 16,
-        marginBottom: 16,
+        marginBottom: 12,
         borderWidth: 1,
         borderColor: '#2A2A2A',
         shadowColor: "#000",

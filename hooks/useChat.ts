@@ -1273,12 +1273,14 @@ export const useSendPrescriptionPdfToChat = () => {
             patientName,
             consultationId,
             concern,
+            medicineConfirmationPending,
         }: {
             roomId: string;
             doctorText: string;
             patientName?: string;
             consultationId?: string;
             concern?: string;
+            medicineConfirmationPending?: boolean;
         }) => {
             if (!user?.id || !session?.access_token) {
                 throw new Error('Please login again to send prescription PDF.');
@@ -1293,6 +1295,7 @@ export const useSendPrescriptionPdfToChat = () => {
                     patientName: patientName || null,
                     consultationId: consultationId || null,
                     concern: concern || null,
+                    medicineConfirmationPending: Boolean(medicineConfirmationPending),
                 },
             });
 
@@ -1312,4 +1315,3 @@ export const useSendPrescriptionPdfToChat = () => {
         },
     });
 };
-

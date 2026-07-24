@@ -86,53 +86,55 @@ const parseJsonSafely = (raw: string): any => {
   }
 };
 
-const listItems = (value: unknown): string[] =>
+const listItems = (value: unknown, maxItems = 8): string[] =>
   Array.isArray(value)
-    ? value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 8)
+    ? value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, maxItems)
     : [];
 
-const formatQuestionAnswers = (value: any): string => {
-  if (!Array.isArray(value?.question_answers)) return "";
-  return value.question_answers
-    .map((item: any) => {
-      const question = asText(item?.question, 260);
-      const answer = asText(item?.answer, 360) || "Answer not clearly captured";
-      return question ? `Question: ${question}\nAnswer: ${answer}` : "";
-    })
-    .filter(Boolean)
-    .slice(0, 12)
-    .join("\n\n");
+const patientOnlyTranscriptLines = (transcript: string): string[] => {
+  const lines = String(transcript || "")
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const labeledPatientLines = lines
+    .filter((line) => /^(patient|user|patient note)\s*:/i.test(line))
+    .map((line) => line.replace(/^(patient|user|patient note)\s*:\s*/i, "").trim())
+    .filter((line) => line && !line.includes("?"));
+  if (labeledPatientLines.length) return labeledPatientLines.slice(0, 40);
+  // A raw hospital voice transcript is normally the patient's narration. Do
+  // not expose it as a fallback when it visibly contains speaker turns.
+  if (lines.some((line) => /^(ai|assistant|doctor)\s*:/i.test(line))) return [];
+  return lines.filter((line) => !line.includes("?")).slice(0, 40);
 };
 
 const buildFallbackSummary = (transcript: string): string => {
-  const clean = clipText(transcript, 900);
+  const patientLines = patientOnlyTranscriptLines(transcript);
+  const cleanLines = patientLines.length ? patientLines : ["Patient-reported details could not be structured automatically."];
   return [
-    "Chief concern: Review the captured patient narration below.",
-    "Doctor handoff: The hospital team has captured this voice intake for clinical review. Please verify symptoms, duration, severity, current medicines, allergies, and vitals before advising.",
-    `Captured transcript: ${clean}`,
-  ].join("\n\n");
+    ...cleanLines.map((line) => `- ${clipText(line, 360)}`),
+  ].join("\n");
 };
 
 const formatStructuredSummary = (value: any, fallback: string): string => {
   if (!value || typeof value !== "object") return fallback;
 
   const lines: string[] = [];
-  const chiefComplaint = asText(value.chief_complaint, 240);
+  const chiefComplaint = asText(value.chief_complaint, 240).replace(/\?/g, "").trim();
   const duration = asText(value.duration, 160);
   const doctorNote = asText(value.doctor_note || value.summary, 1200);
   const department = asText(value.suggested_department, 160);
-  const symptoms = listItems(value.key_symptoms);
-  const redFlags = listItems(value.red_flags);
-  const questions = listItems(value.questions_for_patient);
+  const symptoms = listItems(value.key_symptoms).filter((item) => !item.includes("?"));
+  const reportedDetails = listItems(value.patient_reported_details || value.reported_details, 40).filter((item) => !item.includes("?"));
+  const redFlags = listItems(value.red_flags).filter((item) => !item.includes("?"));
 
   if (chiefComplaint) lines.push(`Chief concern: ${chiefComplaint}`);
   if (duration) lines.push(`Duration: ${duration}`);
   if (symptoms.length) lines.push(`Key symptoms: ${symptoms.join("; ")}`);
+  if (reportedDetails.length) lines.push(`Patient-reported details: ${reportedDetails.join("; ")}`);
   if (redFlags.length) lines.push(`Red flags to verify: ${redFlags.join("; ")}`);
   if (department) lines.push(`Suggested department: ${department}`);
-  if (doctorNote) lines.push(`Doctor handoff: ${doctorNote}`);
-  if (questions.length) lines.push(`Questions for patient: ${questions.join("; ")}`);
-  return lines.length ? lines.join("\n\n") : fallback;
+  if (doctorNote && !doctorNote.includes("?")) lines.push(`Doctor handoff: ${doctorNote}`);
+  return lines.length ? lines.map((line) => `- ${line}`).join("\n") : fallback;
 };
 
 const sanitizePdfText = (value: unknown): string =>
@@ -177,7 +179,6 @@ const buildHospitalIntakePdfBytes = async (args: {
   status: string;
   language: string;
   summary: string;
-  questionAnswers?: string;
   transcript: string;
   createdAt: string;
 }) => {
@@ -296,22 +297,6 @@ const buildHospitalIntakePdfBytes = async (args: {
   );
   drawSection("AI Summary (English Bullet Points)", summaryBullets);
   drawSection(
-    "AI Questions and Patient Answers",
-    args.questionAnswers || "No relevant AI question-and-answer data was captured.",
-  );
-  drawSection(
-    "Risk / Context",
-    "Doctor review is required before diagnosis or treatment. Verify symptoms, duration, severity, vitals, medicines, allergies, and red flags directly with the patient.",
-  );
-  drawSection(
-    "Doctor Quick Review",
-    "Confirm the chief concern and timeline. Clarify any unanswered AI question. Screen red flags and verify medicines/allergies before clinical decisions.",
-  );
-  drawSection(
-    "Source Note",
-    "Only clinically relevant information is shown in this doctor PDF. The original voice transcript remains available in the hospital record if verification is required.",
-  );
-  drawSection(
     "Clinical Note",
     "This intake is an AI-assisted handoff for doctor review. It is not a diagnosis or prescription. The doctor should verify symptoms, vitals, medicines, allergies, and red flags directly with the patient."
   );
@@ -349,7 +334,9 @@ Important rules:
 - Do not prescribe medicines.
 - Do not invent vitals, allergies, or test results.
 - Include only clinically relevant content; exclude greetings, filler, confirmations, booking talk, and repeated AI speech.
-- Capture each clinically relevant AI question with the patient's answer in the question_answers field.
+- The doctor-facing PDF must contain only information reported by the patient. Never include the AI's questions in the summary.
+- Preserve every clinically relevant patient-reported detail; do not omit duration, severity, associated symptoms, medicines, allergies, vitals, history, exposures, or red flags when present.
+- Put additional patient-reported facts that do not fit the other fields into patient_reported_details as short bullet-ready statements.
 - If emergency symptoms are mentioned, mark them as red flags to verify.
 - Keep the output useful for a doctor reviewing the patient later.
 - Return ONLY valid JSON.
@@ -369,8 +356,7 @@ JSON format:
   "red_flags": [],
   "suggested_department": "",
   "doctor_note": "",
-  "questions_for_patient": [],
-  "question_answers": [{ "question": "", "answer": "" }]
+  "patient_reported_details": []
 }
 
 Transcript:
@@ -708,7 +694,6 @@ Interaction Rules:
       status: "ready_for_doctor",
       language,
       summary,
-      questionAnswers: formatQuestionAnswers(structured),
       transcript,
       createdAt,
     });

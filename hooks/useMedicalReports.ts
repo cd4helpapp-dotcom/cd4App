@@ -746,13 +746,29 @@ export interface ParsedPrescriptionMedicine {
   frequency: string | null;
   duration: string | null;
   instructions: string | null;
+  dictionary_id?: string | null;
+  confidence_score?: number | null;
+  match_type?: 'exact' | 'alias' | 'fuzzy' | 'ai_only' | 'unverified' | string;
+  doctor_confirmation_required?: boolean;
+}
+
+export interface ParsedPrescriptionSummary {
+  concern: string;
+  chief_complaints: string[];
+  history_summary: string[];
+  examination: string[];
+  diagnosis: string;
+  general_advice: string[];
+  precautions: string[];
+  follow_up: string[];
+  red_flags: string[];
 }
 
 export const useParseDoctorPrescription = () => {
   const { session } = useAuthContext();
 
   return useMutation({
-    mutationFn: async ({ doctorText }: { doctorText: string }): Promise<{ medicines: ParsedPrescriptionMedicine[] }> => {
+    mutationFn: async ({ doctorText }: { doctorText: string }): Promise<{ medicines: ParsedPrescriptionMedicine[]; clinical_summary?: ParsedPrescriptionSummary }> => {
       if (!session?.access_token) {
         throw new Error('Please login again to parse prescription.');
       }
@@ -771,8 +787,7 @@ export const useParseDoctorPrescription = () => {
       }
 
       const medicines = Array.isArray(data?.data?.medicines) ? data.data.medicines : [];
-      return { medicines };
+      return { medicines, clinical_summary: data?.data?.clinical_summary };
     },
   });
 };
-

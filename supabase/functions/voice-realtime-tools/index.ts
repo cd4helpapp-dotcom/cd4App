@@ -9,6 +9,18 @@ const corsHeaders = {
 }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } })
 
+const inferDepartmentSuggestion = (value: unknown) => {
+  const text = String(value || "").toLowerCase()
+  if (/fever|bukhar|temperature|body ache|body pain|viral|infection/.test(text)) return { id: "General Physician", label: "General Physician" }
+  if (/chest|heart|cardiac|palpitation/.test(text)) return { id: "Cardiologist", label: "Cardiologist" }
+  if (/cough|breath|lung|asthma|copd|saans/.test(text)) return { id: "Pulmonologist", label: "Pulmonologist" }
+  if (/skin|rash|acne|eczema|itch/.test(text)) return { id: "Dermatologist", label: "Dermatologist" }
+  if (/diabet|sugar|thyroid|hormone|insulin/.test(text)) return { id: "Endocrinologist", label: "Endocrinologist" }
+  if (/stomach|gastric|liver|digestion|diarr|constipation|vomit/.test(text)) return { id: "Gastroenterologist", label: "Gastroenterologist" }
+  if (/child|baby|infant|pediatric/.test(text)) return { id: "Pediatrician", label: "Pediatrician" }
+  return null
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders })
   if (request.method !== "POST") return json({ success: false, message: "POST required" }, 405)
@@ -68,6 +80,7 @@ Deno.serve(async (request: Request) => {
           doctorCity: doctor.city || "",
           doctorFee: doctor.fee || "500",
           concern: args.concern || "General health",
+          departmentSuggestion: inferDepartmentSuggestion(args.concern || ""),
           slotDate: slot.date || "",
           slotStartTime: slot.start_time || "",
           slotEndTime: slot.end_time || "",
@@ -82,12 +95,12 @@ Deno.serve(async (request: Request) => {
     const requestedDoctorName = String(args.doctorName || args.doctor || "").trim()
       || (/^(dr\.?|doctor)\b/i.test(String(args.concern || "")) ? String(args.concern).trim() : "")
     if (requestedDoctorName) {
-      const searchTerm = requestedDoctorName
+      const doctorSearchText = requestedDoctorName
         .replace(/^dr\.?\s*/i, "")
         .replace(/^doctor\s*/i, "")
         .replace(/[%,()]/g, " ")
         .trim()
-        .split(/\s+/)[0]
+      const searchTerm = doctorSearchText.split(/\s+/)[0] || doctorSearchText
       const city = String(args.city || "").trim()
       const fields = "id,city,specialization,experience,fee,rating,first_name,last_name,profile_picture"
       const findDoctors = async (cityFilter: string) => {
@@ -102,6 +115,15 @@ Deno.serve(async (request: Request) => {
         doctorResult = await findDoctors("")
         doctors = doctorResult.data || []
       }
+      const requestedTokens = doctorSearchText.toLowerCase().split(/\s+/).filter(Boolean)
+      const exactMatches = doctors.filter((doctor: any) => {
+        const fullName = `${doctor.first_name || ""} ${doctor.last_name || ""}`.toLowerCase().trim()
+        return requestedTokens.length > 0 && requestedTokens.every((token) => fullName.includes(token))
+      })
+      // A named-doctor request must never fan out into unrelated doctors or
+      // their slots. Prefer an exact full-name match, otherwise show only the
+      // best first-name match and let the patient clarify if needed.
+      doctors = exactMatches.length > 0 ? exactMatches.slice(0, 1) : doctors.slice(0, 1)
       const doctorRecommendations = doctors.map((doctor: any) => ({
         id: doctor.id,
         firstName: doctor.first_name || "",
@@ -154,8 +176,9 @@ Deno.serve(async (request: Request) => {
             : `I could not find an open slot for ${doctorLabel} right now.`,
           doctorRecommendations,
           bookingSlotOptions,
-          bookingPreparation: { slotOptions: bookingSlotOptions, doctorId: doctorRecommendations[0]?.id || null, searchCity: city || null },
+           bookingPreparation: { slotOptions: bookingSlotOptions, doctorId: doctorRecommendations[0]?.id || null, searchCity: city || null },
           bookingPrompt: bookingSlotOptions.length ? "Choose a specific doctor and slot before booking." : null,
+          departmentSuggestion: inferDepartmentSuggestion(args.concern || ""),
         },
       })
     }
@@ -168,6 +191,7 @@ Deno.serve(async (request: Request) => {
     const payload = await response.json().catch(() => ({}))
     if (!response.ok || payload?.success !== true) return json({ success: false, message: payload?.message || "Voice tool failed" }, 400)
     const result = payload.data || {}
+    const genericDoctors = Array.isArray(result.doctorRecommendations) ? result.doctorRecommendations : []
     // Keep the voice tool response flat and compatible with the appointment
     // UI. chat-ai stores slots under bookingPreparation.slotOptions, while
     // the voice client also accepts bookingSlotOptions directly.
@@ -175,7 +199,13 @@ Deno.serve(async (request: Request) => {
       success: true,
       result: {
         ...result,
-        bookingSlotOptions: result.bookingSlotOptions || result.bookingPreparation?.slotOptions || [],
+        reply: genericDoctors.length
+          ? "I found verified doctors. Please choose a doctor first, and then I will show that doctor's available slots."
+          : result.reply || "I could not find a verified doctor right now.",
+        // Generic search shows doctors first. Slots are fetched only after
+        // the patient names/selects a specific doctor.
+        bookingSlotOptions: [],
+        bookingPreparation: result.bookingPreparation ? { ...result.bookingPreparation, slotOptions: [] } : result.bookingPreparation,
       },
     })
   } catch (error) {

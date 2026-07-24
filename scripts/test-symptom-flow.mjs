@@ -182,7 +182,7 @@ function pickProfile(text) {
 function getCoverage(text) {
   const needle = normalize(text);
   return {
-    onset: /\b(since|started|kab se|aaj se|kal se|subah se|shaam se|raat se)\b/.test(needle) || /\b\d+\s*(minute|minutes|min|mins|hour|hours|hr|hrs|day|days|week|weeks|month|months)\b/.test(needle),
+    onset: /\b(since|started|kab se|aaj se|kal se|subah se|shaam se|raat se)\b/.test(needle) || /\b\d+\s*(minute|minutes|min|mins|hour|hours|hr|hrs|day|days|week|weeks|month|months|din|ghante|hafte|mahine)\b/.test(needle),
     severity: /\b(mild|moderate|severe|zyada|bahut|bohot|unbearable)\b/.test(needle) || /\b([1-9]|10)\s*\/\s*10\b/.test(needle) || /\b(temperature|temp)\s*(is|:)?\s*\d{2,3}(\.\d)?\b/.test(needle),
     associated: /\b(fever|bukhar|nausea|vomit|cough|cold|khansi|breath|breathing|chills|rash|itch|diarrhea|loose motion|constipation|dizziness|sweating|chest pain|throat|weakness|body ache)\b/.test(needle),
     medicationContext: /\b(medicine|medication|tablet|allergy|dawai|paracetamol|inhaler|insulin|antibiotic|bp medicine|blood pressure medicine)\b/.test(needle),

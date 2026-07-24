@@ -26,6 +26,23 @@ const sanitizePdfText = (value: unknown): string =>
     .replace(/\s+/g, " ")
     .trim();
 
+const formatIndiaDateTime = (date = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return {
+    date: `${get("day")}/${get("month")}/${get("year")}`,
+    time: `${get("hour").padStart(2, "0")}:${get("minute")} ${get("dayPeriod")}`,
+  };
+};
+
 const createServiceClient = () => {
   const url = Deno.env.get("SUPABASE_URL") || "";
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -89,7 +106,6 @@ const sendPrescriptionEmail = async (args: {
       <h2 style="margin:0 0 10px 0;color:#0c7a61">Prescription Shared</h2>
       <p>Hi ${sanitizePdfText(args.patientName || "Patient")},</p>
       <p>Your doctor <strong>${sanitizePdfText(args.doctorName)}</strong> has shared a new prescription on ${APP_BRAND_NAME}.</p>
-      <p><strong>Consultation ID:</strong> ${sanitizePdfText(args.consultationId)}</p>
       <p>Please open the ${APP_BRAND_NAME} app chat to view/download your prescription PDF.</p>
       <p style="margin-top:20px;color:#4f6268">Team ${APP_BRAND_NAME}</p>
     </div>
@@ -242,6 +258,37 @@ type PrescriptionMedicineRow = {
   instructions: string | null;
 };
 
+const cleanMedicineName = (value: string): string => value
+  .replace(/^\s*(?:like|it is|i said|medicine is|prescribe|the medicine is|this is|is)\s+/i, "")
+  .replace(/^\s*(?:a|an|the)\s+/i, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const medicineKey = (value: string): string => {
+  const normalized = cleanMedicineName(value)
+    .toLowerCase()
+    .replace(/\b(?:tablet|tab|capsule|cap|syrup|syp|injection|inj|cream|ointment|drops?)\b/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g|gm|%)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^(?:azithromycin|azithro|azee|azentrom|azentromycin)$/.test(normalized)) return "azithromycin";
+  if (/^(?:paracetamol|paracitamol|pcm|dolo|tolo)$/.test(normalized)) return "paracetamol";
+  return normalized;
+};
+
+const medicineDistance = (left: string, right: string): number => {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 0; i < left.length; i += 1) {
+    const current = [i + 1];
+    for (let j = 0; j < right.length; j += 1) {
+      current.push(Math.min(current[j] + 1, previous[j + 1] + 1, previous[j] + (left[i] === right[j] ? 0 : 1)));
+    }
+    for (let j = 0; j < current.length; j += 1) previous[j] = current[j];
+  }
+  return previous[right.length];
+};
+
 const normalizeMedicines = (rows: unknown): PrescriptionMedicineRow[] => {
   if (!Array.isArray(rows)) return [];
   return rows
@@ -257,14 +304,18 @@ const normalizeMedicines = (rows: unknown): PrescriptionMedicineRow[] => {
 
 const dedupeMedicines = (rows: PrescriptionMedicineRow[], maxRows = 8): PrescriptionMedicineRow[] => {
   const out: PrescriptionMedicineRow[] = [];
-  const seen = new Set<string>();
+  const seen: string[] = [];
   for (const row of rows) {
-    const name = String(row?.medicine_name || "").trim();
+    const name = cleanMedicineName(String(row?.medicine_name || ""));
     if (!name) continue;
-    const dosage = String(row?.dosage || "").trim().toLowerCase();
-    const key = `${name.toLowerCase()}|${dosage}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = medicineKey(name);
+    if (!key || key.length < 3 || new Set(["is", "is a", "is an", "a", "an", "the", "medicine", "medication", "dose", "frequency", "duration", "tablet", "capsule"]).has(key)) continue;
+    const duplicate = seen.some((existing) => {
+      if (existing === key) return true;
+      return Math.max(existing.length, key.length) >= 7 && medicineDistance(existing, key) / Math.max(existing.length, key.length) <= 0.22;
+    });
+    if (duplicate) continue;
+    seen.push(key);
     out.push({
       medicine_name: normalizeMedicineName(name),
       dosage: row?.dosage || null,
@@ -337,11 +388,12 @@ const pickMedicineNameFromLine = (line: string): string => {
 const inferMedicinesFromVoiceText = (doctorText: string): PrescriptionMedicineRow[] => {
   const lines = splitVoiceLines(doctorText);
   const medicineHintRegex =
-    /(tab(?:let)?|cap(?:sule)?|syrup|syp|drop|ointment|cream|inhaler|inj(?:ection)?|mg|ml|mcg|\b\d{2,4}\b|od|bd|tds|sos|after food|before food|khane ke baad|khane se pehle|once daily|twice daily|three times daily)/i;
+    /(paracetamol|pcm|dolo|azithromycin|amoxicillin|cetirizine|levocetirizine|montelukast|pantoprazole|rabeprazole|ibuprofen|tab(?:let)?|cap(?:sule)?|syrup|syp|drop|ointment|cream|inhaler|inj(?:ection)?|mg|ml|mcg|od|bd|tds|sos|after food|before food|khane ke baad|khane se pehle|once daily|twice daily|three times daily)/i;
   const medicineActionRegex = /\b(take|start|continue|use|prescribe|give|add|lena|khana|medicine)\b/i;
+  const measurementOnlyRegex = /^(?:patient\s+)?(?:temperature|temp|bp|blood pressure|pulse|spo2|oxygen saturation|age|weight)\b/i;
 
   const mapped: PrescriptionMedicineRow[] = lines
-    .filter((line) => medicineHintRegex.test(line) || medicineActionRegex.test(line))
+    .filter((line) => !measurementOnlyRegex.test(line) && (medicineHintRegex.test(line) || (medicineActionRegex.test(line) && /\bmedicine\b/i.test(line))))
     .map((line) => {
       const cleaned = line.replace(/\b(tab(?:let)?|cap(?:sule)?|syrup|syp|drop|ointment|cream|inj(?:ection)?)\b/gi, "").trim();
       const dosageMatch = line.match(/\b\d+\s?(mg|ml|mcg|g|gm)\b/i);
@@ -616,13 +668,13 @@ const buildPrescriptionPdfBytes = async (args: {
   };
 
   // Header
+  const indiaDateTime = formatIndiaDateTime();
   drawText(APP_BRAND_NAME, 34, 807, 24, true, green);
   drawText("Teleconsultation", 34, 792, 11, false, dark);
   page.drawRectangle({ x: 212, y: 790, width: 170, height: 28, color: green });
   drawText("PRESCRIPTION", 255, 799, 13, true, white);
-  drawText(`Date: ${new Date().toLocaleDateString("en-IN")}`, 410, 807, 10, false, dark);
-  drawText(`Time: ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`, 410, 793, 10, false, dark);
-  drawText(`Consultation ID: ${args.consultationId}`, 410, 779, 10, false, dark);
+  drawText(`Date: ${indiaDateTime.date}`, 410, 807, 10, false, dark);
+  drawText(`Time: ${indiaDateTime.time}`, 410, 793, 10, false, dark);
 
   // Doctor + Patient card
   drawBox(28, 675, 539, 104, white, border);
@@ -634,16 +686,15 @@ const buildPrescriptionPdfBytes = async (args: {
   drawText("PATIENT DETAILS", 290, 760, 11, true, green);
   drawText(`Name: ${args.patientName}`, 290, 742, 11, false, dark);
   drawText("Age / Gender: Not specified", 290, 726, 10, false, dark);
-  drawText(`Patient ID: ${args.consultationId}`, 290, 712, 10, false, dark);
 
   // Complaints/history summary
   drawBox(28, 535, 539, 128, white, border);
   drawText("CHIEF COMPLAINTS", 40, 645, 11, true, green);
   drawBullets(40, 627, 165, args.narrative.chiefComplaints, 4, 9, dark);
-  drawText("HISTORY (SUMMARY)", 230, 645, 11, true, green);
-  drawBullets(230, 627, 175, args.narrative.historySummary, 4, 9, dark);
-  drawText("EXAMINATION", 430, 645, 11, true, green);
-  drawBullets(430, 627, 128, args.narrative.examination, 3, 9, dark);
+  drawText("HISTORY (SUMMARY)", 220, 645, 11, true, green);
+  drawBullets(220, 627, 185, args.narrative.historySummary, 4, 8.7, dark);
+  drawText("EXAMINATION", 425, 645, 11, true, green);
+  drawBullets(425, 627, 125, args.narrative.examination, 3, 8.1, dark);
   if (args.narrative.concern) {
     drawText(`Concern: ${fitText(args.narrative.concern, 500, 9)}`, 40, 560, 9, true, dark);
   }
@@ -698,22 +749,6 @@ const buildPrescriptionPdfBytes = async (args: {
   drawText(args.doctorName, 430, 194, 11, true, dark);
   drawText("Consultant Physician", 430, 182, 9, false, muted);
 
-  // Doctor verbatim notes (captures what doctor actually dictated/typed)
-  drawBox(28, 78, 539, 96, white, border);
-  drawText("DOCTOR VERBATIM NOTES", 40, 158, 10, true, green);
-  const verbatimLines = args.doctorVerbatimLines.length
-    ? args.doctorVerbatimLines
-    : dedupeLines(splitVoiceLines(args.voiceText), 6);
-  let notesY = 142;
-  for (const line of verbatimLines.slice(0, 4)) {
-    drawText(`• ${fitText(line, 500, 9)}`, 40, notesY, 9, false, dark);
-    notesY -= 14;
-    if (notesY < 88) break;
-  }
-  if (!verbatimLines.length) {
-    drawText("• No additional dictated notes.", 40, 142, 9, false, muted);
-  }
-
   page.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green });
   drawText("Your health. Our priority.", 244, 8, 9, true, white);
 
@@ -753,8 +788,12 @@ Deno.serve(async (req: Request) => {
     const patientNameInput = clipText(typeof body?.patientName === "string" ? body.patientName : "", 120);
     const consultationIdInput = clipText(typeof body?.consultationId === "string" ? body.consultationId : "", 80);
     const concernInput = clipText(typeof body?.concern === "string" ? body.concern : "", 120);
+    const medicineConfirmationPending = body?.medicineConfirmationPending === true;
     if (!roomId) throw new Error("roomId is required.");
     if (!doctorText) throw new Error("doctorText is required.");
+    if (medicineConfirmationPending) {
+      throw new Error("Medicine name review is required before sending the prescription PDF.");
+    }
 
     const { data: room, error: roomError } = await serviceClient
       .from("chat_rooms")
@@ -816,13 +855,16 @@ Deno.serve(async (req: Request) => {
 
     const aiMedicines = normalizeMedicines(parsedJson?.medicines || []);
     const heuristicMedicines = inferMedicinesFromVoiceText(doctorText);
-    const medicines = dedupeMedicines([...aiMedicines, ...heuristicMedicines], 8);
+    // The heuristic parser is a fallback only. Merging it with an AI result
+    // can create duplicate or conflicting medicines (for example a brand and
+    // its generic name). Keep one authoritative parse for the PDF.
+    const medicines = dedupeMedicines(aiMedicines.length ? aiMedicines : heuristicMedicines, 8);
     const doctorVerbatimLines = extractDoctorVerbatimLines(doctorText, 12);
     const medicinesForPdf = medicines.length
       ? medicines
       : [
           {
-            medicine_name: "As spoken by doctor",
+            medicine_name: "No medicine clearly dictated",
             dosage: null,
             frequency: null,
             duration: null,

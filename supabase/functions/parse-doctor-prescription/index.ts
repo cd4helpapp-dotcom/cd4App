@@ -87,7 +87,125 @@ const normalizeMedicineRow = (value: any) => {
     duration: typeof value.duration === "string" && value.duration.trim() ? value.duration.trim() : null,
     instructions:
       typeof value.instructions === "string" && value.instructions.trim() ? value.instructions.trim() : null,
+    dictionary_id: typeof value.dictionary_id === "string" ? value.dictionary_id : null,
+    confidence_score: typeof value.confidence_score === "number" ? value.confidence_score : null,
+    match_type: typeof value.match_type === "string" ? value.match_type : "ai_only",
+    doctor_confirmation_required: Boolean(value.doctor_confirmation_required),
   };
+};
+
+const normalizeLookupText = (value: unknown): string =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\b(?:tablet|tab|capsule|cap|syrup|syp|injection|inj|cream|ointment|drops?)\b/g, " ")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g|gm|%)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const levenshtein = (left: string, right: string): number => {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 0; i < left.length; i += 1) {
+    const current = [i + 1];
+    for (let j = 0; j < right.length; j += 1) {
+      current.push(Math.min(
+        current[j] + 1,
+        previous[j + 1] + 1,
+        previous[j] + (left[i] === right[j] ? 0 : 1),
+      ));
+    }
+    for (let j = 0; j < current.length; j += 1) previous[j] = current[j];
+  }
+  return previous[right.length];
+};
+
+const matchScore = (spoken: string, candidate: string): number => {
+  if (!spoken || !candidate) return 0;
+  if (spoken === candidate) return 1;
+  const distance = levenshtein(spoken, candidate);
+  return Math.max(0, 1 - distance / Math.max(spoken.length, candidate.length));
+};
+
+const extractSpokenStrength = (medicine: any): { value: number; unit: string } | null => {
+  const source = `${medicine?.medicine_name || ""} ${medicine?.dosage || ""}`;
+  const match = source.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|ml|g|gm|%)\b/i)
+    || source.match(/\b(\d{2,5})\b/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 1 || value > 100000) return null;
+  return { value, unit: String(match[2] || "").toLowerCase() };
+};
+
+const enrichWithVerifiedDictionary = async (serviceClient: any, medicines: any[]) => {
+    if (!medicines.length) return medicines;
+  const { data: dictionaryRows, error } = await serviceClient
+    .from("medicine_dictionary")
+    .select("id, generic_name, brand_name, aliases, speech_variants, strength_value, strength_unit, dosage_form")
+    .eq("active", true)
+    .eq("verification_status", "verified")
+    .limit(2000);
+  if (error || !Array.isArray(dictionaryRows) || !dictionaryRows.length) {
+    return medicines.map((medicine: any) => ({
+      ...medicine,
+      match_type: "ai_only",
+      doctor_confirmation_required: true,
+    }));
+  }
+
+  return medicines.map((medicine: any) => {
+    const spokenKey = normalizeLookupText(medicine.medicine_name);
+    if (!spokenKey) return medicine;
+    let best: any = null;
+    let bestScore = 0;
+    const spokenStrength = extractSpokenStrength(medicine);
+    for (const row of dictionaryRows) {
+      if (spokenStrength && row.strength_value) {
+        const rowUnit = String(row.strength_unit || "").toLowerCase();
+        const unitCompatible = !spokenStrength.unit || !rowUnit || spokenStrength.unit === rowUnit;
+        // A strength unit mismatch is never safe to ignore (650 mg is not
+        // 650 mcg). Only compare rows with both compatible unit and value.
+        if (!unitCompatible || Number(row.strength_value) !== spokenStrength.value) continue;
+      }
+      const candidates = [
+        { value: row.generic_name, kind: "exact" },
+        { value: row.brand_name, kind: "exact" },
+        ...(Array.isArray(row.aliases) ? row.aliases : []).map((value: string) => ({ value, kind: "alias" })),
+        ...(Array.isArray(row.speech_variants) ? row.speech_variants : []).map((value: string) => ({ value, kind: "speech_variant" })),
+      ]
+        .map((candidate) => ({ ...candidate, normalized: normalizeLookupText(candidate.value) }))
+        .filter((candidate) => candidate.normalized);
+      for (const candidate of candidates) {
+        const score = matchScore(spokenKey, candidate.normalized);
+        if (score > bestScore) {
+          bestScore = score;
+          best = { row, kind: candidate.kind };
+        }
+      }
+    }
+    if (!best || bestScore < 0.88) {
+      return { ...medicine, match_type: "ai_only", doctor_confirmation_required: true };
+    }
+
+    const dictionaryRow = best.row;
+    // Speech variants are intentionally never accepted as exact matches. They
+    // are only hints for likely dictation mistakes and require doctor review.
+    const exact = bestScore === 1 && best.kind !== "speech_variant";
+    const dictionaryName = [dictionaryRow.generic_name, dictionaryRow.brand_name ? `(${dictionaryRow.brand_name})` : ""]
+      .filter(Boolean)
+      .join(" ");
+    const dictionaryDose = dictionaryRow.strength_value && dictionaryRow.strength_unit
+      ? `${dictionaryRow.strength_value} ${dictionaryRow.strength_unit}`
+      : null;
+    return {
+      ...medicine,
+      medicine_name: exact ? dictionaryName : medicine.medicine_name,
+      dosage: medicine.dosage || dictionaryDose,
+      dictionary_id: dictionaryRow.id,
+      confidence_score: Number(bestScore.toFixed(3)),
+      match_type: exact ? (best.kind === "alias" ? "alias" : "exact") : "fuzzy",
+      doctor_confirmation_required: !exact,
+    };
+  });
 };
 
 const normalizeOutput = (value: any) => {
@@ -95,7 +213,25 @@ const normalizeOutput = (value: any) => {
   const medicines = rows
     .map(normalizeMedicineRow)
     .filter((row: any) => row && row.medicine_name);
-  return { medicines };
+  const summary = value?.clinical_summary && typeof value.clinical_summary === "object" ? value.clinical_summary : {};
+  const list = (input: unknown, max = 6): string[] => {
+    const values = Array.isArray(input) ? input : typeof input === "string" ? input.split(/[\n;|]/g) : [];
+    return values.map((item) => String(item || "").trim()).filter(Boolean).filter((item, index, all) => all.indexOf(item) === index).slice(0, max);
+  };
+  return {
+    medicines,
+    clinical_summary: {
+      concern: typeof summary.concern === "string" ? summary.concern.trim() : "",
+      chief_complaints: list(summary.chief_complaints, 4),
+      history_summary: list(summary.history_summary, 4),
+      examination: list(summary.examination, 4),
+      diagnosis: typeof summary.diagnosis === "string" ? summary.diagnosis.trim() : "",
+      general_advice: list(summary.general_advice, 4),
+      precautions: list(summary.precautions, 4),
+      follow_up: list(summary.follow_up, 3),
+      red_flags: list(summary.red_flags, 3),
+    },
+  };
 };
 
 const buildParserPrompt = (doctorText: string): string => {
@@ -142,8 +278,24 @@ OUTPUT FORMAT:
       "duration": "",
       "instructions": ""
     }
-  ]
+  ],
+  "clinical_summary": {
+    "concern": "",
+    "chief_complaints": [],
+    "history_summary": [],
+    "examination": [],
+    "diagnosis": "",
+    "general_advice": [],
+    "precautions": [],
+    "follow_up": [],
+    "red_flags": []
+  }
 }
+
+CLINICAL SUMMARY RULES:
+- Capture every clinically relevant fact the doctor dictated, even when it is in the same sentence as a medicine or booking instruction.
+- Use only information spoken by the doctor; never invent a diagnosis, dose, or symptom.
+- Keep the arrays concise, deduplicated, and section-specific. Put unmatched clinical text in the closest appropriate section rather than dropping it.
 
 Now parse the following input:
 
@@ -237,6 +389,7 @@ Deno.serve(async (req: Request) => {
     const parsedResult = await invokeOpenAI({ apiKey: openAiApiKey, prompt });
     const parsedJson = parseJsonSafely(parsedResult.reply);
     const normalized = normalizeOutput(parsedJson || {});
+    normalized.medicines = await enrichWithVerifiedDictionary(serviceClient, normalized.medicines);
 
     return new Response(
       JSON.stringify({

@@ -24,7 +24,7 @@ function ModernTabIcon({
     return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
 }
 
-const ADMIN_VISIBLE_TABS = ['dashboard', 'doctors', 'revenue', 'app-settings'] as const;
+const ADMIN_VISIBLE_TABS = ['dashboard', 'doctors', 'medicines', 'revenue', 'app-settings'] as const;
 
 export default function AdminLayout() {
     const colorScheme = useColorScheme();
@@ -137,6 +137,16 @@ export default function AdminLayout() {
                     tabBarLabel: 'Doctors',
                     tabBarIcon: ({ color, focused }) => (
                         <ModernTabIcon focused={focused} color={color} activeName="medkit" inactiveName="medkit-outline" />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="medicines"
+                options={{
+                    title: 'Medicines',
+                    tabBarLabel: 'Medicines',
+                    tabBarIcon: ({ color, focused }) => (
+                        <ModernTabIcon focused={focused} color={color} activeName="flask" inactiveName="flask-outline" />
                     ),
                 }}
             />
