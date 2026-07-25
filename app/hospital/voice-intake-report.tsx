@@ -92,7 +92,7 @@ export default function HospitalVoiceIntakeReportScreen() {
     return (
         <ScrollView
             style={[styles.container, { backgroundColor: theme.background }]}
-            contentContainerStyle={[styles.content, { paddingTop: insets.top + 16 }]}
+            contentContainerStyle={[styles.content, { paddingTop: insets.top + 2 }]}
             refreshControl={<RefreshControl refreshing={intakeQuery.isRefetching} onRefresh={intakeQuery.refetch} tintColor={theme.tint} />}
         >
             <View style={styles.header}>
@@ -178,28 +178,28 @@ function ReportSection({ title, value }: { title: string; value: string }) {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    content: { paddingHorizontal: 18, paddingBottom: 36 },
-    header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
+    content: { paddingHorizontal: 14, paddingBottom: 24 },
+    header: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
     backButton: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
     kicker: { fontSize: 12, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 4 },
     title: { fontSize: 25, lineHeight: 31, fontWeight: '900' },
     loadingCard: { borderWidth: 1, borderRadius: 18, padding: 18, minHeight: 120, alignItems: 'center', justifyContent: 'center' },
     emptyTitle: { fontSize: 16, fontWeight: '900' },
     emptyText: { marginTop: 6, fontSize: 13, lineHeight: 19, fontWeight: '600', textAlign: 'center' },
-    actionRow: { flexDirection: 'row', gap: 10, marginBottom: 14 },
-    actionButton: { flex: 1.2, height: 48, borderRadius: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+    actionRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+    actionButton: { flex: 1.2, height: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
     actionButtonText: { fontSize: 14, fontWeight: '900' },
-    secondaryButton: { flex: 1, height: 48, borderRadius: 15, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+    secondaryButton: { flex: 1, height: 42, borderRadius: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
     secondaryButtonText: { fontSize: 14, fontWeight: '900' },
-    paper: { backgroundColor: '#FFFFFF', borderRadius: 10, padding: 20 },
-    paperHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, borderBottomWidth: 1, borderBottomColor: '#DDE7E4', paddingBottom: 16 },
+    paper: { backgroundColor: '#FFFFFF', borderRadius: 10, padding: 12 },
+    paperHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, borderBottomWidth: 1, borderBottomColor: '#DDE7E4', paddingBottom: 10 },
     brand: { color: '#008D80', fontSize: 14, fontWeight: '900', letterSpacing: 1.1 },
     paperTitle: { marginTop: 5, color: '#111827', fontSize: 22, lineHeight: 28, fontWeight: '900' },
-    metaBox: { marginTop: 16, borderWidth: 1, borderColor: '#DDE7E4', borderRadius: 8, padding: 12, gap: 10, backgroundColor: '#F7FBFA' },
+    metaBox: { marginTop: 10, borderWidth: 1, borderColor: '#DDE7E4', borderRadius: 8, padding: 10, gap: 6, backgroundColor: '#F7FBFA' },
     metaItem: { gap: 2 },
     metaLabel: { color: '#667085', fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8 },
     metaValue: { color: '#111827', fontSize: 13, lineHeight: 18, fontWeight: '800' },
-    reportSection: { marginTop: 18 },
+    reportSection: { marginTop: 12 },
     reportSectionTitle: { color: '#008D80', fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 7 },
     reportText: { color: '#1F2937', fontSize: 13, lineHeight: 20, fontWeight: '600' },
 });

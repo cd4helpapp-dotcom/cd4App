@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, Platform } from 'react-native';
-import { MapPin, Menu, Bell } from 'lucide-react-native';
+import { Activity, Bell, UserRound } from 'lucide-react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
@@ -50,33 +50,25 @@ export default function GlobalHeader() {
     }, []);
 
     // Explicitly hide header on chat tab or screens that have their own custom top headers
-    if (pathname.includes('/chat')) {
+    // Patient Home has its own CD4 header; keeping this one would duplicate the
+    // location/menu strip above the new Home showcase.
+    if (pathname.includes('/chat') || pathname === '/' || pathname === '/index' || pathname === '/(tabs)') {
         return null;
     }
 
     return (
         <View style={[styles.container, { backgroundColor: theme.background, paddingTop: safeTopInset }]}>
             <View style={styles.headerRow}>
-                {/* Location Pill */}
-                <TouchableOpacity 
-                    style={[styles.cityPill, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}
-                    activeOpacity={0.85}
-                    onPress={() => {
-                        // Could potentially open a location picker in the future
-                        if (pathname !== '/(tabs)') {
-                            router.push('/(tabs)');
-                        }
-                    }}
-                >
-                    <MapPin size={12} color={theme.text} />
-                    <Text style={[styles.cityPillText, { color: theme.textSecondary }]} numberOfLines={1}>
-                        Near: <Text style={[styles.cityPillValue, { color: theme.tint }]}>{loadingCity ? '...' : cityLabel}</Text>
-                    </Text>
-                </TouchableOpacity>
-
-                {/* Right Actions */}
+                <View style={styles.brandIdentity}>
+                    <View style={styles.brandMark}>
+                        <Activity size={18} color="#FFFFFF" strokeWidth={2.8} />
+                    </View>
+                    <View>
+                        <Text style={[styles.brandName, { color: theme.text }]}>CD4</Text>
+                        <Text style={[styles.brandLocation, { color: theme.textSecondary }]}>● PATNA, INDIA</Text>
+                    </View>
+                </View>
                 <View style={styles.actionsRow}>
-                    {/* Notification Bell */}
                     <TouchableOpacity
                         style={[styles.iconButton, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
                         onPress={() => router.push('/notifications')}
@@ -92,7 +84,6 @@ export default function GlobalHeader() {
                         )}
                     </TouchableOpacity>
 
-                    {/* Hamburger Menu */}
                     <TouchableOpacity
                         style={[styles.iconButton, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
                         onPress={() => {
@@ -106,7 +97,7 @@ export default function GlobalHeader() {
                         }}
                         activeOpacity={0.85}
                     >
-                        <Menu size={18} color={theme.text} />
+                        <UserRound size={18} color={theme.text} />
                     </TouchableOpacity>
                 </View>
             </View>
@@ -126,8 +117,12 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         paddingHorizontal: 16,
         paddingTop: 2,
-        paddingBottom: 2,
+        paddingBottom: 6,
     },
+    brandIdentity: { flexDirection: 'row', alignItems: 'center' },
+    brandMark: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#0B8F63', alignItems: 'center', justifyContent: 'center', marginRight: 9 },
+    brandName: { fontSize: 17, fontWeight: '800', lineHeight: 19 },
+    brandLocation: { fontSize: 8, fontWeight: '700', letterSpacing: 0.7, marginTop: 1 },
     cityPill: {
         flexDirection: 'row',
         alignItems: 'center',

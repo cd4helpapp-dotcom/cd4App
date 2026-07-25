@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, Clock, Search } from 'lucide-react-native';
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, Clock, Search, Mic } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
 import { useDoctors } from '../../hooks/useDoctor';
 import { getImageUrl } from '../../constants/Config';
@@ -252,6 +252,7 @@ export default function AppointmentsScreen() {
   const [loadingCity, setLoadingCity] = React.useState(true);
   const [selectedCity, setSelectedCity] = React.useState<string>('all');
   const [selectedCategory, setSelectedCategory] = React.useState<string>('all');
+  const [doctorSearchQuery, setDoctorSearchQuery] = React.useState('');
   const [hasUserSelectedCity, setHasUserSelectedCity] = React.useState(false);
   const [openDropdown, setOpenDropdown] = React.useState<DropdownType>(null);
   const [citySearchQuery, setCitySearchQuery] = React.useState('');
@@ -464,6 +465,14 @@ export default function AppointmentsScreen() {
   const filteredDoctors = React.useMemo(() => {
     let candidates = doctorsData;
 
+    const searchValue = normalizeText(doctorSearchQuery);
+    if (searchValue) {
+      candidates = candidates.filter((doctor) => {
+        const doctorName = `${doctor.firstName} ${doctor.lastName}`;
+        return [doctorName, doctor.specialization, doctor.city].some((value) => normalizeText(value).includes(searchValue));
+      });
+    }
+
     if (selectedCity !== 'all') {
       candidates = candidates.filter((doctor) => isCityMatch(doctor.city, selectedCity));
     }
@@ -502,7 +511,7 @@ export default function AppointmentsScreen() {
         return (b.doctor.rating || 0) - (a.doctor.rating || 0);
       })
       .map((item) => item.doctor);
-  }, [doctorsData, selectedCity, selectedCategory, concernKeywords, locationCity]);
+  }, [doctorsData, selectedCity, selectedCategory, concernKeywords, locationCity, doctorSearchQuery]);
 
   const visibleDoctors = React.useMemo(
     () => filteredDoctors.slice(0, visibleDoctorCount),
@@ -810,6 +819,39 @@ export default function AppointmentsScreen() {
           />
         }
       >
+        <View style={[styles.searchBar, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+          <Search size={16} color={theme.textSecondary} />
+          <TextInput
+            value={doctorSearchQuery}
+            onChangeText={setDoctorSearchQuery}
+            placeholder="Search doctors, clinics..."
+            placeholderTextColor={theme.textSecondary}
+            style={[styles.searchInput, { color: theme.text }]}
+            returnKeyType="search"
+          />
+          <TouchableOpacity style={[styles.searchVoiceButton, { backgroundColor: theme.tint }]} onPress={() => router.push('/ai-guidance')} activeOpacity={0.84}>
+            <Mic size={14} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.categoryHeader}>
+          <Text style={[styles.categoryTitle, { color: theme.text }]}>Categories</Text>
+          <TouchableOpacity onPress={() => setOpenDropdown('category')} style={styles.categoryArrowButton} activeOpacity={0.8} accessibilityLabel="View all departments"><ChevronRight size={20} color={theme.tint} strokeWidth={2.5} /></TouchableOpacity>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
+          <TouchableOpacity style={[styles.categoryChip, { backgroundColor: selectedCategory === 'all' ? theme.successLight : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory('all')}>
+            <View style={[styles.categoryIcon, { backgroundColor: theme.cardBackground }]}><CalendarDays size={17} color={theme.tint} /></View>
+            <Text style={[styles.categoryChipText, { color: theme.text }]}>All</Text>
+          </TouchableOpacity>
+          {categoryOptions.slice(0, 8).map((category) => {
+            const active = normalizeText(selectedCategory) === normalizeText(category);
+            return <TouchableOpacity key={category} style={[styles.categoryChip, { backgroundColor: active ? theme.successLight : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory(active ? 'all' : category)}>
+              <View style={[styles.categoryIcon, { backgroundColor: active ? theme.cardBackground : (isDarkTheme ? '#26384B' : '#EAF2FB') }]}><MapPin size={17} color={active ? theme.tint : theme.textSecondary} /></View>
+              <Text numberOfLines={1} style={[styles.categoryChipText, { color: theme.text }]}>{category}</Text>
+            </TouchableOpacity>;
+          })}
+        </ScrollView>
+
         <View style={[styles.triageCard, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
           <Text style={[styles.triageLabel, { color: theme.tint }]}>{t('appointments.triageResult')}</Text>
           <Text style={[styles.triageText, { color: theme.text }]}>
@@ -1246,6 +1288,16 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 28, fontWeight: '800' },
   headerSubTitle: { fontSize: 12, marginTop: 4 },
   content: { paddingHorizontal: 16, paddingBottom: 90 },
+  searchBar: { height: 44, borderWidth: 1, borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 4, marginBottom: 14 },
+  searchInput: { flex: 1, fontSize: 12, marginLeft: 8, paddingVertical: 0 },
+  searchVoiceButton: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  categoryHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  categoryTitle: { fontSize: 14, fontWeight: '800' },
+  categoryArrowButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 15 },
+  categoryRow: { gap: 8, paddingBottom: 14 },
+  categoryChip: { width: 72, height: 78, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  categoryIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  categoryChipText: { fontSize: 9, fontWeight: '700', textAlign: 'center' },
   triageCard: {
     borderWidth: 1,
     borderRadius: 14,

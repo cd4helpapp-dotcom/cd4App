@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Image, ActivityIndicator, Modal, RefreshControl, Animated, Easing, useWindowDimensions, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { Theme } from '../../constants/Colors';
-import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle } from 'lucide-react-native';
+import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle, Bell, UserRound, FlaskConical, ScanLine, Video, ChevronRight, Siren } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import Toast from 'react-native-toast-message';
@@ -17,6 +17,7 @@ import { useAuthContext } from '../../context/AuthContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
 import { connectRealtimeVoice, type RealtimeVoiceHandle } from '../../src/services/realtimeVoice';
+import { PatientHomeShowcase } from '../home/PatientHomeShowcase';
 
 type SpeechRecognitionEventName = 'start' | 'end' | 'result' | 'error';
 
@@ -5836,7 +5837,94 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             }
         >
 
-            <View style={[styles.aiCard, { shadowColor: '#0C2E22' }]}>
+            <PatientHomeShowcase
+                theme={{
+                    background: theme.background,
+                    text: theme.text,
+                    textSecondary: theme.textSecondary,
+                    cardBackground: theme.cardBackground,
+                    borderColor: theme.borderColor,
+                    successLight: theme.successLight,
+                    success: theme.success,
+                    tint: theme.tint,
+                }}
+                selectedCityLabel={selectedCityLabel}
+                isProUser={isProUser}
+                aiTitle="How can I help you today?"
+                aiSubtitle="Talk to me about your symptoms or medical concerns."
+                symptomPlaceholder={t('home.symptomPlaceholder')}
+                symptomInput={symptomInput}
+                isListening={isListening}
+                shouldEmphasizeVoiceCta={shouldEmphasizeVoiceCta}
+                shouldPulseMicButton={shouldPulseMicButton}
+                voicePulse={voicePulse}
+                onSymptomChange={setSymptomInput}
+                onSymptomSubmit={() => handleSymptomSubmit()}
+                onVoicePress={openVoiceAssistantPanel}
+                onUpgrade={handleOpenUpgradeToPro}
+                doctors={visibleNearbyDoctors.slice(0, 6).map((doctor, index) => {
+                    const { ratingLabel, feeLabel } = resolveDoctorCardMetrics(doctor);
+                    return {
+                        id: String(doctor._id || `home-doctor-${index}`),
+                        name: getDoctorDisplayName(doctor, { fallbackName: 'Specialist' }),
+                        specialization: doctor.specialization,
+                        experience: parseExperienceYears(doctor.experience),
+                        image: getImageUrl(doctor.image),
+                        feeLabel,
+                        ratingLabel,
+                    };
+                })}
+                departments={allDepartments.slice(0, 4)}
+                concerns={concernCards.map((concern) => ({ id: concern.id, label: getConcernDisplayLabel(concern.label) }))}
+                promos={promoLoopCards.map((promo) => ({ id: promo.id, tag: promo.tag, title: promo.title, description: promo.description }))}
+                onViewAllDoctors={() => handleConsultDoctor()}
+                onDoctorProfile={(doctorId) => handleOpenDoctorProfile(doctorId)}
+                onConsultDoctor={(doctorId) => handleConsultDoctor(doctorId)}
+                onNotificationPress={() => router.push('/notifications')}
+                onProfilePress={() => router.push('/(tabs)/settings')}
+                onConcernPress={handleConcernPress}
+                onPromoPress={(promoId) => {
+                    const promo = promoLoopCards.find((item) => item.id === promoId);
+                    handlePromoCardAction(promo?.action || 'ai_chat');
+                }}
+                onEmergencyPress={() => handleConsultDoctor()}
+                onQuickAction={(label) => {
+                    if (label === 'Medicines' || label === 'Scans') {
+                        router.push('/(tabs)/records');
+                    } else if (label === 'Book Lab') {
+                        router.push('/(tabs)/appointments');
+                    } else {
+                        handleConsultDoctor();
+                    }
+                }}
+                onDepartmentPress={handleConcernPress}
+                onViewAllDepartments={handleViewAllConcernsPress}
+            />
+
+            {/* Legacy inline Home UI disabled: CD4 Home showcase is the single source of truth. */}
+            {false && (<>
+            <View style={[styles.homeBrandHeader, { display: 'none' }]}>
+                <View style={styles.homeBrandIdentity}>
+                    <View style={styles.homeBrandMark}>
+                        <Activity size={19} color="#FFFFFF" strokeWidth={2.8} />
+                    </View>
+                    <View>
+                        <Text style={[styles.homeBrandName, { color: theme.text }]}>VitalVoice</Text>
+                        <Text style={[styles.homeBrandLocation, { color: theme.textSecondary }]}>PATNA, INDIA</Text>
+                    </View>
+                </View>
+                <View style={styles.homeHeaderActions}>
+                    <TouchableOpacity style={[styles.homeHeaderIcon, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} activeOpacity={0.8}>
+                        <Bell size={17} color={theme.text} />
+                        <View style={styles.homeNotificationDot} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.homeHeaderIcon, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} activeOpacity={0.8}>
+                        <UserRound size={17} color={theme.text} />
+                    </TouchableOpacity>
+                </View>
+            </View>
+
+            <View style={[styles.aiCard, { shadowColor: '#0C2E22', display: 'none' }]}>
                 <View style={styles.aiHeaderRow}>
                     <View style={styles.aiHeadingBlock}>
                         <Text style={styles.aiTitle}>{t('home.aiTitle', { name: aiTitleNameSuffix })}</Text>
@@ -5965,6 +6053,29 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     </View>
                 ) : null}
             </View>
+
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.homeQuickActionsContent}
+                style={[styles.homeQuickActionsScroll, { display: 'none' }]}
+            >
+                {[
+                    { label: 'Book Lab', Icon: FlaskConical, onPress: () => router.push('/(tabs)/appointments') },
+                    { label: 'Medicines', Icon: Pill, onPress: () => router.push('/(tabs)/records') },
+                    { label: 'Scans', Icon: ScanLine, onPress: () => router.push('/(tabs)/records') },
+                    { label: 'Video Call', Icon: Video, onPress: () => handleConsultDoctor() },
+                ].map(({ label, Icon, onPress }) => (
+                    <TouchableOpacity key={label} style={[styles.homeQuickAction, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onPress} activeOpacity={0.82}>
+                        <View style={[styles.homeQuickActionIcon, { backgroundColor: theme.successLight }]}>
+                            <Icon size={18} color={theme.tint} />
+                        </View>
+                        <Text style={[styles.homeQuickActionLabel, { color: theme.text }]}>{label}</Text>
+                    </TouchableOpacity>
+                ))}
+            </ScrollView>
+
+            </>)}
 
             <Modal
                 visible={isAgentConversationVisible}
@@ -6799,6 +6910,85 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 </AgentSheetWrapper>
             </Modal>
 
+            {/* Legacy duplicate specialist/department blocks disabled; PatientHomeShowcase renders them. */}
+            {false && (<>
+            {visibleNearbyDoctors.length > 0 ? (
+                <View style={[styles.homeTopSpecialistsSection, { display: 'none' }]}>
+                    <View style={styles.sectionHeader}>
+                        <View>
+                            <Text style={[styles.heading, { color: theme.text }]}>Top Specialists</Text>
+                            <Text style={[styles.homeSectionCaption, { color: theme.textSecondary }]}>Available near {selectedCityLabel}</Text>
+                        </View>
+                        <TouchableOpacity onPress={() => handleConsultDoctor()} activeOpacity={0.8}>
+                            <View style={styles.homeViewAllRow}>
+                                <Text style={[styles.viewAll, { color: theme.tint }]}>View all</Text>
+                                <ChevronRight size={15} color={theme.tint} />
+                            </View>
+                        </TouchableOpacity>
+                    </View>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.homeSpecialistsContent}>
+                        {visibleNearbyDoctors.slice(0, 6).map((doctor, index) => {
+                            const { ratingLabel, feeLabel } = resolveDoctorCardMetrics(doctor);
+                            return (
+                                <View key={`top-specialist-${String(doctor._id || index)}`} style={[styles.homeSpecialistCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                                    <TouchableOpacity onPress={() => handleOpenDoctorProfile(resolveDoctorId(doctor))} activeOpacity={0.82}>
+                                        <View style={styles.homeSpecialistTopRow}>
+                                            <Image source={{ uri: getImageUrl(doctor.image) || 'https://i.pravatar.cc/100?img=11' }} style={styles.homeSpecialistAvatar} />
+                                            <View style={[styles.homeVerifiedBadge, { backgroundColor: theme.successLight }]}>
+                                                <CheckCircle size={10} color={theme.tint} />
+                                                <Text style={[styles.homeVerifiedText, { color: theme.tint }]}>VERIFIED</Text>
+                                            </View>
+                                        </View>
+                                        <Text numberOfLines={1} style={[styles.homeSpecialistName, { color: theme.text }]}>{getDoctorDisplayName(doctor, { fallbackName: 'Specialist' })}</Text>
+                                        <Text numberOfLines={1} style={[styles.homeSpecialistMeta, { color: theme.textSecondary }]}>{doctor.specialization || 'Specialist'} • {formatDoctorExperienceLabel(doctor.experience)}</Text>
+                                        <View style={styles.homeSpecialistBottomRow}>
+                                            <View>
+                                                <Text style={[styles.homeSpecialistFeeCaption, { color: theme.textSecondary }]}>FEE</Text>
+                                                <Text style={[styles.homeSpecialistFee, { color: theme.tint }]}>{feeLabel || 'On request'}</Text>
+                                            </View>
+                                            <View style={[styles.homeSpecialistRating, { backgroundColor: theme.successLight }]}>
+                                                <Star size={10} color={theme.success} fill={theme.success} />
+                                                <Text style={[styles.homeSpecialistRatingText, { color: theme.success }]}>{ratingLabel}</Text>
+                                            </View>
+                                        </View>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.homeSpecialistConsult, { backgroundColor: theme.text }]} onPress={() => handleConsultDoctor(resolveDoctorId(doctor))} activeOpacity={0.86}>
+                                        <Text style={styles.homeSpecialistConsultText}>Consult</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        })}
+                    </ScrollView>
+                </View>
+            ) : null}
+
+            <View style={[styles.homeDepartmentsSection, { display: 'none' }]}>
+                <View style={styles.sectionHeader}>
+                    <Text style={[styles.heading, { color: theme.text }]}>Explore Departments</Text>
+                    <TouchableOpacity onPress={handleViewAllConcernsPress} activeOpacity={0.8}>
+                        <View style={styles.homeViewAllRow}>
+                            <Text style={[styles.viewAll, { color: theme.tint }]}>View all</Text>
+                            <ChevronRight size={15} color={theme.tint} />
+                        </View>
+                    </TouchableOpacity>
+                </View>
+                <View style={styles.homeDepartmentGrid}>
+                    {allDepartments.slice(0, 4).map((department, index) => {
+                        const DepartmentIcon = department.Icon || (index === 0 ? Stethoscope : Activity);
+                        return (
+                            <TouchableOpacity key={department.id} style={[styles.homeDepartmentCard, { backgroundColor: index % 2 === 0 ? '#EEF8F6' : '#FFF1F4', borderColor: theme.borderColor }]} onPress={() => handleConcernPress(department.label)} activeOpacity={0.84}>
+                                <View style={[styles.homeDepartmentIcon, { backgroundColor: theme.cardBackground }]}><DepartmentIcon size={23} color={index % 2 === 0 ? theme.tint : '#E04455'} /></View>
+                                <Text numberOfLines={2} style={[styles.homeDepartmentLabel, { color: theme.text }]}>{department.label}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+            </View>
+
+            </>)}
+
+            {/* Legacy vertical concern grid disabled; PatientHomeShowcase renders the horizontal concern slider. */}
+            {false && (<>
             <View style={styles.sectionHeader}>
                 <Text style={[styles.heading, { color: theme.text }]}>{t('home.chooseConcern')}</Text>
                 <TouchableOpacity onPress={handleViewAllConcernsPress}>
@@ -6818,22 +7008,30 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 ))}
             </View>
 
-            <View style={[styles.urgentCard, { backgroundColor: theme.cardBackground, borderColor: theme.successBorder, marginBottom: 24 }]}>
-                <View>
-                    <Text style={[styles.urgentTitle, { color: theme.text }]}>{t('home.urgentTitle')}</Text>
-                    <Text style={[styles.urgentSubTitle, { color: theme.textSecondary }]}>{t('home.urgentSubtitle')}</Text>
+            </>)}
+
+            {/* Legacy emergency card disabled; PatientHomeShowcase owns the ordered emergency action. */}
+            <View style={[styles.urgentCard, { backgroundColor: '#202D42', borderColor: '#202D42', marginBottom: 24, display: 'none' }]}>
+                <View style={styles.urgentContentRow}>
+                    <View style={styles.urgentIcon}><Siren size={20} color="#FFFFFF" /></View>
+                    <View style={styles.urgentCopy}>
+                        <Text style={[styles.urgentTitle, { color: '#FFFFFF' }]}>Medical Emergency?</Text>
+                        <Text style={[styles.urgentSubTitle, { color: 'rgba(255,255,255,.72)' }]}>Call a doctor in under 60 seconds</Text>
+                    </View>
                 </View>
                 <TouchableOpacity
                     style={[
                         styles.urgentButton,
-                        { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                        { backgroundColor: '#D51E27', borderColor: '#D51E27' },
                     ]}
                     onPress={() => handleConsultDoctor()}
                 >
-                    <Text style={[styles.urgentButtonText, { color: theme.tint }]}>{t('home.consultNow')}</Text>
+                    <Text style={[styles.urgentButtonText, { color: '#FFFFFF' }]}>Call Now</Text>
                 </TouchableOpacity>
             </View>
 
+            {/* Legacy promo + nearby-doctors Home UI disabled: PatientHomeShowcase owns this experience now. */}
+            {false && (<>
             <View style={styles.promoCarouselWrap}>
                 <ScrollView
                     ref={promoCarouselRef}
@@ -7010,7 +7208,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         activeOpacity={0.82}
                     >
                         <Text style={[styles.departmentFilterChipText, { color: theme.tint }]}>
-                            Department: {selectedDepartment.label} • Clear
+                            Department: {selectedDepartment?.label} • Clear
                         </Text>
                     </TouchableOpacity>
                 </View>
@@ -7021,7 +7219,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     <View style={styles.recommendedHeaderRow}>
                         <View>
                             <Text style={[styles.recommendedTitle, { color: theme.text }]}>
-                                Recommended Best in {selectedDepartment.label}
+                                Recommended Best in {selectedDepartment?.label}
                             </Text>
                             <Text style={[styles.recommendedSubtitle, { color: theme.textSecondary }]}>
                                 Top rated specialist available for consult
@@ -7073,7 +7271,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     </View>
 
                     <Text style={[styles.recommendedHint, { color: theme.textSecondary }]}>
-                        {selectedCity && recommendedDoctor.city && !isCityMatch(recommendedDoctor.city, selectedCity)
+                        {selectedCity && recommendedDoctor.city && !isCityMatch(recommendedDoctor.city, selectedCity || '')
                             ? `No problem if you are in ${selectedCity}. You can still consult this top doctor from ${recommendedDoctor.city}.`
                             : 'You can consult this doctor from anywhere.'}
                     </Text>
@@ -7149,7 +7347,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     <Text style={[styles.cityCaption, { color: theme.textSecondary }]}>
                         {loadingCity
                             ? 'Fetching location...'
-                            : `${selectedCityLabel}${selectedDepartment ? ` • ${selectedDepartment.label}` : ''}`}
+                            : `${selectedCityLabel}${selectedDepartment?.label ? ` • ${selectedDepartment?.label}` : ''}`}
                     </Text>
                     <TouchableOpacity
                         style={[styles.funnelButton, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
@@ -7184,7 +7382,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             ) : nearbyDoctors.length === 0 ? (
                 <View style={styles.loaderWrap}>
                     <Text style={[styles.loaderText, { color: theme.textSecondary }]}>
-                        No doctors found{selectedDepartment ? ` in ${selectedDepartment.label}` : ''} near {selectedCityLabel}.
+                        No doctors found{selectedDepartment?.label ? ` in ${selectedDepartment?.label}` : ''} near {selectedCityLabel}.
                     </Text>
                     <Text style={[styles.emptyHintText, { color: theme.textSecondary }]}>
                         {selectedDepartment && recommendedDoctor
@@ -7279,6 +7477,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     </Text>
                 </View>
             ) : null}
+
+            </>)}
 
             <Modal
                 visible={showProPlanModal}
@@ -7739,6 +7939,42 @@ const styles = StyleSheet.create({
     },
     cityPillText: { marginLeft: 6, fontSize: 12, fontWeight: '500' },
     cityPillValue: { fontWeight: '700', textTransform: 'capitalize' },
+    homeBrandHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+    },
+    homeBrandIdentity: { flexDirection: 'row', alignItems: 'center' },
+    homeBrandMark: {
+        width: 34,
+        height: 34,
+        borderRadius: 10,
+        backgroundColor: '#0B8F63',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 9,
+    },
+    homeBrandName: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2 },
+    homeBrandLocation: { fontSize: 8, fontWeight: '700', letterSpacing: 0.8, marginTop: 1 },
+    homeHeaderActions: { flexDirection: 'row', gap: 8 },
+    homeHeaderIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    homeNotificationDot: {
+        position: 'absolute',
+        top: 7,
+        right: 7,
+        width: 5,
+        height: 5,
+        borderRadius: 3,
+        backgroundColor: '#E5424C',
+    },
     aiCard: {
         backgroundColor: '#0F3E2E',
         borderRadius: 22,
@@ -7811,6 +8047,52 @@ const styles = StyleSheet.create({
         paddingVertical: 0,
     },
     aiAssistHint: { color: '#D2E3DC', fontSize: 11, marginTop: 10, lineHeight: 16, fontWeight: '500' },
+    homeQuickActionsScroll: { marginHorizontal: -20, marginBottom: 20 },
+    homeQuickActionsContent: { paddingHorizontal: 20, gap: 10 },
+    homeQuickAction: {
+        width: 76,
+        minHeight: 76,
+        borderRadius: 15,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 5,
+    },
+    homeQuickActionIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+    homeQuickActionLabel: { fontSize: 10, fontWeight: '700', textAlign: 'center' },
+    homeTopSpecialistsSection: { marginBottom: 22 },
+    homeSectionCaption: { fontSize: 11, marginTop: 2 },
+    homeViewAllRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    homeSpecialistsContent: { paddingRight: 20, gap: 12 },
+    homeSpecialistCard: {
+        width: 194,
+        borderRadius: 17,
+        borderWidth: 1,
+        padding: 11,
+        shadowColor: '#0F172A',
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 2,
+    },
+    homeSpecialistTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+    homeSpecialistAvatar: { width: 45, height: 45, borderRadius: 13, backgroundColor: '#E7F1EE' },
+    homeVerifiedBadge: { flexDirection: 'row', alignItems: 'center', borderRadius: 7, paddingHorizontal: 5, paddingVertical: 3, gap: 2 },
+    homeVerifiedText: { fontSize: 7, fontWeight: '800', letterSpacing: 0.2 },
+    homeSpecialistName: { fontSize: 13, fontWeight: '800', marginTop: 8 },
+    homeSpecialistMeta: { fontSize: 10, marginTop: 3 },
+    homeSpecialistBottomRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginTop: 12 },
+    homeSpecialistFeeCaption: { fontSize: 8, fontWeight: '700' },
+    homeSpecialistFee: { fontSize: 12, fontWeight: '800', marginTop: 1 },
+    homeSpecialistRating: { flexDirection: 'row', alignItems: 'center', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 3, gap: 2 },
+    homeSpecialistRatingText: { fontSize: 9, fontWeight: '800' },
+    homeSpecialistConsult: { borderRadius: 9, paddingVertical: 8, alignItems: 'center', marginTop: 10 },
+    homeSpecialistConsultText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+    homeDepartmentsSection: { marginBottom: 22 },
+    homeDepartmentGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 10 },
+    homeDepartmentCard: { width: '48%', minHeight: 112, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center', padding: 12 },
+    homeDepartmentIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+    homeDepartmentLabel: { fontSize: 11, fontWeight: '800', textAlign: 'center', lineHeight: 15 },
     micButtonPulseWrap: {
         borderRadius: 18,
     },
@@ -8060,6 +8342,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
     },
+    urgentContentRow: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 10 },
+    urgentIcon: { width: 42, height: 42, borderRadius: 14, backgroundColor: '#D51E27', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+    urgentCopy: { flex: 1 },
     urgentTitle: { fontSize: 18, fontWeight: '800' },
     urgentSubTitle: { fontSize: 12, marginTop: 2, fontWeight: '500' },
     urgentButton: {
