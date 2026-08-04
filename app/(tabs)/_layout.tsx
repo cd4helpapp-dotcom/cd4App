@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { Easing, useColorScheme, useWindowDimensions } from 'react-native';
+import { Easing, useColorScheme, useWindowDimensions, Platform, StatusBar as NativeStatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -46,7 +46,10 @@ export default function TabLayout() {
   const { width: windowWidth } = useWindowDimensions();
   const queryClient = useQueryClient();
   const TAB_BAR_BASE_HEIGHT = 58;
-  const GLOBAL_HEADER_HEIGHT = Math.max(insets.top + 58, 72);
+  const topInset = Platform.OS === 'android'
+    ? Math.max(insets.top, NativeStatusBar.currentHeight || 24)
+    : insets.top;
+  const GLOBAL_HEADER_HEIGHT = Math.max(topInset + 58, 72);
   const TAB_SLIDE_DISTANCE = Math.min(76, Math.max(42, windowWidth * 0.16));
   const visiblePatientTabs = React.useMemo(
     () =>

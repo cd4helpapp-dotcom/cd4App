@@ -37,6 +37,7 @@ import {
 
 interface HealthVaultViewProps {
   theme: Theme;
+  initialTab?: ReportTab;
 }
 
 type ReportTab = 'all' | 'prescription' | 'insights';
@@ -305,12 +306,16 @@ const getReportSummaryText = (report: MedicalReport): string => {
   return 'AI summary will appear here after scan.';
 };
 
-export default function HealthVaultView({ theme }: HealthVaultViewProps) {
+export default function HealthVaultView({ theme, initialTab = 'all' }: HealthVaultViewProps) {
   const router = useRouter();
   const [refreshing, setRefreshing] = React.useState(false);
   const [isTabSwitchLoading, setIsTabSwitchLoading] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [activeTab, setActiveTab] = React.useState<ReportTab>('all');
+  const [activeTab, setActiveTab] = React.useState<ReportTab>(initialTab);
+
+  React.useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const reportsQuery = useMedicalReports();
   const refetchReports = reportsQuery.refetch;

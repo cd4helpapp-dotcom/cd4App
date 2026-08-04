@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, Platform } from 'react-native';
-import { Activity, Bell, UserRound } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, Platform, Image, StatusBar as NativeStatusBar } from 'react-native';
+import { Bell, UserRound } from 'lucide-react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
@@ -16,12 +16,15 @@ export default function GlobalHeader() {
     const insets = useSafeAreaInsets();
     const { user } = useAuthContext();
     const roleSlug = user?.role ? String(user.role).toLowerCase().trim() : 'patient';
-    const fallbackTopInset = Platform.OS === 'web' ? 10 : 6;
+    const fallbackTopInset = Platform.OS === 'android'
+        ? Math.max(NativeStatusBar.currentHeight || 0, 24)
+        : Platform.OS === 'web' ? 10 : 6;
     const safeTopInset = Math.max(insets.top, fallbackTopInset);
     
     const { unreadCount } = useNotificationsSystem();
     const [cityLabel, setCityLabel] = useState<string>('your area');
     const [loadingCity, setLoadingCity] = useState(true);
+    const displayCityLabel = cityLabel === 'your area' ? 'YOUR AREA' : cityLabel.toUpperCase();
 
     useEffect(() => {
         let active = true;
@@ -57,15 +60,13 @@ export default function GlobalHeader() {
     }
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.background, paddingTop: safeTopInset }]}>
+        <View style={[styles.container, { backgroundColor: theme.background, borderBottomColor: theme.borderColor, paddingTop: safeTopInset }]}>
             <View style={styles.headerRow}>
                 <View style={styles.brandIdentity}>
-                    <View style={styles.brandMark}>
-                        <Activity size={18} color="#FFFFFF" strokeWidth={2.8} />
-                    </View>
-                    <View>
-                        <Text style={[styles.brandName, { color: theme.text }]}>CD4</Text>
-                        <Text style={[styles.brandLocation, { color: theme.textSecondary }]}>● PATNA, INDIA</Text>
+                    <Image source={require('../../assets/images/cd4_logo.png')} style={styles.brandLogo} resizeMode="contain" />
+                    <View style={styles.brandCopy}>
+                        <Text style={[styles.brandName, { color: theme.text }]} numberOfLines={1}>CD4</Text>
+                        <Text style={[styles.brandLocation, { color: theme.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">● {displayCityLabel}, INDIA</Text>
                     </View>
                 </View>
                 <View style={styles.actionsRow}>
@@ -108,21 +109,23 @@ export default function GlobalHeader() {
 const styles = StyleSheet.create({
     container: {
         width: '100%',
-        paddingBottom: 4,
+        paddingBottom: 6,
         zIndex: 50,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 16,
-        paddingTop: 2,
-        paddingBottom: 6,
+        paddingTop: 3,
+        paddingBottom: 7,
     },
-    brandIdentity: { flexDirection: 'row', alignItems: 'center' },
-    brandMark: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#0B8F63', alignItems: 'center', justifyContent: 'center', marginRight: 9 },
-    brandName: { fontSize: 17, fontWeight: '800', lineHeight: 19 },
-    brandLocation: { fontSize: 8, fontWeight: '700', letterSpacing: 0.7, marginTop: 1 },
+    brandIdentity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+    brandLogo: { width: 36, height: 36, borderRadius: 10, marginRight: 10, alignSelf: 'center' },
+    brandCopy: { flex: 1, minWidth: 0 },
+    brandName: { flexShrink: 1, fontSize: 17, fontWeight: '800', lineHeight: 19 },
+    brandLocation: { maxWidth: '100%', fontSize: 8, lineHeight: 10, fontWeight: '700', letterSpacing: 0.7, marginTop: 1 },
     cityPill: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -143,14 +146,16 @@ const styles = StyleSheet.create({
         fontWeight: '800',
     },
     actionsRow: {
+        flexShrink: 0,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 10,
+        gap: 8,
+        marginLeft: 8,
     },
     iconButton: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 38,
+        height: 38,
+        borderRadius: 19,
         alignItems: 'center',
         justifyContent: 'center',
         borderWidth: 1,

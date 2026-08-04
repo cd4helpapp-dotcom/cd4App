@@ -51,7 +51,7 @@ export default function AnimatedSplash({ onAnimationFinish }: AnimatedSplashProp
         <View style={styles.container}>
             <Video
                 ref={videoRef}
-                source={require('../assets/splash video/lv_0_20260713015405.mp4')}
+                source={require('../assets/splash video/splash_video.mp4')}
                 style={styles.video}
                 resizeMode={ResizeMode.COVER}
                 shouldPlay

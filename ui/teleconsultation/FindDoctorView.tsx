@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Image, ActivityIndicator, Modal, RefreshControl, Animated, Easing, useWindowDimensions, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Image, ActivityIndicator, Modal, RefreshControl, Animated, Easing, useWindowDimensions, KeyboardAvoidingView, Platform, Keyboard, StatusBar as NativeStatusBar } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { Theme } from '../../constants/Colors';
-import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle, Bell, UserRound, FlaskConical, ScanLine, Video, ChevronRight, Siren } from 'lucide-react-native';
+import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle, Bell, UserRound, FileText, Sparkles, Users, Video, ChevronRight, Siren } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import Toast from 'react-native-toast-message';
@@ -17,7 +17,7 @@ import { useAuthContext } from '../../context/AuthContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
 import { connectRealtimeVoice, type RealtimeVoiceHandle } from '../../src/services/realtimeVoice';
-import { PatientHomeShowcase } from '../home/PatientHomeShowcase';
+import { PatientHomeHeader, PatientHomeShowcase } from '../home/PatientHomeShowcase';
 
 type SpeechRecognitionEventName = 'start' | 'end' | 'result' | 'error';
 
@@ -5789,6 +5789,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         });
     }, [callHomeAgent, isVoiceSessionActive, latestAgentVisualMessage, router]);
     const showInitialHomeSkeleton = loading && doctorsData.length === 0;
+    // The home tab intentionally has no navigation header. Android release
+    // builds use edge-to-edge layout, so the scroll content must reserve the
+    // status-bar inset itself.
+    const homeContentContainerStyle = React.useMemo(
+        () => [styles.container, { paddingTop: Math.max(insets.top + 6, 12) }],
+        [insets.top]
+    );
     const agentSheetBottomPadding = Math.max(insets.bottom + 12, 16);
     const isAndroidKeyboardOpen = Platform.OS === 'android' && isChatInputActive && isKeyboardVisible;
     const agentSheetKeyboardHeight = isAndroidKeyboardOpen
@@ -5799,7 +5806,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     if (showInitialHomeSkeleton) {
         return (
             <ScrollView
-                contentContainerStyle={styles.container}
+                contentContainerStyle={homeContentContainerStyle}
                 showsVerticalScrollIndicator={false}
                 refreshControl={
                     <RefreshControl
@@ -5822,8 +5829,26 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             : {};
 
     return (
-        <ScrollView
-            contentContainerStyle={styles.container}
+        <View style={{ flex: 1, backgroundColor: theme.background }}>
+            <View style={{ paddingTop: Math.max(insets.top, Platform.OS === 'android' ? NativeStatusBar.currentHeight || 24 : 6), backgroundColor: theme.background, zIndex: 10 }}>
+                <PatientHomeHeader
+                    theme={{
+                        background: theme.background,
+                        text: theme.text,
+                        textSecondary: theme.textSecondary,
+                        cardBackground: theme.cardBackground,
+                        borderColor: theme.borderColor,
+                        successLight: theme.successLight,
+                        success: theme.success,
+                        tint: theme.tint,
+                    }}
+                    locationCityLabel={cityLabel}
+                    onNotificationPress={() => router.push('/notifications')}
+                    onProfilePress={() => router.push('/(tabs)/settings')}
+                />
+            </View>
+            <ScrollView
+            contentContainerStyle={[styles.container, { paddingTop: 6 }]}
             showsVerticalScrollIndicator={false}
             onScroll={handleHomeScroll}
             scrollEventThrottle={16}
@@ -5848,6 +5873,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     success: theme.success,
                     tint: theme.tint,
                 }}
+                locationCityLabel={cityLabel}
+                showHeader={false}
                 selectedCityLabel={selectedCityLabel}
                 isProUser={isProUser}
                 aiTitle="How can I help you today?"
@@ -5889,10 +5916,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 }}
                 onEmergencyPress={() => handleConsultDoctor()}
                 onQuickAction={(label) => {
-                    if (label === 'Medicines' || label === 'Scans') {
+                    if (label === 'Reports') {
                         router.push('/(tabs)/records');
-                    } else if (label === 'Book Lab') {
-                        router.push('/(tabs)/appointments');
+                    } else if (label === 'AI Insights') {
+                        router.push({ pathname: '/(tabs)/records', params: { tab: 'insights' } });
+                    } else if (label === 'Community') {
+                        router.push('/(tabs)/community');
                     } else {
                         handleConsultDoctor();
                     }
@@ -6061,9 +6090,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 style={[styles.homeQuickActionsScroll, { display: 'none' }]}
             >
                 {[
-                    { label: 'Book Lab', Icon: FlaskConical, onPress: () => router.push('/(tabs)/appointments') },
-                    { label: 'Medicines', Icon: Pill, onPress: () => router.push('/(tabs)/records') },
-                    { label: 'Scans', Icon: ScanLine, onPress: () => router.push('/(tabs)/records') },
+                    { label: 'Reports', Icon: FileText, onPress: () => router.push('/(tabs)/records') },
+                    { label: 'AI Insights', Icon: Sparkles, onPress: () => router.push({ pathname: '/(tabs)/records', params: { tab: 'insights' } }) },
+                    { label: 'Community', Icon: Users, onPress: () => router.push('/(tabs)/community') },
                     { label: 'Video Call', Icon: Video, onPress: () => handleConsultDoctor() },
                 ].map(({ label, Icon, onPress }) => (
                     <TouchableOpacity key={label} style={[styles.homeQuickAction, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onPress} activeOpacity={0.82}>
@@ -7842,7 +7871,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
-        </ScrollView>
+            </ScrollView>
+        </View>
     );
 }
 

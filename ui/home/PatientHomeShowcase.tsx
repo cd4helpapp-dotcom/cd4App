@@ -1,6 +1,6 @@
 import React from 'react';
 import { Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Activity, Bell, CheckCircle, ChevronRight, FlaskConical, Mic, Pill, ScanLine, Star, UserRound, Video } from 'lucide-react-native';
+import { Activity, Bell, CheckCircle, ChevronRight, FileText, Mic, Sparkles, Star, UserRound, Users, Video } from 'lucide-react-native';
 import { useNotificationsSystem } from '../../hooks/useNotificationsSystem';
 
 type HomeTheme = {
@@ -35,6 +35,8 @@ type HomePromo = { id: string; tag: string; title: string; description: string }
 
 type Props = {
     theme: HomeTheme;
+    locationCityLabel: string;
+    showHeader?: boolean;
     selectedCityLabel: string;
     doctors: HomeDoctor[];
     departments: HomeDepartment[];
@@ -66,13 +68,31 @@ type Props = {
     onViewAllDepartments: () => void;
 };
 
+type PatientHomeHeaderProps = Pick<Props, 'theme' | 'locationCityLabel' | 'onNotificationPress' | 'onProfilePress'>;
+
+export function PatientHomeHeader({ theme, locationCityLabel, onNotificationPress, onProfilePress }: PatientHomeHeaderProps) {
+    const { unreadCount } = useNotificationsSystem();
+
+    return (
+        <View style={[styles.brandHeader, { backgroundColor: theme.background }]}>
+                <View style={styles.brandIdentity}>
+                <Image source={require('../../assets/images/cd4_logo.png')} style={styles.brandLogo} resizeMode="contain" />
+                <View style={styles.brandCopy}><Text style={[styles.brandName, { color: theme.text }]} numberOfLines={1}>CD4</Text><Text style={[styles.brandLocation, { color: theme.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">● {locationCityLabel.toUpperCase()}, INDIA</Text></View>
+            </View>
+            <View style={styles.headerActions}>
+                <TouchableOpacity style={[styles.headerIcon, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onNotificationPress} activeOpacity={0.82}><Bell size={17} color={theme.text} />{unreadCount > 0 ? <View style={styles.notificationBadge}><Text style={styles.notificationBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text></View> : null}</TouchableOpacity>
+                <TouchableOpacity style={[styles.headerIcon, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onProfilePress} activeOpacity={0.82}><UserRound size={17} color={theme.text} /></TouchableOpacity>
+            </View>
+        </View>
+    );
+}
+
 export function PatientHomeShowcase({
-    theme, selectedCityLabel, doctors, departments, concerns, promos, isProUser, aiTitle, aiSubtitle,
+    theme, locationCityLabel, showHeader = true, selectedCityLabel, doctors, departments, concerns, promos, isProUser, aiTitle, aiSubtitle,
     symptomPlaceholder, symptomInput, isListening, shouldEmphasizeVoiceCta, shouldPulseMicButton,
     voicePulse, onSymptomChange, onSymptomSubmit, onVoicePress, onUpgrade, onViewAllDoctors,
     onDoctorProfile, onConsultDoctor, onNotificationPress, onProfilePress, onQuickAction, onConcernPress, onPromoPress, onEmergencyPress, onDepartmentPress, onViewAllDepartments,
 }: Props) {
-    const { unreadCount } = useNotificationsSystem();
     const isDarkTheme = theme.background.toLowerCase() === '#121212' || theme.cardBackground.toLowerCase() === '#1e1e1e';
     const departmentSurface = (index: number) => isDarkTheme
         ? (index % 2 ? '#2B2028' : '#1B3029')
@@ -124,16 +144,7 @@ export function PatientHomeShowcase({
 
     return (
         <>
-            <View style={styles.brandHeader}>
-                <View style={styles.brandIdentity}>
-                    <View style={styles.brandMark}><Activity size={19} color="#fff" strokeWidth={2.8} /></View>
-                    <View><Text style={[styles.brandName, { color: theme.text }]}>CD4</Text><Text style={[styles.brandLocation, { color: theme.textSecondary }]}>● PATNA, INDIA</Text></View>
-                </View>
-                <View style={styles.headerActions}>
-                    <TouchableOpacity style={[styles.headerIcon, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onNotificationPress} activeOpacity={0.82}><Bell size={17} color={theme.text} />{unreadCount > 0 ? <View style={styles.notificationBadge}><Text style={styles.notificationBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text></View> : null}</TouchableOpacity>
-                    <TouchableOpacity style={[styles.headerIcon, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onProfilePress} activeOpacity={0.82}><UserRound size={17} color={theme.text} /></TouchableOpacity>
-                </View>
-            </View>
+            {showHeader ? <PatientHomeHeader theme={theme} locationCityLabel={locationCityLabel} onNotificationPress={onNotificationPress} onProfilePress={onProfilePress} /> : null}
 
             <View style={styles.heroCard}>
                 <View style={styles.heroOrb} />
@@ -153,8 +164,8 @@ export function PatientHomeShowcase({
 
             <View style={styles.quickActionsRow}>
                 {[
-                    { label: 'Book Lab', Icon: FlaskConical }, { label: 'Medicines', Icon: Pill },
-                    { label: 'Scans', Icon: ScanLine }, { label: 'Video Call', Icon: Video },
+                    { label: 'Reports', Icon: FileText }, { label: 'AI Insights', Icon: Sparkles },
+                    { label: 'Community', Icon: Users }, { label: 'Video Call', Icon: Video },
                 ].map(({ label, Icon }) => (
                     <TouchableOpacity key={label} style={styles.quickAction} onPress={() => onQuickAction(label)} activeOpacity={0.82}>
                         <View style={[styles.quickIcon, { backgroundColor: theme.cardBackground }]}><Icon size={21} color={theme.tint} /></View>
@@ -170,7 +181,7 @@ export function PatientHomeShowcase({
                 </View>
                 <ScrollView ref={concernCarouselRef} horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.concernsContent} snapToInterval={152} snapToAlignment="start" decelerationRate="fast">
                     {concerns.slice(0, 8).map((concern, index) => (
-                        <TouchableOpacity key={concern.id} style={[styles.concernCard, { backgroundColor: theme.cardBackground }]} onPress={() => onConcernPress(concern.label)} activeOpacity={0.84}>
+                        <TouchableOpacity key={concern.id} style={[styles.concernCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => onConcernPress(concern.label)} activeOpacity={0.84}>
                             <View style={[styles.concernIcon, { backgroundColor: isDarkTheme ? (index % 2 ? '#27394D' : '#352C47') : (index % 2 ? '#EAF2FB' : '#F1EEF9') }]}><Activity size={24} color={index % 2 ? (isDarkTheme ? '#8EB4D8' : '#5A718B') : '#E04455'} /></View>
                             <Text numberOfLines={1} style={[styles.concernLabel, { color: theme.text }]}>{concern.label}</Text>
                             <Text style={[styles.concernHint, { color: theme.textSecondary }]}>Tap to start AI triage</Text>
@@ -229,9 +240,9 @@ export function PatientHomeShowcase({
 
 const styles = StyleSheet.create({
     viewAllIconButton: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-    brandHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }, brandIdentity: { flexDirection: 'row', alignItems: 'center' }, brandMark: { width: 34, height: 34, borderRadius: 10, backgroundColor: '#0B8F63', alignItems: 'center', justifyContent: 'center', marginRight: 9 }, brandName: { fontSize: 17, fontWeight: '800' }, brandLocation: { fontSize: 8, fontWeight: '700', letterSpacing: 0.7, marginTop: 1 }, headerActions: { flexDirection: 'row', gap: 8 }, headerIcon: { width: 34, height: 34, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' }, notificationBadge: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, borderRadius: 9, paddingHorizontal: 4, backgroundColor: '#E5424C', borderWidth: 1.5, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' }, notificationBadgeText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '900' },
+    brandHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 16, paddingTop: 3, paddingBottom: 3 }, brandIdentity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }, brandLogo: { width: 36, height: 36, borderRadius: 10, marginRight: 10, alignSelf: 'center' }, brandCopy: { flex: 1, minWidth: 0, justifyContent: 'center' }, brandName: { flexShrink: 1, fontSize: 17, lineHeight: 19, fontWeight: '800' }, brandLocation: { maxWidth: '100%', fontSize: 8, lineHeight: 10, fontWeight: '700', letterSpacing: 0.7, marginTop: 1 }, headerActions: { flexShrink: 0, flexDirection: 'row', gap: 8, marginLeft: 8 }, headerIcon: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' }, notificationBadge: { position: 'absolute', top: -5, right: -5, minWidth: 17, height: 17, borderRadius: 9, paddingHorizontal: 4, backgroundColor: '#E5424C', borderWidth: 1.5, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' }, notificationBadgeText: { color: '#FFFFFF', fontSize: 9, lineHeight: 11, fontWeight: '900' },
     heroCard: { overflow: 'hidden', backgroundColor: '#006D41', borderRadius: 26, padding: 20, minHeight: 282, marginBottom: 20, shadowColor: '#006D41', shadowOpacity: 0.22, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 7 }, heroOrb: { position: 'absolute', right: -55, bottom: -45, width: 170, height: 170, borderRadius: 85, backgroundColor: '#2CC17B', opacity: 0.8 }, heroTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, onlinePill: { color: '#fff', fontSize: 10, fontWeight: '700', borderWidth: 1, borderColor: 'rgba(255,255,255,.25)', backgroundColor: 'rgba(255,255,255,.08)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 }, proPill: { color: '#002110', backgroundColor: '#72FCB0', borderRadius: 20, paddingHorizontal: 17, paddingVertical: 8, fontSize: 12, fontWeight: '800' }, proPillText: { color: '#002110', fontSize: 12, fontWeight: '800' }, heroTitle: { color: '#fff', fontSize: 28, lineHeight: 31, fontWeight: '800', maxWidth: 260, marginTop: 22 }, heroSubtitle: { color: 'rgba(255,255,255,.78)', fontSize: 14, lineHeight: 20, maxWidth: 280, marginTop: 10 }, heroInputWrap: { height: 52, flexDirection: 'row', alignItems: 'center', borderRadius: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,.32)', backgroundColor: 'rgba(255,255,255,.10)', marginTop: 16, paddingLeft: 13, paddingRight: 5 }, heroInputListening: { borderColor: '#72FCB0', backgroundColor: 'rgba(0,33,16,.28)' }, heroInput: { flex: 1, color: '#fff', fontSize: 14 }, heroMic: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#72FCB0', alignItems: 'center', justifyContent: 'center' }, heroMicGlyph: { color: '#002110', fontSize: 22, fontWeight: '900' }, heroInputTouchTarget: { ...StyleSheet.absoluteFillObject, top: 0, bottom: 0, left: 0, right: 0, backgroundColor: 'transparent' },
-    quickActionsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 27, paddingHorizontal: 5 }, quickAction: { alignItems: 'center', width: '23%' }, quickIcon: { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', shadowColor: '#0B1C30', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 }, quickLabel: { fontSize: 11, fontWeight: '700', marginTop: 8, textAlign: 'center' }, section: { marginBottom: 26 }, sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }, sectionTitle: { fontSize: 18, fontWeight: '600' }, sectionCaption: { fontSize: 11, marginTop: 3 }, viewAll: { flexDirection: 'row', alignItems: 'center', gap: 2 }, viewAllText: { fontSize: 13, fontWeight: '800' }, doctorsContent: { gap: 14, paddingRight: 20 }, doctorCard: { width: 280, height: 220, borderRadius: 24, borderWidth: 1, padding: 18, shadowColor: '#0B1C30', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 2 }, doctorTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }, doctorAvatar: { width: 64, height: 64, borderRadius: 18 }, verified: { flexDirection: 'row', alignItems: 'center', gap: 2, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 4 }, verifiedText: { fontSize: 8, fontWeight: '800' }, doctorName: { fontSize: 16, fontWeight: '600', marginTop: 12 }, doctorMeta: { fontSize: 12, marginTop: 3 }, doctorBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 25 }, feeCaption: { fontSize: 9, fontWeight: '700' }, fee: { fontSize: 15, fontWeight: '800', marginTop: 2 }, rating: { flexDirection: 'row', alignItems: 'center', gap: 2, borderRadius: 8, paddingHorizontal: 5, paddingVertical: 3 }, ratingText: { fontSize: 9, fontWeight: '800' }, consult: { borderRadius: 14, paddingHorizontal: 18, paddingVertical: 11, position: 'absolute', right: 18, bottom: 18 }, consultText: { color: '#fff', fontSize: 13, fontWeight: '800' }, departmentGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 }, departmentCard: { width: '48%', height: 132, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center', padding: 12 }, departmentIcon: { width: 50, height: 50, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }, departmentLabel: { fontSize: 12, fontWeight: '800', textAlign: 'center' },
-    concernsContent: { gap: 14, paddingRight: 20 }, concernCard: { width: 138, height: 138, borderRadius: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, shadowColor: '#0B1C30', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 2 }, concernIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }, concernLabel: { fontSize: 13, fontWeight: '800', textAlign: 'center' }, concernHint: { fontSize: 9, marginTop: 4, textAlign: 'center' },
+    quickActionsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 27, paddingHorizontal: 5 }, quickAction: { alignItems: 'center', width: '23%' }, quickIcon: { width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', shadowColor: '#0B1C30', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 }, quickLabel: { fontSize: 11, fontWeight: '700', marginTop: 8, textAlign: 'center' }, section: { marginBottom: 26 }, sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }, sectionTitle: { fontSize: 18, fontWeight: '600' }, sectionCaption: { fontSize: 11, marginTop: 3 }, viewAll: { flexDirection: 'row', alignItems: 'center', gap: 2 }, viewAllText: { fontSize: 13, fontWeight: '800' }, doctorsContent: { gap: 14, paddingRight: 20 }, doctorCard: { width: 280, height: 220, borderRadius: 24, borderWidth: 1, padding: 18, overflow: 'hidden' }, doctorTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }, doctorAvatar: { width: 64, height: 64, borderRadius: 18 }, verified: { flexDirection: 'row', alignItems: 'center', gap: 2, borderRadius: 10, paddingHorizontal: 7, paddingVertical: 4 }, verifiedText: { fontSize: 8, fontWeight: '800' }, doctorName: { fontSize: 16, fontWeight: '600', marginTop: 12 }, doctorMeta: { fontSize: 12, marginTop: 3 }, doctorBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 25 }, feeCaption: { fontSize: 9, fontWeight: '700' }, fee: { fontSize: 15, fontWeight: '800', marginTop: 2 }, rating: { flexDirection: 'row', alignItems: 'center', gap: 2, borderRadius: 8, paddingHorizontal: 5, paddingVertical: 3 }, ratingText: { fontSize: 9, fontWeight: '800' }, consult: { borderRadius: 14, paddingHorizontal: 18, paddingVertical: 11, position: 'absolute', right: 18, bottom: 18 }, consultText: { color: '#fff', fontSize: 13, fontWeight: '800' }, departmentGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 }, departmentCard: { width: '48%', height: 132, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center', padding: 12 }, departmentIcon: { width: 50, height: 50, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }, departmentLabel: { fontSize: 12, fontWeight: '800', textAlign: 'center' },
+    concernsContent: { gap: 14, paddingRight: 20 }, concernCard: { width: 138, height: 138, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, overflow: 'hidden' }, concernIcon: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }, concernLabel: { fontSize: 13, fontWeight: '800', textAlign: 'center' }, concernHint: { fontSize: 9, marginTop: 4, textAlign: 'center' },
     promosScroll: { marginBottom: 20 }, promosContent: { gap: 14, paddingRight: 20 }, promoCard: { width: 295, height: 142, borderRadius: 22, borderWidth: 1, padding: 18, shadowColor: '#0B1C30', shadowOpacity: 0.07, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 2 }, promoTag: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: .6 }, promoTitle: { fontSize: 17, fontWeight: '800', marginTop: 10 }, promoDescription: { fontSize: 11, lineHeight: 16, marginTop: 7 }, emergencyCard: { height: 92, borderRadius: 22, backgroundColor: '#202D42', flexDirection: 'row', alignItems: 'center', padding: 14, marginBottom: 20 }, emergencyIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: '#D51E27', alignItems: 'center', justifyContent: 'center', marginRight: 10 }, emergencyIconText: { color: '#fff', fontSize: 23, fontWeight: '900' }, emergencyCopy: { flex: 1 }, emergencyTitle: { color: '#fff', fontSize: 15, fontWeight: '800' }, emergencySubtitle: { color: 'rgba(255,255,255,.7)', fontSize: 10, marginTop: 3 }, emergencyButton: { backgroundColor: '#D51E27', borderRadius: 10, minWidth: 60, paddingVertical: 8, alignItems: 'center' }, emergencyButtonText: { color: '#fff', fontSize: 11, lineHeight: 14, fontWeight: '800', textAlign: 'center' },
 });

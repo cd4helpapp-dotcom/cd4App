@@ -466,6 +466,7 @@ export default function AppointmentsScreen() {
     let candidates = doctorsData;
 
     const searchValue = normalizeText(doctorSearchQuery);
+    const hasExplicitSearch = searchValue.length > 0;
     if (searchValue) {
       candidates = candidates.filter((doctor) => {
         const doctorName = `${doctor.firstName} ${doctor.lastName}`;
@@ -473,7 +474,9 @@ export default function AppointmentsScreen() {
       });
     }
 
-    if (selectedCity !== 'all') {
+    // An explicit doctor search should search the full directory instead of
+    // being silently limited by the user's default location.
+    if (!hasExplicitSearch && selectedCity !== 'all') {
       candidates = candidates.filter((doctor) => isCityMatch(doctor.city, selectedCity));
     }
 
@@ -494,6 +497,7 @@ export default function AppointmentsScreen() {
     const hasConcernMatch =
       concernKeywords.length > 0 &&
       selectedCategory === 'all' &&
+      !hasExplicitSearch &&
       scored.some((item) => item.concernScore > 0);
 
     const narrowed = hasConcernMatch
@@ -527,6 +531,10 @@ export default function AppointmentsScreen() {
     setIsLoadingMoreDoctors(false);
     setVisibleDoctorCount(DOCTORS_PAGE_SIZE);
   }, [selectedCity, selectedCategory, concern]);
+
+  React.useEffect(() => {
+    setVisibleDoctorCount(DOCTORS_PAGE_SIZE);
+  }, [doctorSearchQuery]);
 
   React.useEffect(() => {
     return () => {
