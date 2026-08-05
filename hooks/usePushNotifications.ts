@@ -271,28 +271,13 @@ export const usePushNotifications = () => {
             if (!roomId) return;
 
             if (actionIdentifier === 'accept') {
-                // Accept directly from notification so caller sees realtime "active" quickly.
-                let query = supabase
-                    .from('call_sessions')
-                    .update({ status: 'active' })
-                    .eq('status', 'ringing');
-
-                if (callId) {
-                    query = query.eq('id', callId);
-                } else {
-                    query = query.eq('room_id', roomId);
-                }
-
-                const { error } = await query;
-                if (error) {
-                    if (__DEV__) console.error('[PushNotifications] Error accepting call from notification action:', error);
-                }
-
                 await Notifications.dismissNotificationAsync(notificationIdentifier).catch(() => {
                     // Ignore if notification already dismissed by OS.
                 });
 
-                // Accept from push => open chat and auto-accept call.
+                // Let CallContext accept the still-ringing session. Updating it
+                // here first causes acceptCall() to find no ringing session and
+                // prevents Agora token setup/join from running.
                 queueChatNavigation(roomId, true);
                 flushQueuedChatNavigation();
                 return;
@@ -328,7 +313,10 @@ export const usePushNotifications = () => {
                 return;
             }
 
-            queueChatNavigation(roomId, false);
+            // Tapping an incoming-call notification means the user wants to
+            // answer it. Open the chat and let CallContext perform the full
+            // accept flow (token, engine, session update, and Agora join).
+            queueChatNavigation(roomId, notificationType === 'incoming_call');
             flushQueuedChatNavigation();
         } catch (error) {
             if (__DEV__) console.error('[PushNotifications] Error handling notification response:', error);

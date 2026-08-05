@@ -11,8 +11,8 @@ function parseEnvInt(key: string, fallback: number): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback
 }
 
-const DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o"
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-terra"
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-5.6-sol"
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 const AI_MESSAGE_LIMIT_PER_WINDOW = Math.max(10, Math.min(1000, parseEnvInt("CHAT_AI_MESSAGE_LIMIT_PER_WINDOW", 40)))
 const AI_BURST_LIMIT_MESSAGES = Math.max(2, Math.min(50, parseEnvInt("CHAT_AI_BURST_LIMIT_MESSAGES", 6)))
@@ -841,8 +841,10 @@ const invokeOpenAIWithRetry = async (args: {
           body: JSON.stringify({
             model,
             messages: args.messages,
+            reasoning_effort: "low",
             temperature: 0.35,
             top_p: 0.95,
+            max_completion_tokens: 1800,
           }),
           signal: controller.signal,
         })
@@ -1147,7 +1149,7 @@ Deno.serve(async (req) => {
         ? "If prescription context is detected, present medicines in clean point-wise format: Medicine | Dose | Frequency | Timing | Duration. Use 'not clearly visible in report' for missing fields."
         : "If this is not a prescription report, never generate a prescription; instead provide report-based guidance and ask user to consult doctor for actual Rx.",
       "Return readable Markdown text only (no raw JSON).",
-      "Prefer natural flow: one short summary then point-wise explanation where useful.",
+      "Prefer natural flow: answer the question directly, then give only the few report points needed to support it.",
       "For important values explain test name, observed value, reference range (if visible), and simple meaning.",
       "Use friendly emojis in non-critical replies; keep urgent/warning lines serious.",
     ].join("\n")
@@ -1161,7 +1163,7 @@ Deno.serve(async (req) => {
       "",
       "Formatting intent:",
       needsDeepContext
-        ? "User asked for detailed explanation. Give short summary first, then rich point-wise explanation including visible values and meaning."
+        ? "User asked for detailed explanation. Give a short conclusion first, then focused point-wise explanation with visible values and meaning; remove repetition."
         : "Use concise-friendly explanation unless the question clearly asks for deep detail.",
       "",
       `Latest user question: ${question}`,
@@ -1302,4 +1304,3 @@ Deno.serve(async (req) => {
     )
   }
 })
-

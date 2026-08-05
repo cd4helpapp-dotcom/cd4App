@@ -6,8 +6,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o";
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-sol";
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-5.6-terra";
 
 const clipText = (value: string, maxLength: number): string => {
   const text = (value || "").trim();
@@ -317,7 +317,9 @@ const invokeOpenAI = async (args: { apiKey: string; prompt: string }) => {
         },
         body: JSON.stringify({
           model,
+          reasoning_effort: "low",
           temperature: 0.1,
+          max_completion_tokens: 2200,
           response_format: { type: "json_object" },
           messages: [{ role: "user", content: args.prompt }],
         }),

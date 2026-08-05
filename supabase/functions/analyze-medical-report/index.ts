@@ -19,10 +19,12 @@ const parseEnvBool = (key: string, fallback: boolean): boolean => {
   return fallback
 }
 
-const DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-4o"
-const DEFAULT_OPENAI_VISION_MODEL = "gpt-4o-mini"
-const DEFAULT_OPENAI_VISION_FALLBACK_MODEL = "gpt-4o"
+// GPT-5.6 Sol is the current flagship model for report-quality analysis.
+// Terra remains the fast fallback if the flagship route is temporarily unavailable.
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
+const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-5.6-terra"
+const DEFAULT_OPENAI_VISION_MODEL = "gpt-5.6-sol"
+const DEFAULT_OPENAI_VISION_FALLBACK_MODEL = "gpt-5.6-terra"
 const FORCE_OPENAI_ONLY = true
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 const DEFAULT_GEMINI_OCR_MODELS = ["gemini-2.5-pro", "gemini-2.5-flash"]
@@ -89,6 +91,7 @@ const DEEP_PDF_RESCUE_MAX_OUTPUT_TOKENS = Math.max(
   1600,
   Math.min(5000, parseEnvInt("ANALYZE_DEEP_PDF_RESCUE_MAX_OUTPUT_TOKENS", 3600))
 )
+const ENABLE_ANALYSIS_QUALITY_RETRY = parseEnvBool("ANALYZE_ENABLE_QUALITY_RETRY", false)
 const ENABLE_AI_OCR_FALLBACK = parseEnvBool("ANALYZE_ENABLE_AI_OCR_FALLBACK", true)
 const AI_OCR_MIN_TEXT_CHARS = Math.max(120, Math.min(2000, parseEnvInt("ANALYZE_AI_OCR_MIN_TEXT_CHARS", 260)))
 const AI_OCR_MAX_TEXT_CHARS = Math.max(3000, Math.min(120000, parseEnvInt("ANALYZE_AI_OCR_MAX_TEXT_CHARS", 50000)))
@@ -2534,6 +2537,7 @@ const invokeOpenAIResponsesFileWithRetry = async (args: {
           },
           body: JSON.stringify({
             model,
+            reasoning: { effort: "low" },
             input: [
               {
                 role: "user",
@@ -2549,6 +2553,7 @@ const invokeOpenAIResponsesFileWithRetry = async (args: {
             ],
             temperature: 0.2,
             top_p: 0.95,
+            max_output_tokens: 3200,
             text: { format: { type: "text" } },
           }),
           signal: controller.signal,
@@ -2629,8 +2634,10 @@ const invokeOpenAIWithRetry = async (args: {
           body: JSON.stringify({
             model,
             messages: args.messages,
+            reasoning_effort: "low",
             temperature: 0.2,
             top_p: 0.95,
+            max_completion_tokens: 3200,
           }),
           signal: controller.signal,
         })
@@ -2890,26 +2897,26 @@ Deno.serve(async (req) => {
         ? "All output text must be in professional English only. Do not use Hindi or mixed-script output."
         : "Match the user's preferred language when available.",
       "Rules:",
-      "1) Explain clearly in patient-friendly, positive language with rich detail and deep NLP understanding.",
+      "1) Explain the report in simple, patient-friendly language. Lead with the main conclusion.",
       "2) Stay factual to report content only. Do not invent details.",
       "3) Do not prescribe medicines or give final medical diagnoses.",
-      "4) Deeply analyze and cover all major visible parameters. Thoroughly explain abnormal or attention-required values, why they matter, and what they mean contextually.",
-      "5) Keep the tone highly sophisticated yet super-easy to understand for non-medical users.",
-      "6) In summary and patient_friendly_explanation, use relevant emojis naturally to make it visually rich.",
-      "7) In key_points include deeply specific, value-focused lines: test name, observed value, unit, reference range, and plain meaning of why it matters.",
-      "8) The patient_friendly_explanation must be a deeply comprehensive, multi-paragraph narrative capturing the essence of the report.",
-      "9) Cover all visible pages/sections and do not stop at generic one-line summary.",
+      "4) Cover the important visible parameters, prioritizing abnormal or attention-required values. Explain what each important value means in plain language.",
+      "5) Remove repetition. Do not repeat the same value or conclusion in multiple sections unless needed for safety.",
+      "6) Keep the summary to 3-5 short lines and patient_friendly_explanation to 2-4 short paragraphs. Be concise but complete.",
+      "7) In key_points include 5-8 high-value findings with test name, value, unit, reference range, and meaning when visible.",
+      "8) Use emojis sparingly: only for a main conclusion, warning, or next step.",
+      "9) Cover visible pages/sections, but omit administrative details and generic health advice unless clinically relevant.",
       "10) If report is prescription, extract medicines only if clearly visible. Never invent medicine names/doses.",
       "11) For lab/pathology reports, include parameter-wise findings with observed value, unit, and reference range wherever visible.",
       "12) If any values are unclear/unreadable, explicitly say they were not clearly visible; never guess.",
       "13) Capture report identity details if visible: patient name, age, gender, lab/hospital name, report date, sample collection date, report/lab id.",
       "14) For prescriptions, also capture visible form fields (if present): relation tag, insurance/provider IDs, address/cell, BP/pulse/weight, allergies/disabilities, diet/history, follow-up physician.",
-      "15) Add parameter_highlights with concise value-wise lines so user can quickly review important numbers.",
-      "16) Keep response polished and engaging, but medically precise and fact-grounded.",
+      "15) Add parameter_highlights with concise, non-duplicated value-wise lines for the most important numbers only.",
+      "16) Keep response medically precise and fact-grounded. If the report is unclear, say so briefly.",
       "JSON shape:",
       "{",
-      '  "summary": "Detailed 6-10 line summary with a highly clear overview and NLP rich tone",',
-      '  "key_points": ["10-15 highly detailed specific points with values/ranges and clear context"],',
+      '  "summary": "3-5 short lines: main conclusion, important abnormalities, and what the patient should do next",',
+      '  "key_points": ["5-8 non-repeating important findings with values/ranges and plain meaning"],',
       '  "report_type": "lab_report|imaging|prescription|discharge_summary|other",',
       '  "report_identity": {',
       '    "patient_name": "if visible else empty",',
@@ -2970,7 +2977,7 @@ Deno.serve(async (req) => {
       '  "what_to_avoid": ["avoid list based on report findings"],',
       '  "next_24h_actions": ["prioritized next 24 hour actions"],',
       '  "recovery_timeline": "estimated timeline in simple language based on report severity (if inferable)",',
-      '  "patient_friendly_explanation": "A deeply rich, beautifully structured, highly detailed narrative explanation with all findings"',
+      '  "patient_friendly_explanation": "2-4 short paragraphs explaining the important findings in simple language without repetition"',
       "}",
     ].join("\n")
     const analysisDocumentHeader = [
@@ -3424,13 +3431,16 @@ Deno.serve(async (req) => {
     const initialLongReportUnderCovered =
       extractedTextReadable &&
       extractedText.length >= 16000 &&
-      visibleDetailPointCount < 10
+      visibleDetailPointCount < 6
     const shouldSkipQualityRetryForSpeed =
       pdfMime &&
       fileSize > 3 * 1024 * 1024 &&
       visibleDetailPointCount >= 8 &&
       String(parsed.summary || "").length >= 260
-    const shouldRunQualityRetry = (initialShallowAnalysis || initialLongReportUnderCovered) && !shouldSkipQualityRetryForSpeed
+    const shouldRunQualityRetry =
+      ENABLE_ANALYSIS_QUALITY_RETRY &&
+      (initialShallowAnalysis || initialLongReportUnderCovered) &&
+      !shouldSkipQualityRetryForSpeed
     let qualityRetryUsed = false
     let qualityRetryProvider: "openai" | "gemini" | null = null
     let qualityRetryModel: string | null = null
@@ -4105,6 +4115,3 @@ Deno.serve(async (req) => {
     )
   }
 })
-
-
-
