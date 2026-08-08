@@ -82,6 +82,18 @@ const extractSpeechText = (event: any): string => {
     return '';
 };
 
+const isSpeechResultFinal = (event: any): boolean => {
+    if (typeof event?.isFinal === 'boolean') return event.isFinal;
+    const resultList = Array.isArray(event?.results) ? event.results : [];
+    const latest = resultList[resultList.length - 1];
+    if (latest && typeof latest === 'object' && typeof latest.isFinal === 'boolean') {
+        return latest.isFinal;
+    }
+    // Some Android engines do not expose isFinal. Treat their result as a
+    // committed segment; mergeSpeechTranscript still removes overlap.
+    return true;
+};
+
 const normalizeSpacing = (value: string): string =>
     (value || '').replace(/\s+/g, ' ').trim();
 
@@ -222,7 +234,7 @@ const toUniqueLines = (rows: string[], max = 3): string[] => {
     return out;
 };
 
-const MEDICATION_DICTATION_PATTERN = /\b(paracetamol|pcm|dolo|azithromycin|amoxicillin|cetirizine|levocetirizine|montelukast|pantoprazole|rabeprazole|ibuprofen|tablet|tab\.?|capsule|cap\.?|syrup|injection|ointment|cream|drops?|inhaler|mg|mcg|ml|od|bd|tds|sos|once daily|twice daily|three times daily|after food|before food)\b/i;
+const MEDICATION_DICTATION_PATTERN = /\b(paracetamol|pcm|dolo|azithromycin|amoxicillin|cetirizine|levocetirizine|montelukast|pantoprazole|rabeprazole|ibuprofen|tablet|tab\.?|capsule|cap\.?|syrup|injection|ointment|cream|drops?|inhaler|mg|mcg|ml|od|bd|tds|sos|once daily|twice daily|three times daily|after food|before food|medicine|medication|medicines|medications|dawai|dawa|drug)\b/i;
 
 const cleanMedicineDraftLine = (value: string): string => value
     .replace(/^\s*(?:like|it is|i said|medicine is|prescribe|the medicine is|this is|is)\s+/i, '')
@@ -281,16 +293,16 @@ const dedupeMedicineDraftLines = (rows: string[], max = 6): string[] => {
 type PrescriptionSectionKey = 'complaints' | 'history' | 'examination' | 'diagnosis' | 'medications' | 'advice' | 'precautions' | 'followUp' | 'notes';
 
 const extractExplicitPrescriptionSections = (text: string): Partial<Record<PrescriptionSectionKey, string[]>> => {
-    const markerPattern = /\b(chief complaints?|complaints?|history(?:\s*summary)?(?:\s*\([^)]*\))?|examination|exam|diagnosis|medications?|medicines?|general advice|advice|precautions?|follow[-\s]?up|doctor notes?|additional notes?)\s*[:\-]?/gi;
+    const markerPattern = /\b(chief\s+(?:complaints?|concerns?)|complaints?|concerns?|history(?:\s*summary)?(?:\s*\([^)]*\))?|examination|exam|diagnosis|medications?|medicines?|dawai|dawa|drugs?|general advice|advice|precautions?|follow[-\s]?up|doctor notes?|additional notes?)\s*[:\-]?/gi;
     const matches = Array.from(text.matchAll(markerPattern));
     const result: Partial<Record<PrescriptionSectionKey, string[]>> = {};
     const sectionFor = (label: string): PrescriptionSectionKey => {
         const key = label.toLowerCase().replace(/[-\s]+/g, ' ');
-        if (key.includes('chief') || key === 'complaint' || key === 'complaints') return 'complaints';
+        if (key.includes('chief') || key === 'concern' || key === 'concerns' || key === 'complaint' || key === 'complaints') return 'complaints';
         if (key.startsWith('history')) return 'history';
         if (key === 'exam' || key === 'examination') return 'examination';
         if (key === 'diagnosis') return 'diagnosis';
-        if (key.startsWith('medic')) return 'medications';
+        if (key.startsWith('medic') || key === 'dawai' || key === 'dawa' || key.startsWith('drug')) return 'medications';
         if (key.startsWith('advice')) return 'advice';
         if (key.startsWith('precaution')) return 'precautions';
         if (key.startsWith('follow')) return 'followUp';
@@ -330,21 +342,24 @@ const buildStructuredPrescriptionDraft = (rawText: string, aiSummary?: ParsedPre
         !MEDICATION_DICTATION_PATTERN.test(part) || /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat|since|day|days|week|history|onset|bp|pulse|temperature|spo2|exam|diagnosis|viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes)/i.test(part)
     );
     const aiMedicineLines = dedupeMedicineDraftLines((aiMedicines || []).map((item) => [item.medicine_name, item.dosage, item.frequency, item.duration, item.instructions].filter(Boolean).join(' | ')));
-    const complaints = toUniqueLines([...(aiSummary?.chief_complaints || []), ...(explicit.complaints || []), ...clinicalParts.filter((p) => /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat)/i.test(p))], 4);
-    const history = toUniqueLines([...(aiSummary?.history_summary || []), ...(explicit.history || []), ...clinicalParts.filter((p) => /(since|from last|day|days|week|history|onset)/i.test(p))], 4);
-    const exam = toUniqueLines([...(aiSummary?.examination || []), ...(explicit.examination || []), ...clinicalParts.filter((p) => /(bp|pulse|temperature|spo2|exam|examination)/i.test(p))], 3);
-    const diagnosis = toUniqueLines([...(aiSummary?.diagnosis ? [aiSummary.diagnosis] : []), ...(explicit.diagnosis || []), ...clinicalParts.filter((p) => /(viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes|diagnosis)/i.test(p))], 2);
-    const advice = toUniqueLines([...(aiSummary?.general_advice || []), ...(explicit.advice || []), ...clinicalParts.filter((p) => /(rest|water|hydrate|sleep|diet|steam|light food)/i.test(p))], 4);
-    const precautions = toUniqueLines([...(aiSummary?.precautions || []), ...(explicit.precautions || []), ...clinicalParts.filter((p) => /(avoid|don't|dont|mat|careful|precaution)/i.test(p))], 4);
-    const followUp = toUniqueLines([...(aiSummary?.follow_up || []), ...(explicit.followUp || []), ...clinicalParts.filter((p) => /(follow up|review|revisit|dobara|wapis|after \d+ day)/i.test(p))], 2);
+    // An explicit spoken label is authoritative. This prevents a phrase such
+    // as "chief concern: fever" from also appearing in history/diagnosis just
+    // because it contains a clinical keyword.
+    const routed = (key: PrescriptionSectionKey, aiRows: string[], inferred: string[], max: number) =>
+        toUniqueLines(explicit[key]?.length ? explicit[key]! : [...aiRows, ...inferred], max);
+    const complaints = routed('complaints', aiSummary?.chief_complaints || [], clinicalParts.filter((p) => /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat)/i.test(p)), 4);
+    const history = routed('history', aiSummary?.history_summary || [], clinicalParts.filter((p) => /(since|from last|day|days|week|history|onset)/i.test(p)), 4);
+    const exam = routed('examination', aiSummary?.examination || [], clinicalParts.filter((p) => /(bp|pulse|temperature|spo2|exam|examination)/i.test(p)), 3);
+    const diagnosis = routed('diagnosis', aiSummary?.diagnosis ? [aiSummary.diagnosis] : [], clinicalParts.filter((p) => /(viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes|diagnosis)/i.test(p)), 2);
+    const advice = routed('advice', aiSummary?.general_advice || [], clinicalParts.filter((p) => /(rest|water|hydrate|sleep|diet|steam|light food)/i.test(p)), 4);
+    const precautions = routed('precautions', aiSummary?.precautions || [], clinicalParts.filter((p) => /(avoid|don't|dont|mat|careful|precaution)/i.test(p)), 4);
+    const followUp = routed('followUp', aiSummary?.follow_up || [], clinicalParts.filter((p) => /(follow up|review|revisit|dobara|wapis|after \d+ day)/i.test(p)), 2);
     // Prefer verified AI medicine rows. Raw local rows are only a fallback;
     // otherwise speech noise such as "like Dolo 650" gets added beside the
     // normalized "Dolo | 650" row.
-    const meds = dedupeMedicineDraftLines([
-        ...aiMedicineLines,
-        ...(explicit.medications || []),
-        ...(aiMedicineLines.length ? [] : medicationParts),
-    ], 6);
+    const meds = dedupeMedicineDraftLines(explicit.medications?.length
+        ? explicit.medications
+        : [...aiMedicineLines, ...medicationParts], 6);
     const knownClinicalSignal = /(fever|bukhar|pain|cough|cold|vomit|nausea|headache|weakness|acidity|sore throat|since|day|days|week|history|onset|bp|pulse|temperature|spo2|exam|diagnosis|viral|infection|flu|allergy|gastritis|migraine|hypertension|diabetes|rest|water|hydrate|sleep|diet|steam|light food|avoid|don't|dont|mat|careful|precaution|follow up|review|revisit|dobara|wapis|after \d+ day)/i;
     const notes = toUniqueLines([...(explicit.notes || []), ...clinicalParts.filter((p) => !knownClinicalSignal.test(p) && !MEDICATION_DICTATION_PATTERN.test(p))], 6);
 
@@ -925,6 +940,7 @@ export default function ChatDetailScreen() {
     });
     const lastRxSpeechRef = useRef('');
     const rawRxSpeechRef = useRef('');
+    const rxInterimSpeechRef = useRef('');
     const rxKeepListeningRef = useRef(false);
     const rxModalVisibleRef = useRef(false);
     const rxRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1163,6 +1179,7 @@ export default function ChatDetailScreen() {
             lastRxSpeechRef.current = '';
             rawRxSpeechRef.current = '';
         }
+        rxInterimSpeechRef.current = '';
     }, [clearRxRestartTimer]);
 
     const startRxVoiceCapture = useCallback(async () => {
@@ -1182,6 +1199,7 @@ export default function ChatDetailScreen() {
         }
 
         rxKeepListeningRef.current = true;
+        rxInterimSpeechRef.current = '';
         clearRxRestartTimer();
         setIsRxListening(true);
         try {
@@ -1210,7 +1228,19 @@ export default function ChatDetailScreen() {
         const resultSub = ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
             const transcript = extractSpeechText(event);
             if (!transcript) return;
+            const finalResult = isSpeechResultFinal(event);
+            if (!finalResult) {
+                // Show a live preview, but never commit an interim hypothesis.
+                // Committing it is what caused duplicated/broken words when
+                // Android sent a corrected hypothesis a moment later.
+                rxInterimSpeechRef.current = transcript;
+                const previewRaw = mergeSpeechTranscript(rawRxSpeechRef.current, transcript);
+                setRxTranscript(buildStructuredPrescriptionDraft(previewRaw));
+                return;
+            }
+
             const mergedRaw = mergeSpeechTranscript(rawRxSpeechRef.current, transcript);
+            rxInterimSpeechRef.current = '';
             rawRxSpeechRef.current = mergedRaw;
             const next = buildStructuredPrescriptionDraft(mergedRaw);
             lastRxSpeechRef.current = next;
@@ -1230,7 +1260,9 @@ export default function ChatDetailScreen() {
                         lastRxSpeechRef.current = aiDraft;
                         setRxTranscript(aiDraft);
                         setRxMedicineNeedsConfirmation(
-                            Array.isArray(parsed?.medicines) && parsed.medicines.some((medicine: any) => medicine?.doctor_confirmation_required)
+                            !Array.isArray(parsed?.medicines) ||
+                            parsed.medicines.length === 0 ||
+                            parsed.medicines.some((medicine: any) => medicine?.doctor_confirmation_required)
                         );
                     }).catch(() => {
                         // Local section routing remains available when the AI
@@ -1397,40 +1429,15 @@ export default function ChatDetailScreen() {
             return;
         }
 
-        try {
-            const result = await sendPrescriptionPdfMutation.mutateAsync({
-                roomId,
-                doctorText,
-                patientName: currentRoom?.other_party
-                    ? `${currentRoom.other_party.firstName || ''} ${currentRoom.other_party.lastName || ''}`.trim()
-                    : undefined,
-            });
-            setInputText('');
-            Toast.show({
-                type: 'success',
-                text1: 'Prescription sent',
-                text2: 'Prescription PDF shared in chat.',
-            });
-            const sentPath = typeof result?.attachmentPath === 'string' ? result.attachmentPath : '';
-            if (sentPath) {
-                const openUrl = await ensureOpenableAttachmentUrl(sentPath);
-                if (openUrl) {
-                    const safeDownloadName = `${(currentRoom?.other_party?.firstName || 'patient').trim() || 'patient'}-prescription.pdf`;
-                    const downloadUrl = `${openUrl}${openUrl.includes('?') ? '&' : '?'}download=${encodeURIComponent(safeDownloadName)}`;
-                    Alert.alert('Prescription PDF', 'PDF sent successfully. Open now?', [
-                        { text: 'Open', onPress: () => void openUrlCrossPlatform(openUrl) },
-                        { text: 'Download', onPress: () => void downloadUrlCrossPlatform(downloadUrl, safeDownloadName) },
-                        { text: 'Later', style: 'cancel' },
-                    ]);
-                }
-            }
-        } catch (error: any) {
-            Toast.show({
-                type: 'error',
-                text1: 'Prescription failed',
-                text2: error?.message || 'Could not generate prescription PDF.',
-            });
-        }
+        // Typed prescriptions use the same review gate as voice prescriptions.
+        // This prevents an unverified medicine name or dose from going straight
+        // into a patient-facing PDF.
+        const reviewDraft = buildStructuredPrescriptionDraft(doctorText);
+        setRxTranscript(reviewDraft);
+        lastRxSpeechRef.current = reviewDraft;
+        rawRxSpeechRef.current = doctorText;
+        setRxMedicineNeedsConfirmation(true);
+        setIsRxReviewModalVisible(true);
     };
 
     const handleRxVoiceStart = async () => {
@@ -1549,7 +1556,10 @@ export default function ChatDetailScreen() {
                     : undefined,
             });
             setRxTranscript('');
+            setInputText('');
             lastRxSpeechRef.current = '';
+            rawRxSpeechRef.current = '';
+            rxInterimSpeechRef.current = '';
             setIsRxVoiceModalVisible(false);
             setIsRxReviewModalVisible(false);
             Toast.show({

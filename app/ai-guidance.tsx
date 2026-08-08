@@ -670,10 +670,21 @@ const getInitialMessages = (concern: string, isAssistantMode: boolean, user?: an
 };
 
 const CONCERN_HEADER_IMAGE_ASSETS = {
-  diabetes: require('../assets/concerns/diabetes_care_1777377906586.jpg'),
-  pcos: require('../assets/concerns/pcos_health_1777377967772.jpg'),
-  heart: require('../assets/concerns/heart_health_1777378053936.jpg'),
-  skin: require('../assets/concerns/skin_care_1777378482702.jpg'),
+  diabetes: require('../assets/departments/department_image_018.jpeg'),
+  pcos: require('../assets/departments/department_image_028.jpeg'),
+  heart: require('../assets/departments/department_image_022.jpeg'),
+  skin: require('../assets/departments/department_image_027.jpeg'),
+  reproductive: require('../assets/departments/department_image_028.jpeg'),
+  gastro: require('../assets/departments/department_image_017.jpeg'),
+  orthopedics: require('../assets/departments/department_image_024.jpeg'),
+  psychiatry: require('../assets/departments/department_image_026.jpeg'),
+  pulmonary: require('../assets/departments/department_image_020.jpeg'),
+  ophthalmology: require('../assets/departments/department_image_023.jpeg'),
+  ent: require('../assets/departments/department_image_025.jpeg'),
+  urology: require('../assets/departments/department_image_016.jpeg'),
+  neurology: require('../assets/departments/department_image_019.jpeg'),
+  hematology: require('../assets/departments/department_image_010.jpeg'),
+  general: require('../assets/departments/department_image_029.jpeg'),
   assistant: require('../assets/concerns/general_assistant_1777377591600.jpg'),
 } as const;
 
@@ -686,20 +697,20 @@ const resolveConcernHeaderImageSource = (
     return isAssistant ? CONCERN_HEADER_IMAGE_ASSETS.assistant : undefined;
   }
 
-  if (merged.includes('diabet')) return CONCERN_HEADER_IMAGE_ASSETS.diabetes;
-  if (merged.includes('pcos')) return CONCERN_HEADER_IMAGE_ASSETS.pcos;
-  if (merged.includes('heart') || merged.includes('cardio') || merged.includes('chest')) {
-    return CONCERN_HEADER_IMAGE_ASSETS.heart;
-  }
-  if (
-    merged.includes('skin') ||
-    merged.includes('eczema') ||
-    merged.includes('acne') ||
-    merged.includes('rash') ||
-    merged.includes('dandruff')
-  ) {
-    return CONCERN_HEADER_IMAGE_ASSETS.skin;
-  }
+  if (merged.includes('diabet') || merged.includes('endo') || merged.includes('thyroid') || merged.includes('hormonal') || merged.includes('weight')) return CONCERN_HEADER_IMAGE_ASSETS.diabetes;
+  if (merged.includes('pcos') || merged.includes('period') || merged.includes('pregnan') || merged.includes('fertil') || merged.includes('gyn')) return CONCERN_HEADER_IMAGE_ASSETS.reproductive;
+  if (merged.includes('heart') || merged.includes('cardio') || merged.includes('chest') || merged.includes('hypertension') || merged.includes('blood pressure') || merged.includes('cholesterol')) return CONCERN_HEADER_IMAGE_ASSETS.heart;
+  if (merged.includes('skin') || merged.includes('hair') || merged.includes('eczema') || merged.includes('acne') || merged.includes('rash') || merged.includes('dandruff')) return CONCERN_HEADER_IMAGE_ASSETS.skin;
+  if (merged.includes('stomach') || merged.includes('acidity') || merged.includes('constipat') || merged.includes('diarr') || merged.includes('food poison') || merged.includes('nausea') || merged.includes('vomit') || merged.includes('piles') || merged.includes('liver') || merged.includes('jaundice')) return CONCERN_HEADER_IMAGE_ASSETS.gastro;
+  if (merged.includes('joint') || merged.includes('back') || merged.includes('knee') || merged.includes('muscle') || merged.includes('arthritis')) return CONCERN_HEADER_IMAGE_ASSETS.orthopedics;
+  if (merged.includes('anxiety') || merged.includes('stress') || merged.includes('depress') || merged.includes('insomnia') || merged.includes('panic')) return CONCERN_HEADER_IMAGE_ASSETS.psychiatry;
+  if (merged.includes('asthma') || merged.includes('breath') || merged.includes('allerg') || merged.includes('bronch')) return CONCERN_HEADER_IMAGE_ASSETS.pulmonary;
+  if (merged.includes('eye') || merged.includes('vision') || merged.includes('dry eyes')) return CONCERN_HEADER_IMAGE_ASSETS.ophthalmology;
+  if (merged.includes('ear') || merged.includes('hearing') || merged.includes('tinnitus') || merged.includes('throat') || merged.includes('tonsil') || merged.includes('sinus')) return CONCERN_HEADER_IMAGE_ASSETS.ent;
+  if (merged.includes('urinary') || merged.includes('kidney')) return CONCERN_HEADER_IMAGE_ASSETS.urology;
+  if (merged.includes('headache') || merged.includes('migraine') || merged.includes('vertigo') || merged.includes('dizz')) return CONCERN_HEADER_IMAGE_ASSETS.neurology;
+  if (merged.includes('anemia') || merged.includes('bleed')) return CONCERN_HEADER_IMAGE_ASSETS.hematology;
+  if (merged.includes('fever') || merged.includes('cough') || merged.includes('cold') || merged.includes('flu') || merged.includes('fatigue') || merged.includes('weakness')) return CONCERN_HEADER_IMAGE_ASSETS.general;
   if (merged.includes('assistant')) {
     return CONCERN_HEADER_IMAGE_ASSETS.assistant;
   }

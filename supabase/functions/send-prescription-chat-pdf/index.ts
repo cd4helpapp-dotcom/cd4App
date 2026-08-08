@@ -575,6 +575,9 @@ const invokeOpenAIParser = async (apiKey: string, prompt: string) => {
 
 const buildPrescriptionPdfBytes = async (args: {
   doctorName: string;
+  doctorRegistrationNumber: string;
+  doctorRegistrationCouncil: string;
+  doctorDegree: string;
   patientName: string;
   consultationId: string;
   voiceText: string;
@@ -682,12 +685,14 @@ const buildPrescriptionPdfBytes = async (args: {
   drawBox(28, 675, 539, 104, white, border);
   drawText("DOCTOR DETAILS", 40, 760, 11, true, green);
   drawText(args.doctorName, 40, 742, 14, true, dark);
-  drawText("Consultant Physician", 40, 726, 10, false, dark);
-  drawText(APP_TELECONSULTATION_LABEL, 40, 712, 10, false, muted);
+  drawText(args.doctorDegree || "Consultant Physician", 40, 726, 10, false, dark);
+  drawText(`Registration No: ${args.doctorRegistrationNumber || "Not provided"}`, 40, 710, 9, false, muted);
+  drawText(`Registration Council: ${args.doctorRegistrationCouncil || "Not provided"}`, 40, 696, 9, false, muted);
 
   drawText("PATIENT DETAILS", 290, 760, 11, true, green);
   drawText(`Name: ${args.patientName}`, 290, 742, 11, false, dark);
   drawText("Age / Gender: Not specified", 290, 726, 10, false, dark);
+  drawText(APP_TELECONSULTATION_LABEL, 290, 710, 9, false, muted);
 
   // Complaints/history summary
   drawBox(28, 535, 539, 128, white, border);
@@ -749,7 +754,7 @@ const buildPrescriptionPdfBytes = async (args: {
   // Signature + declaration
   drawText("This is a digital prescription and does not require physical signature.", 28, 208, 9, false, muted);
   drawText(args.doctorName, 430, 194, 11, true, dark);
-  drawText("Consultant Physician", 430, 182, 9, false, muted);
+  drawText(args.doctorRegistrationNumber ? `Reg. No: ${args.doctorRegistrationNumber}` : "Consultant Physician", 430, 182, 9, false, muted);
 
   page.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green });
   drawText("Your health. Our priority.", 244, 8, 9, true, white);
@@ -810,7 +815,15 @@ Deno.serve(async (req: Request) => {
       .select("first_name, last_name")
       .eq("id", user.id)
       .maybeSingle();
+    const { data: doctorRecord } = await serviceClient
+      .from("doctors")
+      .select("registration_number, registration_council, degree")
+      .eq("id", user.id)
+      .maybeSingle();
     const doctorName = `Dr. ${[doctorProfile?.first_name, doctorProfile?.last_name].filter(Boolean).join(" ").trim() || "Doctor"}`;
+    const doctorRegistrationNumber = clipText(String(doctorRecord?.registration_number || ""), 80);
+    const doctorRegistrationCouncil = clipText(String(doctorRecord?.registration_council || ""), 100);
+    const doctorDegree = clipText(String(doctorRecord?.degree || ""), 80);
 
     const { data: patientProfile } = await serviceClient
       .from("profiles")
@@ -861,18 +874,11 @@ Deno.serve(async (req: Request) => {
     // can create duplicate or conflicting medicines (for example a brand and
     // its generic name). Keep one authoritative parse for the PDF.
     const medicines = dedupeMedicines(aiMedicines.length ? aiMedicines : heuristicMedicines, 8);
+    if (medicines.length === 0) {
+      throw new Error("At least one clearly named medicine is required before sending a prescription PDF.");
+    }
     const doctorVerbatimLines = extractDoctorVerbatimLines(doctorText, 12);
-    const medicinesForPdf = medicines.length
-      ? medicines
-      : [
-          {
-            medicine_name: "No medicine clearly dictated",
-            dosage: null,
-            frequency: null,
-            duration: null,
-            instructions: clipText(doctorVerbatimLines[0] || doctorText, 120),
-          },
-        ];
+    const medicinesForPdf = medicines;
 
     const bodyNarrative: Partial<PrescriptionNarrative> =
       body?.narrative && typeof body.narrative === "object" ? body.narrative : {};
@@ -956,6 +962,9 @@ Deno.serve(async (req: Request) => {
     const consultationId = consultationIdInput || `RX-${new Date().getTime()}`;
     const pdfBytes = await buildPrescriptionPdfBytes({
       doctorName,
+      doctorRegistrationNumber,
+      doctorRegistrationCouncil,
+      doctorDegree,
       patientName,
       consultationId,
       voiceText: doctorText,

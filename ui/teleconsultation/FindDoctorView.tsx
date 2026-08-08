@@ -290,29 +290,91 @@ const CONCERN_IMAGE_ASSETS = {
 } as const;
 
 const DEPARTMENT_IMAGE_ASSETS = {
-    general: require('../../assets/concerns/general_assistant_1777377591600.jpg'),
-    heart: require('../../assets/concerns/heart_health_1777378053936.jpg'),
-    diabetes: require('../../assets/concerns/diabetes_care_1777377906586.jpg'),
-    skin: require('../../assets/concerns/skin_care_1777378482702.jpg'),
-    women: require('../../assets/concerns/pcos_health_1777377967772.jpg'),
+    shalya: require('../../assets/departments/department_image_001.jpeg'),
+    shalak: require('../../assets/departments/department_image_002.jpeg'),
+    ayurveda: require('../../assets/departments/department_image_003.jpeg'),
+    kayachikitsa: require('../../assets/departments/department_image_004.jpeg'),
+    sexualReproductive: require('../../assets/departments/department_image_005.jpeg'),
+    panchakarma: require('../../assets/departments/department_image_006.jpeg'),
+    pediatricsAyurveda: require('../../assets/departments/department_image_007.jpeg'),
+    twakRoga: require('../../assets/departments/department_image_008.jpeg'),
+    prasutiStri: require('../../assets/departments/department_image_009.jpeg'),
+    hematology: require('../../assets/departments/department_image_010.jpeg'),
+    rheumatology: require('../../assets/departments/department_image_011.jpeg'),
+    nutrition: require('../../assets/departments/department_image_012.jpeg'),
+    oncology: require('../../assets/departments/department_image_014.jpeg'),
+    surgery: require('../../assets/departments/department_image_015.jpeg'),
+    kidneyUrology: require('../../assets/departments/department_image_016.jpeg'),
+    gastroenterology: require('../../assets/departments/department_image_017.jpeg'),
+    diabetes: require('../../assets/departments/department_image_018.jpeg'),
+    neurology: require('../../assets/departments/department_image_019.jpeg'),
+    pulmonary: require('../../assets/departments/department_image_020.jpeg'),
+    fertility: require('../../assets/departments/department_image_021.jpeg'),
+    cardiology: require('../../assets/departments/department_image_022.jpeg'),
+    ophthalmology: require('../../assets/departments/department_image_023.jpeg'),
+    orthopedics: require('../../assets/departments/department_image_024.jpeg'),
+    ent: require('../../assets/departments/department_image_025.jpeg'),
+    psychiatry: require('../../assets/departments/department_image_026.jpeg'),
+    dermatology: require('../../assets/departments/department_image_027.jpeg'),
+    gynecology: require('../../assets/departments/department_image_028.jpeg'),
+    general: require('../../assets/departments/department_image_029.jpeg'),
+    pediatrics: require('../../assets/departments/department_image_030.jpeg'),
 } as const;
 
 const resolveConcernImageSource = (label: string, id?: string): ImageSourcePropType | undefined => {
     const merged = `${normalizeText(label)} ${normalizeText(id)}`.replace(/[_-]+/g, ' ');
-    if (merged.includes('diabet')) return CONCERN_IMAGE_ASSETS.diabetes;
-    if (merged.includes('pcos')) return CONCERN_IMAGE_ASSETS.pcos;
-    if (merged.includes('heart') || merged.includes('cardio') || merged.includes('chest')) return CONCERN_IMAGE_ASSETS.heart;
-    if (merged.includes('skin') || merged.includes('acne') || merged.includes('eczema') || merged.includes('rash')) return CONCERN_IMAGE_ASSETS.skin;
+    if (merged.includes('diabet')) return DEPARTMENT_IMAGE_ASSETS.diabetes;
+    if (merged.includes('pcos')) return DEPARTMENT_IMAGE_ASSETS.gynecology;
+    if (merged.includes('hypertens') || merged.includes('blood pressure')) return DEPARTMENT_IMAGE_ASSETS.cardiology;
+    if (merged.includes('heart') || merged.includes('cardio') || merged.includes('chest')) return DEPARTMENT_IMAGE_ASSETS.cardiology;
+    if (merged.includes('skin') || merged.includes('acne') || merged.includes('eczema') || merged.includes('rash')) return DEPARTMENT_IMAGE_ASSETS.dermatology;
+    if (merged.includes('hair') || merged.includes('dandruff')) return DEPARTMENT_IMAGE_ASSETS.dermatology;
+    if (merged.includes('stomach') || merged.includes('acidity') || merged.includes('constipat') || merged.includes('diarr') || merged.includes('food poison') || merged.includes('nausea') || merged.includes('vomit') || merged.includes('piles') || merged.includes('liver') || merged.includes('jaundice')) return DEPARTMENT_IMAGE_ASSETS.gastroenterology;
+    if (merged.includes('joint') || merged.includes('back pain') || merged.includes('knee') || merged.includes('muscle') || merged.includes('arthritis')) return DEPARTMENT_IMAGE_ASSETS.orthopedics;
+    if (merged.includes('anxiety') || merged.includes('stress') || merged.includes('depress') || merged.includes('insomnia') || merged.includes('panic')) return DEPARTMENT_IMAGE_ASSETS.psychiatry;
+    if (merged.includes('asthma') || merged.includes('breath') || merged.includes('allerg') || merged.includes('bronch')) return DEPARTMENT_IMAGE_ASSETS.pulmonary;
+    if (merged.includes('thyroid') || merged.includes('hormonal') || merged.includes('weight gain') || merged.includes('weight loss') || merged.includes('weight management')) return DEPARTMENT_IMAGE_ASSETS.diabetes;
+    if (merged.includes('period') || merged.includes('pregnan') || merged.includes('fertil')) return DEPARTMENT_IMAGE_ASSETS.gynecology;
+    if (merged.includes('eye') || merged.includes('vision') || merged.includes('dry eyes')) return DEPARTMENT_IMAGE_ASSETS.ophthalmology;
+    if (merged.includes('tooth') || merged.includes('dental') || merged.includes('gum')) return DEPARTMENT_IMAGE_ASSETS.general;
+    if (merged.includes('ear') || merged.includes('hearing') || merged.includes('tinnitus') || merged.includes('throat') || merged.includes('tonsil') || merged.includes('sinus')) return DEPARTMENT_IMAGE_ASSETS.ent;
+    if (merged.includes('urinary') || merged.includes('kidney')) return DEPARTMENT_IMAGE_ASSETS.kidneyUrology;
+    if (merged.includes('headache') || merged.includes('migraine') || merged.includes('vertigo') || merged.includes('dizz')) return DEPARTMENT_IMAGE_ASSETS.neurology;
+    if (merged.includes('anemia') || merged.includes('bleed')) return DEPARTMENT_IMAGE_ASSETS.hematology;
+    if (merged.includes('fatigue') || merged.includes('weakness') || merged.includes('fever') || merged.includes('cold') || merged.includes('flu')) return DEPARTMENT_IMAGE_ASSETS.general;
     if (merged.includes('assistant')) return CONCERN_IMAGE_ASSETS.assistant;
-    return undefined;
+    return resolveDepartmentImageSource(label, id);
 };
 
 const resolveDepartmentImageSource = (label: string, id?: string): ImageSourcePropType | undefined => {
     const merged = `${normalizeText(label)} ${normalizeText(id)}`.replace(/[_-]+/g, ' ');
-    if (merged.includes('cardio') || merged.includes('heart') || merged.includes('chest') || merged.includes('kidney')) return DEPARTMENT_IMAGE_ASSETS.heart;
+    if (merged.includes('shalya') || merged.includes('surgery')) return DEPARTMENT_IMAGE_ASSETS.shalya;
+    if (merged.includes('shalak')) return DEPARTMENT_IMAGE_ASSETS.shalak;
+    if (merged.includes('ayurveda')) return DEPARTMENT_IMAGE_ASSETS.ayurveda;
+    if (merged.includes('kayachikitsa')) return DEPARTMENT_IMAGE_ASSETS.kayachikitsa;
+    if (merged.includes('sexual') || merged.includes('reproductive')) return DEPARTMENT_IMAGE_ASSETS.sexualReproductive;
+    if (merged.includes('panch')) return DEPARTMENT_IMAGE_ASSETS.panchakarma;
+    if (merged.includes('bal roga') || merged.includes('ayurvedic pedi')) return DEPARTMENT_IMAGE_ASSETS.pediatricsAyurveda;
+    if (merged.includes('twak')) return DEPARTMENT_IMAGE_ASSETS.twakRoga;
+    if (merged.includes('prasuti') || merged.includes('stri rog')) return DEPARTMENT_IMAGE_ASSETS.prasutiStri;
+    if (merged.includes('hemat')) return DEPARTMENT_IMAGE_ASSETS.hematology;
+    if (merged.includes('rheumat')) return DEPARTMENT_IMAGE_ASSETS.rheumatology;
+    if (merged.includes('nutrition') || merged.includes('diet')) return DEPARTMENT_IMAGE_ASSETS.nutrition;
+    if (merged.includes('oncolog')) return DEPARTMENT_IMAGE_ASSETS.oncology;
+    if (merged.includes('kidney') || merged.includes('nephro') || merged.includes('urolog')) return DEPARTMENT_IMAGE_ASSETS.kidneyUrology;
+    if (merged.includes('gastro') || merged.includes('liver')) return DEPARTMENT_IMAGE_ASSETS.gastroenterology;
     if (merged.includes('diab') || merged.includes('endo') || merged.includes('metab')) return DEPARTMENT_IMAGE_ASSETS.diabetes;
-    if (merged.includes('derma') || merged.includes('skin')) return DEPARTMENT_IMAGE_ASSETS.skin;
-    if (merged.includes('gyn') || merged.includes('pcos') || merged.includes('women')) return DEPARTMENT_IMAGE_ASSETS.women;
+    if (merged.includes('neuro')) return DEPARTMENT_IMAGE_ASSETS.neurology;
+    if (merged.includes('pulmon') || merged.includes('respiratory')) return DEPARTMENT_IMAGE_ASSETS.pulmonary;
+    if (merged.includes('fertil')) return DEPARTMENT_IMAGE_ASSETS.fertility;
+    if (merged.includes('cardio') || merged.includes('heart') || merged.includes('chest')) return DEPARTMENT_IMAGE_ASSETS.cardiology;
+    if (merged.includes('ophthal')) return DEPARTMENT_IMAGE_ASSETS.ophthalmology;
+    if (merged.includes('ortho')) return DEPARTMENT_IMAGE_ASSETS.orthopedics;
+    if (merged.includes('ent') || merged.includes('ear') || merged.includes('throat')) return DEPARTMENT_IMAGE_ASSETS.ent;
+    if (merged.includes('psychiat')) return DEPARTMENT_IMAGE_ASSETS.psychiatry;
+    if (merged.includes('derma') || merged.includes('skin')) return DEPARTMENT_IMAGE_ASSETS.dermatology;
+    if (merged.includes('gyn') || merged.includes('pcos') || merged.includes('women') || merged.includes('obstet')) return DEPARTMENT_IMAGE_ASSETS.gynecology;
+    if (merged.includes('pediat') || merged.includes('child')) return DEPARTMENT_IMAGE_ASSETS.pediatrics;
     return DEPARTMENT_IMAGE_ASSETS.general;
 };
 
@@ -2915,7 +2977,16 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         const mergedConcerns = new Map<string, { label: string; dbCount: number; personalCount: number }>();
 
         [...dbLabels, ...personalLabels, ...seedLabels].forEach(label => {
-            const id = label.toLowerCase().replace(/\s/g, '-');
+            const normalizedLabel = normalizeText(label).replace(/[^a-z0-9]/g, '');
+            const id = normalizedLabel.includes('diabet')
+                ? 'diabetes'
+                : normalizedLabel.includes('pcos')
+                    ? 'pcos'
+                    : normalizedLabel.includes('dizz') || normalizedLabel.includes('vertigo')
+                        ? 'dizziness'
+                    : normalizedLabel.includes('heart') || normalizedLabel.includes('cardio')
+                        ? 'heart-health'
+                        : normalizedLabel.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
             const existing = mergedConcerns.get(id);
             const dbCount = globalPopularity[label] || 0;
             const personalCount = userInterests[label] || 0;
@@ -2930,7 +3001,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
         return Array.from(mergedConcerns.entries()).map(([id, data]) => ({
             id,
-            label: data.label,
+            label: id === 'diabetes' ? 'Diabetes' : id === 'pcos' ? 'PCOS' : id === 'dizziness' ? 'Dizziness' : id === 'heart-health' ? 'Heart Health' : data.label.trim(),
             ...getCategoryUI(data.label),
             imageSource: resolveConcernImageSource(data.label, id),
             dbCount: data.dbCount,
@@ -3192,10 +3263,16 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     };
 
     const filteredConcerns = React.useMemo(() => {
-        if (!concernSearchQuery.trim()) return dynamicConcerns;
+        const uniqueByDisplayLabel = new Map<string, (typeof dynamicConcerns)[number]>();
+        dynamicConcerns.forEach((concern) => {
+            const displayKey = getConcernDisplayLabel(concern.label).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            if (!uniqueByDisplayLabel.has(displayKey)) uniqueByDisplayLabel.set(displayKey, concern);
+        });
+        const uniqueConcerns = Array.from(uniqueByDisplayLabel.values());
+        if (!concernSearchQuery.trim()) return uniqueConcerns;
         const q = concernSearchQuery.toLowerCase();
-        return dynamicConcerns.filter(c => c.label.toLowerCase().includes(q));
-    }, [dynamicConcerns, concernSearchQuery]);
+        return uniqueConcerns.filter(c => c.label.toLowerCase().includes(q) || getConcernDisplayLabel(c.label).toLowerCase().includes(q));
+    }, [dynamicConcerns, concernSearchQuery, getConcernDisplayLabel]);
 
     const filteredDepartments = React.useMemo(() => {
         if (!departmentSearchQuery.trim()) return allDepartments;
@@ -5901,8 +5978,18 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         ratingLabel,
                     };
                 })}
-                departments={allDepartments.slice(0, 4)}
-                concerns={concernCards.map((concern) => ({ id: concern.id, label: getConcernDisplayLabel(concern.label) }))}
+                departments={allDepartments.filter((department) => {
+                    const key = `${department.label} ${department.id}`.toLowerCase();
+                    return !key.includes('gyn') && !key.includes('obstet') && !key.includes('women');
+                }).slice(0, 4).map((department) => ({
+                    ...department,
+                    imageSource: resolveDepartmentImageSource(department.label, department.id),
+                }))}
+                concerns={concernCards.map((concern) => ({
+                    id: concern.id,
+                    label: getConcernDisplayLabel(concern.label),
+                    imageSource: concern.imageSource,
+                }))}
                 promos={promoLoopCards.map((promo) => ({ id: promo.id, tag: promo.tag, title: promo.title, description: promo.description }))}
                 onViewAllDoctors={() => handleConsultDoctor()}
                 onDoctorProfile={(doctorId) => handleOpenDoctorProfile(doctorId)}
@@ -5910,6 +5997,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 onNotificationPress={() => router.push('/notifications')}
                 onProfilePress={() => router.push('/(tabs)/settings')}
                 onConcernPress={handleConcernPress}
+                onViewAllConcerns={handleViewAllConcernsPress}
                 onPromoPress={(promoId) => {
                     const promo = promoLoopCards.find((item) => item.id === promoId);
                     handlePromoCardAction(promo?.action || 'ai_chat');
@@ -5927,7 +6015,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     }
                 }}
                 onDepartmentPress={handleConcernPress}
-                onViewAllDepartments={handleViewAllConcernsPress}
+                onViewAllDepartments={handleViewAllDepartmentsPress}
             />
 
             {/* Legacy inline Home UI disabled: CD4 Home showcase is the single source of truth. */}
@@ -7701,6 +7789,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
                         {filteredDepartments.map((department) => {
                             const isSelected = selectedDepartmentId === department.id;
+                            const departmentImage = resolveDepartmentImageSource(department.label, department.id);
                             return (
                                 <TouchableOpacity
                                     key={department.id}
@@ -7709,7 +7798,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                     onPress={() => handleDepartmentSelect(department.id)}
                                 >
                                     <View style={[styles.concernListIcon, { backgroundColor: theme.cardBackground }]}>
-                                        <department.Icon size={16} color={theme.tint} />
+                                        {departmentImage ? (
+                                            <Image source={departmentImage} style={styles.concernListImage} resizeMode="cover" />
+                                        ) : (
+                                            <department.Icon size={16} color={theme.tint} />
+                                        )}
                                     </View>
                                     <View style={styles.concernListTextWrap}>
                                         <Text style={[styles.concernListTitle, { color: theme.text }]}>{department.label}</Text>
