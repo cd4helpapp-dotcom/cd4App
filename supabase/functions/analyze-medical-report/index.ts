@@ -2551,8 +2551,6 @@ const invokeOpenAIResponsesFileWithRetry = async (args: {
                 ],
               },
             ],
-            temperature: 0.2,
-            top_p: 0.95,
             max_output_tokens: 3200,
             text: { format: { type: "text" } },
           }),
@@ -2635,8 +2633,6 @@ const invokeOpenAIWithRetry = async (args: {
             model,
             messages: args.messages,
             reasoning_effort: "low",
-            temperature: 0.2,
-            top_p: 0.95,
             max_completion_tokens: 3200,
           }),
           signal: controller.signal,
@@ -3101,7 +3097,9 @@ Deno.serve(async (req) => {
       fileSize <= MAX_OPENAI_FILE_INPUT_BYTES
     const shouldUseOpenAiFileInput =
       canUseOpenAiFileInput &&
-      (pdfMime || !extractedTextReadable || extractedTextLowConfidence)
+      // Text-based PDFs are faster and cheaper through the extracted-text path.
+      // Keep full-file vision only for scanned/partial PDFs where extraction is weak.
+      (!pdfMime || !preferTextOnlyForPdf)
 
     if (FORCE_OPENAI_ONLY && !openAiSupportedForFile && !canUseOpenAiFileInput) {
       if (pdfMime || isDocumentLikeMime(mimeType)) {
@@ -3156,6 +3154,7 @@ Deno.serve(async (req) => {
       willTryOpenAI: Boolean(openAiApiKey) && openAiSupportedForFile,
       canUseOpenAiFileInput,
       shouldUseOpenAiFileInput,
+      openAiInputMode: shouldUseOpenAiFileInput ? "file" : "text",
     })
 
     if (canUseInlineBinary) {
@@ -3849,7 +3848,6 @@ Deno.serve(async (req) => {
       followUps: Array.isArray(parsed.suggested_followups) ? parsed.suggested_followups : [],
     })
 
-    const ragStartedAt = Date.now()
     let ragIngestion: {
       enabled: boolean
       skippedReason: string | null
@@ -3857,41 +3855,13 @@ Deno.serve(async (req) => {
       chunkCount: number
     } = {
       enabled: false,
-      skippedReason: "not_started",
+      skippedReason: "background_queued",
       embeddingModel: getRagEmbeddingModelName(),
       chunkCount: 0,
     }
-    try {
-      ragIngestion = await upsertReportRagChunks({
-        serviceClient,
-        reportId,
-        patientId: user.id,
-        openAiApiKey,
-        sourceText: ragSourceText,
-        reportType: parsed.report_type || "medical_report",
-        traceId,
-      })
-    } catch (ragError: any) {
-      ragIngestion = {
-        enabled: false,
-        skippedReason: clipText(ragError?.message || "rag_ingestion_failed", 120),
-        embeddingModel: getRagEmbeddingModelName(),
-        chunkCount: 0,
-      }
-      traceLog("warn", traceId, "rag_ingestion_failed_non_fatal", {
-        error: clipText(ragError?.message || "rag_ingestion_failed", 220),
-      })
-    }
-    const ragMs = Date.now() - ragStartedAt
-
-    traceLog("log", traceId, "rag_ingestion_result", {
-      enabled: ragIngestion.enabled,
-      skippedReason: ragIngestion.skippedReason,
-      chunkCount: ragIngestion.chunkCount,
-      embeddingModel: ragIngestion.embeddingModel,
-      ragMs,
-      sourceChars: ragSourceText.length,
-    })
+    // RAG embeddings are useful for follow-up questions, but must not delay the
+    // report summary or keep the report stuck in "processing".
+    const ragMs = 0
 
     const dbStartedAt = Date.now()
     await Promise.all([
@@ -3970,6 +3940,40 @@ Deno.serve(async (req) => {
       }),
     ])
     const dbMs = Date.now() - dbStartedAt
+
+    const ragBackgroundTask = (async () => {
+      const ragStartedAt = Date.now()
+      try {
+        const completedRag = await upsertReportRagChunks({
+          serviceClient,
+          reportId,
+          patientId: user.id,
+          openAiApiKey,
+          sourceText: ragSourceText,
+          reportType: parsed.report_type || "medical_report",
+          traceId,
+        })
+        traceLog("log", traceId, "rag_ingestion_result", {
+          enabled: completedRag.enabled,
+          skippedReason: completedRag.skippedReason,
+          chunkCount: completedRag.chunkCount,
+          embeddingModel: completedRag.embeddingModel,
+          ragMs: Date.now() - ragStartedAt,
+          sourceChars: ragSourceText.length,
+        })
+      } catch (ragError: any) {
+        traceLog("warn", traceId, "rag_ingestion_failed_non_fatal", {
+          error: clipText(ragError?.message || "rag_ingestion_failed", 220),
+          ragMs: Date.now() - ragStartedAt,
+        })
+      }
+    })()
+    const edgeRuntime = (globalThis as any).EdgeRuntime
+    if (edgeRuntime?.waitUntil) {
+      edgeRuntime.waitUntil(ragBackgroundTask)
+    } else {
+      void ragBackgroundTask
+    }
 
     let riskAlertNotification: {
       sent: boolean

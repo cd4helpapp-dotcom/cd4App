@@ -122,6 +122,16 @@ const getConcernKeywords = (concern: string): string[] => {
     return ['derma', 'skin', 'physician', 'bams', 'kayachikitsa'];
   }
 
+  if (
+    value.includes('eye') ||
+    value.includes('vision') ||
+    value.includes('cataract') ||
+    value.includes('glaucoma') ||
+    value.includes('ophthal')
+  ) {
+    return ['ophthal', 'eye', 'vision', 'optom', 'shaalak', 'shalakya'];
+  }
+
   if (value.includes('fever') || value.includes('bukhar') || value.includes('infection')) {
     return ['physician', 'medicine', 'internal', 'infect', 'general', 'bams'];
   }
@@ -224,6 +234,9 @@ const inferCategoryFromConcern = (keywords: string[]): string => {
   }
   if (keywords.some((keyword) => keyword.includes('skin') || keyword.includes('rash') || keyword.includes('itch'))) {
     return 'Dermatologist';
+  }
+  if (keywords.some((keyword) => keyword.includes('eye') || keyword.includes('vision') || keyword.includes('ophthal'))) {
+    return 'Ophthalmologist';
   }
   return 'General Physician';
 };

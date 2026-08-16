@@ -41,6 +41,15 @@ export default function HelpSettings() {
                     </View>
                     <Text style={styles.arrow}>›</Text>
                 </TouchableOpacity>
+                <View style={[styles.divider, { backgroundColor: theme.borderColor }]} />
+
+                <TouchableOpacity style={styles.row} onPress={() => router.push('/settings/delete-account')}>
+                    <View style={styles.iconRow}>
+                        <Info size={22} color={theme.tint} style={styles.icon} />
+                        <Text style={[styles.label, { color: theme.text }]}>Delete account</Text>
+                    </View>
+                    <Text style={styles.arrow}>›</Text>
+                </TouchableOpacity>
             </View>
         </ScrollView>
     );

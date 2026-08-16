@@ -2955,23 +2955,30 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         const dbLabels = Object.keys(globalPopularity);
         const personalLabels = Object.keys(userInterests);
         const seedLabels = [
-            'Diabetes', 'PCOS', 'Heart Health', 'Skin Issues', 'Weight Management',
-            'Fever', 'Cough', 'Cold & Flu', 'Headache', 'Migraine',
-            'Stomach Ache', 'Acidity', 'Constipation', 'Diarrhea', 'Food Poisoning',
-            'Joint Pain', 'Back Pain', 'Knee Pain', 'Muscle Cramps', 'Arthritis',
-            'Hair Fall', 'Acne', 'Skin Rash', 'Dandruff', 'Eczema',
-            'Anxiety', 'Stress', 'Depression', 'Insomnia', 'Panic Attacks',
-            'Asthma', 'Breathing Difficulty', 'Allergies', 'Bronchitis',
-            'High Blood Pressure', 'Low Blood Pressure', 'Chest Pain', 'Palpitations',
-            'Thyroid', 'Hormonal Imbalance', 'Irregular Periods', 'Pregnancy',
-            'Eye Infection', 'Vision Problems', 'Dry Eyes',
-            'Toothache', 'Bleeding Gums', 'Dental Cavity',
-            'Ear Pain', 'Hearing Loss', 'Tinnitus',
-            'Sore Throat', 'Tonsils', 'Sinus',
-            'Weight Gain', 'Weight Loss', 'Fatigue', 'Weakness', 'Anemia',
-            'Urinary Infection', 'Kidney Stones', 'Liver Issues', 'Jaundice',
-            'Piles', 'Cholesterol', 'Diabetes Type 1', 'Diabetes Type 2',
-            'Vertigo', 'Dizziness', 'Nausea', 'Vomiting'
+            'Fever', 'Common Cold', 'Flu', 'Cough', 'Headache', 'Migraine',
+            'Weakness / Fatigue', 'Dizziness', 'Hypertension', 'High Cholesterol',
+            'Diabetes', 'Prediabetes', 'Obesity', 'Metabolic Syndrome', 'Thyroid Disorders',
+            'Hypothyroidism', 'Hyperthyroidism', 'PCOS', 'Hormonal Disorders', 'Acidity',
+            'GERD', 'Gastritis', 'Indigestion', 'Gas / Bloating', 'Constipation', 'Diarrhea',
+            'IBS', 'Fatty Liver', 'Elevated Liver Enzymes', 'Asthma', 'COPD', 'Bronchitis',
+            'Allergic Rhinitis', 'Sinusitis', 'Sore Throat', 'Tonsillitis', 'Ear Infection',
+            'Tinnitus', 'Vertigo', 'Hearing Problems', 'Acne', 'Pigmentation', 'Melasma',
+            'Eczema', 'Psoriasis', 'Urticaria', 'Fungal Skin Infection', 'Hair Fall',
+            'Dandruff', 'Alopecia', 'Dry Skin', 'Knee Pain', 'Back Pain', 'Neck Pain',
+            'Arthritis', 'Osteoarthritis', 'Rheumatoid Arthritis', 'Gout', 'Spondylosis',
+            'Sciatica', 'Sports Injury', 'Joint Stiffness', 'Depression', 'Anxiety', 'Stress',
+            'Insomnia', 'Neuropathy', 'Epilepsy Follow-up', "Parkinson's Follow-up",
+            'Stroke Rehabilitation / Follow-up', 'Kidney Disease', 'High Creatinine',
+            'Proteinuria', 'Kidney Stones', 'UTI', 'Burning Urination', 'Prostate Enlargement',
+            'Erectile Dysfunction', 'Premature Ejaculation', 'Male Infertility',
+            'Female Infertility', 'Difficulty Conceiving', 'Irregular Periods', 'Painful Periods',
+            'Heavy Periods', 'Menopause', 'Pregnancy Care', 'Postpartum Care',
+            'Breastfeeding Concerns', 'Anemia', 'Iron Deficiency', 'B12 Deficiency',
+            'Low Platelets', 'Abnormal CBC', 'Lupus', 'Ankylosing Spondylitis',
+            'Psoriatic Arthritis', 'Piles', 'Anal Fissure', 'Anal Fistula', 'Hernia',
+            'Wound Care', 'Cancer Consultation', 'Cancer Second Opinion', 'Cancer Nutrition',
+            'Child Fever', 'Child Cough & Cold', 'Child Digestive Problems', 'Child Nutrition',
+            'Child Growth Concerns', 'Eye Strain', 'Dry Eye', 'Eye Allergy', 'Cataract', 'Glaucoma'
         ];
 
         const mergedConcerns = new Map<string, { label: string; dbCount: number; personalCount: number }>();

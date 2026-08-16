@@ -66,12 +66,21 @@ const getReadableUploadError = (error: any): string => {
     return 'Could not read/upload the file on this device. Please try another file (PDF/image) or retry.';
   }
   if (normalized.includes('bucket') && normalized.includes('not found')) {
-    return 'Storage bucket medical-reports is missing. Please run latest Supabase migration.';
+    console.warn('[MedicalReports] Storage configuration error:', message);
+    return 'Report storage is temporarily unavailable. Please try again later.';
   }
   if (normalized.includes('relation') && normalized.includes('medical_reports')) {
-    return 'medical_reports table is missing. Please run latest Supabase migration.';
+    console.warn('[MedicalReports] Database configuration error:', message);
+    return 'Report service is temporarily unavailable. Please try again later.';
   }
-  return message;
+  if (normalized.includes('login') || normalized.includes('auth') || normalized.includes('unauthorized')) {
+    return 'Your session has expired. Please log in again and retry.';
+  }
+  if (normalized.includes('invalid') || normalized.includes('unsupported') || normalized.includes('file type')) {
+    return 'This file could not be accepted. Please choose a PDF, JPG, or PNG report and try again.';
+  }
+  console.warn('[MedicalReports] Upload failed:', message);
+  return 'Could not upload this report right now. Please try again.';
 };
 
 const normalizeAnalysisErrorMessage = (rawMessage: string): string => {
@@ -97,7 +106,28 @@ const normalizeAnalysisErrorMessage = (rawMessage: string): string => {
     return `AI scanner is temporarily busy. ${retryHint}`;
   }
 
-  return message;
+  if (normalized.includes('unauthorized') || normalized.includes('invalid api key') || normalized.includes('authentication')) {
+    return 'Report scanning is unavailable for this session. Please log in again and retry.';
+  }
+  if (normalized.includes('not deployed') || normalized.includes('edge function') || normalized.includes('internal server')) {
+    return 'Report scanning is temporarily unavailable. Please try again later.';
+  }
+  if (
+    normalized.includes('unsupported') ||
+    normalized.includes('not a medical') ||
+    normalized.includes('medical document') ||
+    normalized.includes('could not read text') ||
+    normalized.includes('empty text')
+  ) {
+    return 'We could not read this as a medical report. Please upload a clear PDF or image and try again.';
+  }
+  if (normalized.includes('too large') || normalized.includes('file size')) {
+    return `Report size exceeds ${MAX_REPORT_UPLOAD_MB} MB. Please upload a smaller file.`;
+  }
+
+  // Never expose raw provider, database, stack-trace, or edge-function details in the UI.
+  console.warn('[MedicalReports] Analysis failed:', message);
+  return 'We could not analyze this report right now. Please try again or upload a clearer file.';
 };
 
 export const getMedicalReportAnalysisErrorMessage = (rawError: string | null | undefined): string => {
@@ -151,6 +181,7 @@ const extractEdgeFunctionErrorMessage = async (error: any): Promise<string> => {
     return normalizeAnalysisErrorMessage(baseMessage);
   }
 
+  console.warn('[MedicalReports] Edge analysis error:', detailed);
   return normalizeAnalysisErrorMessage(detailed);
 };
 

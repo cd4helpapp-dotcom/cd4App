@@ -87,6 +87,7 @@ export default function SettingsScreen() {
       action: () => router.push('/settings/subscription'),
     },
     { key: 'paymentHistory', label: 'Payment history', icon: Receipt, action: () => router.push('/payment-history') },
+    { key: 'deleteAccount', label: 'Delete account', icon: Receipt, action: () => router.push('/settings/delete-account') },
   ];
 
   // Add Doctor Recruitment for Marketing and Admin roles

@@ -23,16 +23,17 @@ const FALLBACK_CONTENT: Record<ManagedContentKey, ManagedContentPayload> = {
   terms: {
     title: 'Terms & Service',
     body:
-      'By using CD4, you agree to use the app responsibly and provide accurate information.\n\n' +
-      'CD4 guidance does not replace emergency care. In urgent situations, contact local emergency services immediately.\n\n' +
-      'Misuse, abuse, or unauthorized access attempts may lead to account restriction.',
+      'By using CD4, you agree to use the app responsibly and provide accurate information. CD4 connects users with healthcare services and provides AI-assisted health information.\n\n' +
+      'AI guidance and report explanations are for informational support only. They do not replace a qualified doctor, diagnosis, prescription, or emergency care. Contact local emergency services for urgent symptoms.\n\n' +
+      'You are responsible for protecting your account and for confirming medical decisions with a qualified healthcare professional. Misuse, abuse, or unauthorized access attempts may lead to account restriction.',
   },
   privacy_policy: {
     title: 'Privacy Policy',
     body:
-      'CD4 stores personal and health-related settings to provide personalized care features.\n\n' +
-      'We do not sell your personal data. Access is restricted using authenticated roles and security controls.\n\n' +
-      'You may contact support to request data review, correction, or deletion where applicable.',
+      'CD4 collects account details such as name, email, phone number and profile information to create and secure your account. If you use health features, we may process symptoms, appointments, uploaded medical reports, prescriptions, voice input and AI conversation history to provide the requested care-support features.\n\n' +
+      'We use this information to provide doctor discovery, appointment booking, report explanation, support, security, notifications and service improvement. We may use service providers such as Supabase, AI providers, payment providers and video/voice providers only as needed to provide these features. We do not sell personal or health data.\n\n' +
+      'Data is protected with authenticated access controls and encrypted transport. We retain data only as long as needed for the service, legal obligations and safety. You can request access, correction or deletion by using Settings → Delete account or by contacting support@cd4.app.\n\n' +
+      'For account deletion instructions, visit the public Account deletion page. For questions or complaints, contact support@cd4.app.',
   },
 };
 
@@ -59,4 +60,3 @@ export const useManagedAppContent = (keyName: ManagedContentKey) =>
       return { title, body, updatedAt };
     },
   });
-

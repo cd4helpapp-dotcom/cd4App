@@ -1361,7 +1361,7 @@ export default function ReportAssistantScreen() {
       Toast.show({
         type: 'error',
         text1: 'Open failed',
-        text2: error?.message || 'Could not open this file.',
+        text2: 'Could not open this report file. Please try again.',
       });
     }
   };
@@ -1391,7 +1391,7 @@ export default function ReportAssistantScreen() {
                 Toast.show({
                   type: 'error',
                   text1: 'Delete failed',
-                  text2: error?.message || 'Could not delete report.',
+                  text2: 'Could not delete this report right now. Please try again.',
                 });
               }
             })();
@@ -1412,7 +1412,7 @@ export default function ReportAssistantScreen() {
       Toast.show({
         type: 'error',
         text1: 'Could not ask AI',
-        text2: error?.message || 'Please try again.',
+        text2: getMedicalReportAnalysisErrorMessage(error?.message),
       });
       setQuestionInput(question);
     }
@@ -1629,7 +1629,7 @@ export default function ReportAssistantScreen() {
                             Toast.show({ type: 'success', text1: 'Re-analysis started', text2: 'Updated results will appear shortly.' });
                           },
                           onError: (err: any) => {
-                            Toast.show({ type: 'error', text1: 'Re-analyze failed', text2: err?.message || 'Please try again.' });
+                            Toast.show({ type: 'error', text1: 'Re-analyze failed', text2: getMedicalReportAnalysisErrorMessage(err?.message) });
                           },
                         });
                       }}
