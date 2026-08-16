@@ -59,6 +59,7 @@ export default function ConfirmConsultationScreen() {
     slotEndTime?: string;
     reportId?: string;
     conversationId?: string;
+    appointmentType?: string;
   }>();
 
   const doctorId = String(params.doctorId || '').trim();
@@ -72,6 +73,7 @@ export default function ConfirmConsultationScreen() {
   const slotEndTime = String(params.slotEndTime || '').trim();
   const reportId = String(params.reportId || '').trim();
   const conversationId = String(params.conversationId || '').trim();
+  const appointmentType = params.appointmentType === 'second_opinion' ? 'second_opinion' : 'consultation';
   const fallbackGrossAmount = parseAmountInr(String(params.doctorFee || '500'));
 
   const parsedSlotDate = React.useMemo(() => {
@@ -96,7 +98,7 @@ export default function ConfirmConsultationScreen() {
       return;
     }
 
-    const requestKey = `${doctorId}:${slotId}:${session?.access_token || 'no-session'}`;
+    const requestKey = `${doctorId}:${slotId}:${appointmentType}:${session?.access_token || 'no-session'}`;
     const existingRequest = quoteRequestRef.current;
     if (existingRequest?.key === requestKey) {
       await existingRequest.promise;
@@ -114,7 +116,7 @@ export default function ConfirmConsultationScreen() {
       });
       const requestResult = await Promise.race([
         supabase.functions.invoke('manage-appointment-payment', {
-          body: { action: 'create_order', doctorId, slotId },
+          body: { action: 'create_order', doctorId, slotId, appointmentType },
         }),
         timeout,
       ]);
@@ -152,7 +154,7 @@ export default function ConfirmConsultationScreen() {
       }
       setIsPreparing(false);
     }
-  }, [doctorId, fallbackGrossAmount, router, session?.access_token, slotId]);
+  }, [appointmentType, doctorId, fallbackGrossAmount, router, session?.access_token, slotId]);
 
   React.useEffect(() => {
     void loadQuote();
@@ -191,6 +193,7 @@ export default function ConfirmConsultationScreen() {
         aiReportId: reportId || undefined,
         concern: concern || undefined,
         conversationId: conversationId || undefined,
+        appointmentType,
       });
 
       if (user?.id && parsedSlotDate && slotStartTime) {
@@ -256,6 +259,12 @@ export default function ConfirmConsultationScreen() {
             <MapPin size={14} color={theme.textSecondary} />
             <Text style={[styles.metaText, { color: theme.textSecondary }]} numberOfLines={1}>
               {doctorCity || 'City unavailable'}
+            </Text>
+          </View>
+          <View style={styles.metaRow}>
+            <Stethoscope size={14} color={theme.textSecondary} />
+            <Text style={[styles.metaText, { color: theme.textSecondary }]}>
+              {appointmentType === 'second_opinion' ? 'Second Opinion' : 'Consultation'}
             </Text>
           </View>
           <View style={styles.metaRow}>

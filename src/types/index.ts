@@ -100,6 +100,7 @@ export interface Appointment {
     doctor: string;
     slot: Slot;
     status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+    appointmentType?: 'consultation' | 'second_opinion';
     notes?: string;
     meetLink?: string;
     aiReport?: {

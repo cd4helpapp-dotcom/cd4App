@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ScrollView, A
 import Colors from '../../constants/Colors';
 import { router } from 'expo-router';
 import { useAuthContext } from '../../context/AuthContext';
-import { LogOut, UserCheck, Banknote, Building, Bell, Database, Globe, HelpCircle, SunMoon } from 'lucide-react-native';
+import { LogOut, UserCheck, Banknote, Building, Bell, Database, Globe, HelpCircle, SunMoon, Receipt } from 'lucide-react-native';
 import { useLogout } from '../../hooks/useAuth';
 import Toast from 'react-native-toast-message';
 import { getImageUrl } from '../../constants/Config';
@@ -15,7 +15,7 @@ import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
 export default function DoctorSettings() {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
-    const { user, refreshAuth } = useAuthContext();
+    const { user } = useAuthContext();
     const logoutMutation = useLogout();
     const { themePreference, resolvedColorScheme } = useThemePreference();
     const { t, languageLabel } = useAppLanguage();
@@ -37,7 +37,6 @@ export default function DoctorSettings() {
     const handleLogout = async () => {
         try {
             await logoutMutation.mutateAsync();
-            refreshAuth();
 
             Toast.show({
                 type: 'success',
@@ -59,6 +58,7 @@ export default function DoctorSettings() {
         { key: 'profileCredentials', label: t('settings.profileCredentials'), icon: UserCheck, action: () => router.push('/doctor/profile-details') },
         { key: 'consultationFees', label: t('settings.consultationFees'), icon: Banknote, action: () => router.push('/doctor/profile/fees') },
         { key: 'clinicDetails', label: t('settings.clinicDetails'), icon: Building, action: () => router.push('/doctor/profile/clinic') },
+        { key: 'transactions', label: 'Transactions', icon: Receipt, action: () => router.push('/doctor/transactions') },
     ];
 
     const appSettings = [
@@ -92,7 +92,7 @@ export default function DoctorSettings() {
     const profileImageUrl = getImageUrl(user?.profilePicture);
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} edges={['top', 'bottom']}>
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']}>
         <View style={[styles.container, { backgroundColor: theme.background }]}>
             {/* Profile Header Block */}
             <TouchableOpacity

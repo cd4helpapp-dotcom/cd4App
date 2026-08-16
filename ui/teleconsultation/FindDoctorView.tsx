@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Image, ActivityIndicator, Modal, RefreshControl, Animated, Easing, useWindowDimensions, KeyboardAvoidingView, Platform, Keyboard, StatusBar as NativeStatusBar } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { Theme } from '../../constants/Colors';
-import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle, Bell, UserRound, FileText, Sparkles, Users, Video, ChevronRight, Siren } from 'lucide-react-native';
+import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Scale, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle, Bell, UserRound, FileText, Sparkles, Users, Video, ChevronRight, Siren } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import Toast from 'react-native-toast-message';
@@ -448,7 +448,7 @@ interface DynamicCategory {
 }
 
 type HomePromoCardTone = 'emerald' | 'sky' | 'amber';
-type HomePromoCardAction = 'best_doctors' | 'best_doctors_global' | 'ai_chat' | 'voice_triage' | 'report_assistant';
+type HomePromoCardAction = 'best_doctors' | 'best_doctors_global' | 'ai_chat' | 'voice_triage' | 'report_assistant' | 'second_opinion';
 
 type HomePromoToneSet = {
     gradient: readonly [string, string];
@@ -475,6 +475,16 @@ type HomePromoCard = {
 };
 
 const HOME_PROMO_CARDS: HomePromoCard[] = [
+    {
+        id: 'second-opinion',
+        tag: 'Second Opinion',
+        title: 'A second opinion, when it matters',
+        description: 'Get an expert review of your diagnosis or treatment plan from a verified CD4 doctor.',
+        cta: 'Get Second Opinion',
+        tone: 'sky',
+        Icon: Scale,
+        action: 'second_opinion',
+    },
     {
         id: 'best-doctors',
         tag: 'Best Doctors',
@@ -5334,6 +5344,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             return;
         }
 
+        if (action === 'second_opinion') {
+            router.push({ pathname: '/(tabs)/appointments', params: { concern: 'Second Opinion', appointmentType: 'second_opinion' } });
+            return;
+        }
+
         if (action === 'best_doctors_global') {
             const globalTopDoctor = [...(doctorsData as Doctor[])]
                 .sort((a, b) => {
@@ -5623,7 +5638,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         return `Across CD4: ${topDoctorSnippets.join(' • ')}.`;
     }, [getDoctorDisplayName, promoGlobalTopDoctors]);
     const promoCards = React.useMemo<HomePromoCard[]>(() => (
-        HOME_PROMO_CARDS.map((card) => {
+        HOME_PROMO_CARDS.filter((card) => card.action !== 'second_opinion').map((card) => {
             if (card.action === 'best_doctors') {
                 const requestedLabel = promoTopDoctorContext.requestedCity;
                 const fallbackLabel = promoTopDoctorContext.matchedCity || requestedLabel;
@@ -5655,6 +5670,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         ai_chat: [],
         voice_triage: [],
         report_assistant: [],
+        second_opinion: [],
     }), [promoTopDoctors, promoGlobalTopDoctors]);
     const promoLoopCards = React.useMemo<HomePromoCard[]>(() => (
         promoCards.length > 1 ? [...promoCards, ...promoCards] : promoCards
@@ -6006,6 +6022,10 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 onConcernPress={handleConcernPress}
                 onViewAllConcerns={handleViewAllConcernsPress}
                 onPromoPress={(promoId) => {
+                    if (promoId === 'second-opinion') {
+                        handlePromoCardAction('second_opinion');
+                        return;
+                    }
                     const promo = promoLoopCards.find((item) => item.id === promoId);
                     handlePromoCardAction(promo?.action || 'ai_chat');
                 }}

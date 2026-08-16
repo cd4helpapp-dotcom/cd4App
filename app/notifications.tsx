@@ -186,6 +186,9 @@ export default function NotificationsScreen() {
             case 'health_reminder':
                 router.push(isDoctor ? '/doctor/dashboard' : '/(tabs)');
                 break;
+            case 'payment':
+                router.push(isDoctor ? '/doctor/dashboard' : '/(tabs)/appointments');
+                break;
             case 'medical_report_alert':
                 if (typeof notif.data?.reportId === 'string' && notif.data.reportId.trim()) {
                     router.push({

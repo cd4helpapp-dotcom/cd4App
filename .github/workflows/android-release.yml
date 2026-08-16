@@ -1,0 +1,36 @@
+name: Android release
+
+on:
+  workflow_dispatch:
+    inputs:
+      submit_to_play_store:
+        description: 'Submit the built Android artifact to Google Play'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android production artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install EAS CLI
+        run: npm install --global eas-cli
+      - name: Build Android with EAS
+        run: eas build --platform android --profile production --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      - name: Submit to Google Play
+        if: inputs.submit_to_play_store == true
+        run: eas submit --platform android --profile production --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

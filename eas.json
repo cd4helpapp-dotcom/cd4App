@@ -33,7 +33,7 @@
     "production": {
       "distribution": "store",
       "android": {
-        "buildType": "apk"
+        "buildType": "app-bundle"
       },
       "node": "20.18.0",
       "env": {

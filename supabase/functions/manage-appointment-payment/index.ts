@@ -92,6 +92,9 @@ Deno.serve(async (req: Request) => {
       const doctorId = String(body?.doctorId || "").trim();
       const slotId = String(body?.slotId || "").trim();
       if (!doctorId || !slotId) return jsonResponse({ success: false, message: "doctorId_and_slotId_required" }, 400);
+      const appointmentType = String(body?.appointmentType || "consultation").trim() === "second_opinion"
+        ? "second_opinion"
+        : "consultation";
 
       // Fetch the doctor's fee from the doctors_public table
       const { data: doctorRow, error: doctorError } = await serviceClient
@@ -133,7 +136,7 @@ Deno.serve(async (req: Request) => {
           doctor_share: doctorShare,
           platform_commission: platformShare,
           currency: "INR",
-          metadata: { mode: IS_RAZORPAY_LIVE ? "live" : "test", action: "create_order" },
+          metadata: { mode: IS_RAZORPAY_LIVE ? "live" : "test", action: "create_order", appointment_type: appointmentType },
         })
         .select("id, order_id, gross_amount, doctor_share, platform_commission, currency")
         .single();

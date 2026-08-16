@@ -242,7 +242,7 @@ export default function DoctorSlots() {
     );
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} panHandlers={tabSwipeHandlers}>
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
             <View style={styles.header}>
                 <View>
                     <Text style={[styles.headerTitle, { color: theme.text }]}>Manage Slots</Text>

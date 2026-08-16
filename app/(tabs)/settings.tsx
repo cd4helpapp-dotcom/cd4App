@@ -15,7 +15,7 @@ import { getImageUrl } from '../../constants/Config';
 export default function SettingsScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { user, refreshAuth } = useAuthContext();
+  const { user } = useAuthContext();
   const logoutMutation = useLogout();
   const { themePreference, resolvedColorScheme } = useThemePreference();
   const { t, languageLabel } = useAppLanguage();
@@ -56,7 +56,6 @@ export default function SettingsScreen() {
   const handleLogout = async () => {
     try {
       await logoutMutation.mutateAsync();
-      refreshAuth(); // Update context state
 
       Toast.show({
         type: 'success',

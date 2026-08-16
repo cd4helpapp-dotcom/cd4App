@@ -204,7 +204,7 @@ const LoginScreen: React.FC = () => {
 
   const fetchProfileForRouting = async (
     userId: string,
-    retries = 8
+    retries = 3
   ): Promise<LoginProfileSnapshot | null> => {
     for (let attempt = 0; attempt < retries; attempt += 1) {
       const { data, error } = await supabase
@@ -240,7 +240,7 @@ const LoginScreen: React.FC = () => {
       }
 
       if (attempt < retries - 1) {
-        await sleep(500);
+        await sleep(250);
       }
     }
 
@@ -249,12 +249,13 @@ const LoginScreen: React.FC = () => {
 
   const routeAfterSuccessfulAuth = async (userId: string) => {
     const profile = await fetchProfileForRouting(userId);
-    const { data: authUserData } = await supabase.auth.getUser();
-    const userEmail = authUserData.user?.email;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const authUser = sessionData.session?.user;
+    const userEmail = authUser?.email;
     let roleSlug = resolveRoleSlugFromProfile(profile, userEmail);
 
     if (roleSlug !== 'Doctor') {
-      const metadataRole = authUserData.user?.user_metadata?.role;
+      const metadataRole = authUser?.user_metadata?.role;
       if (typeof metadataRole === 'string') {
         const normalizedMetadataRole = metadataRole.trim().toLowerCase();
         if (normalizedMetadataRole === 'doctor') roleSlug = 'Doctor';
@@ -391,7 +392,7 @@ const LoginScreen: React.FC = () => {
       });
 
       if (error) throw error;
-      await rememberAccount({
+      void rememberAccount({
         user: data.user,
         provider: 'google',
       });
@@ -568,7 +569,7 @@ const LoginScreen: React.FC = () => {
       });
 
       if (!error) {
-      await rememberAccount({
+      void rememberAccount({
         user: data.user,
         provider: 'email',
       });

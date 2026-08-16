@@ -1,3 +1,3 @@
-import NotificationsSettings from '../settings/notifications';
+import NotificationsScreen from '../notifications';
 
-export default NotificationsSettings;
+export default NotificationsScreen;

@@ -59,7 +59,7 @@ export default function DoctorDashboard() {
     const router = useRouter();
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
-    const { user, refreshAuth } = useAuthContext();
+    const { user } = useAuthContext();
     const logoutMutation = useLogout();
 
     const { data: appointments = [], isLoading, refetch: refetchAppointments, isRefetching } = useDoctorAppointments();
@@ -162,7 +162,6 @@ export default function DoctorDashboard() {
     const handleLogout = async () => {
         try {
             await logoutMutation.mutateAsync();
-            await refreshAuth();
             setMenuVisible(false);
             Toast.show({
                 type: 'success',
@@ -212,8 +211,8 @@ export default function DoctorDashboard() {
 
     const renderMetricCard = (card: (typeof metricCards)[number]) => {
         const Icon = card.icon;
-        return (
-            <View key={card.key} style={[styles.metricCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+        const cardContent = (
+            <View style={[styles.metricCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                 <View style={styles.metricHeader}>
                     <Icon size={16} color={theme.tint} />
                     <Text style={[styles.metricLabel, { color: theme.textSecondary }]}>{card.label}</Text>
@@ -226,6 +225,14 @@ export default function DoctorDashboard() {
                 </Text>
             </View>
         );
+        if (card.key === 'revenue') {
+            return (
+                <TouchableOpacity key={card.key} activeOpacity={0.86} onPress={() => router.push('/doctor/transactions')}>
+                    {cardContent}
+                </TouchableOpacity>
+            );
+        }
+        return <View key={card.key}>{cardContent}</View>;
     };
 
     const renderAppointment = ({ item }: { item: Appointment }) => {
@@ -260,6 +267,9 @@ export default function DoctorDashboard() {
                             <Text style={[styles.patientName, { color: theme.text }]} numberOfLines={1}>
                                 {patientName}
                             </Text>
+                            {item.appointmentType === 'second_opinion' ? (
+                                <Text style={[styles.patientAge, { color: theme.tint, fontWeight: '700' }]}>Second Opinion</Text>
+                            ) : null}
                             <Text style={[styles.patientAge, { color: theme.textSecondary }]}>
                                 {item.patient.age ? `${item.patient.age} years` : 'Age not shared'}
                             </Text>
@@ -350,7 +360,7 @@ export default function DoctorDashboard() {
     const isFirstLoad = isLoading && appointments.length === 0 && !isRefetching;
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} panHandlers={tabSwipeHandlers}>
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
             {isFirstLoad ? (
                 <View style={styles.loaderContainer}>
                     <ActivityIndicator size="large" color={theme.tint} />
@@ -380,6 +390,35 @@ export default function DoctorDashboard() {
                             </View>
 
                             <View style={styles.metricGrid}>{metricCards.map(renderMetricCard)}</View>
+
+                            <TouchableOpacity
+                                activeOpacity={0.88}
+                                onPress={() => router.push('/doctor/transactions')}
+                                style={[styles.revenueSummaryCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
+                            >
+                                <View style={styles.revenueSummaryHeader}>
+                                    <View>
+                                        <Text style={[styles.sectionTitle, { color: theme.text, marginBottom: 2 }]}>Revenue details</Text>
+                                        <Text style={[styles.revenueSummaryHint, { color: theme.textSecondary }]}>Tap to view all paid transactions</Text>
+                                    </View>
+                                    <Text style={[styles.revenueViewAll, { color: theme.tint }]}>View all ›</Text>
+                                </View>
+                                <View style={styles.revenueSummaryGrid}>
+                                    <View style={styles.revenueSummaryItem}>
+                                        <Text style={[styles.revenueSummaryLabel, { color: theme.textSecondary }]}>Patient paid</Text>
+                                        <Text style={[styles.revenueSummaryValue, { color: theme.text }]}>{formatCurrency(earnings?.totalPaid || 0)}</Text>
+                                    </View>
+                                    <View style={styles.revenueSummaryItem}>
+                                        <Text style={[styles.revenueSummaryLabel, { color: theme.textSecondary }]}>Admin commission</Text>
+                                        <Text style={[styles.revenueSummaryValue, { color: theme.text }]}>{formatCurrency(earnings?.platformCommission || 0)}</Text>
+                                    </View>
+                                    <View style={styles.revenueSummaryItem}>
+                                        <Text style={[styles.revenueSummaryLabel, { color: theme.textSecondary }]}>Your fee</Text>
+                                        <Text style={[styles.revenueSummaryValue, { color: theme.tint }]}>{formatCurrency(earnings?.doctorPayout || 0)}</Text>
+                                    </View>
+                                </View>
+                                <Text style={[styles.revenueSettlementText, { color: theme.textSecondary }]}>Settled {formatCurrency(earnings?.settledPayout || 0)} · Pending {formatCurrency(earnings?.pendingPayout || 0)}</Text>
+                            </TouchableOpacity>
 
                             <View style={styles.quickActionsRow}>
                                 <TouchableOpacity
@@ -540,6 +579,46 @@ const styles = StyleSheet.create({
     },
     metricHelper: {
         marginTop: 2,
+        fontSize: 11,
+    },
+    revenueSummaryCard: {
+        marginHorizontal: 20,
+        marginTop: 4,
+        borderWidth: 1,
+        borderRadius: 14,
+        padding: 14,
+    },
+    revenueSummaryHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    revenueSummaryHint: {
+        fontSize: 11,
+    },
+    revenueViewAll: {
+        fontSize: 12,
+        fontWeight: '800',
+    },
+    revenueSummaryGrid: {
+        flexDirection: 'row',
+        marginTop: 16,
+        gap: 8,
+    },
+    revenueSummaryItem: {
+        flex: 1,
+    },
+    revenueSummaryLabel: {
+        fontSize: 10,
+        lineHeight: 14,
+    },
+    revenueSummaryValue: {
+        marginTop: 3,
+        fontSize: 14,
+        fontWeight: '800',
+    },
+    revenueSettlementText: {
+        marginTop: 12,
         fontSize: 11,
     },
     quickActionsRow: {

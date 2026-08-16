@@ -211,6 +211,7 @@ export const useMyAppointments = () => {
                     isBooked: apt.slot?.is_booked,
                 },
                 status: apt.status,
+                appointmentType: apt.appointment_type === 'second_opinion' ? 'second_opinion' : 'consultation',
                 notes: apt.notes,
                 meetLink: apt.meet_link,
                 createdAt: apt.created_at,
@@ -271,6 +272,7 @@ export const useBookAppointment = () => {
             aiReportId,
             concern,
             conversationId,
+            appointmentType,
         }: {
             doctorId: string;
             slotId: string;
@@ -280,6 +282,7 @@ export const useBookAppointment = () => {
             aiReportId?: string;
             concern?: string;
             conversationId?: string;
+            appointmentType?: 'consultation' | 'second_opinion';
         }) => {
             if (!session?.user?.id) throw new Error('Not authenticated');
 
@@ -327,6 +330,7 @@ export const useBookAppointment = () => {
                     slotId,
                     aiReportId,
                     conversationId,
+                    appointmentType,
                 },
             });
 
@@ -524,6 +528,7 @@ export const useDoctorAppointments = () => {
                     isBooked: apt.slot?.is_booked,
                 },
                 status: apt.status,
+                appointmentType: apt.appointment_type === 'second_opinion' ? 'second_opinion' : 'consultation',
                 notes: apt.notes,
                 meetLink: apt.meet_link,
                 aiReport: apt.ai_report ? {

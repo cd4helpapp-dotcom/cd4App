@@ -79,7 +79,7 @@ export default function ConsultationFeesScreen() {
     }
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} edges={['top', 'bottom']}>
+            <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']}>
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: theme.background }]}
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}

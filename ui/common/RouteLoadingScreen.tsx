@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, useColorScheme, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
 
@@ -19,6 +19,7 @@ export default function RouteLoadingScreen({ message = 'Preparing your workspace
       style={[styles.container, { backgroundColor: theme.background }]}
     >
       <View style={styles.centerWrap}>
+        <Image source={require('../../assets/images/cd4_logo.png')} style={styles.logo} resizeMode="contain" />
         <ActivityIndicator size="large" color={theme.tint} />
         <Text
           style={[
@@ -46,6 +47,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  logo: { width: 76, height: 76, borderRadius: 18, marginBottom: 18 },
   message: {
     textAlign: 'center',
     fontSize: 14,

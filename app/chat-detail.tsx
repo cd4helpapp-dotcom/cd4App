@@ -865,6 +865,7 @@ export default function ChatDetailScreen() {
     const insets = useSafeAreaInsets();
     const { user } = useAuthContext();
     const flatListRef = useRef<FlatList>(null);
+    const chatInputRef = useRef<TextInput>(null);
     const [isResolvingRoom, setIsResolvingRoom] = useState(!roomId && !!otherId);
     const [isCallMinimized, setIsCallMinimized] = useState(false);
     const [isTyping, setIsTyping] = useState(false);
@@ -1086,6 +1087,10 @@ export default function ChatDetailScreen() {
             setIsCallMinimized(false);
         }
         if (callStatus !== 'idle') {
+            // A focused chat input can reopen Android's keyboard when the
+            // call overlay or its audio controls rerender. Blur it, not just
+            // dismiss the keyboard, for the entire duration of the call.
+            chatInputRef.current?.blur();
             Keyboard.dismiss();
         }
     }, [callStatus]);
@@ -1857,6 +1862,7 @@ export default function ChatDetailScreen() {
                     )}
                 </TouchableOpacity>
                 <TextInput
+                    ref={chatInputRef}
                     style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
                     placeholder={isChatEnabled ? "Type a message..." : "Chat disabled"}
                     placeholderTextColor={theme.textSecondary}
@@ -1999,7 +2005,14 @@ export default function ChatDetailScreen() {
                                 </TouchableOpacity>
 
                                 {callStatus === 'active' && (
-                                    <TouchableOpacity onPress={toggleSpeaker} style={[styles.controlButton, !isSpeakerOn && styles.controlButtonActive]}>
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            chatInputRef.current?.blur();
+                                            Keyboard.dismiss();
+                                            toggleSpeaker();
+                                        }}
+                                        style={[styles.controlButton, !isSpeakerOn && styles.controlButtonActive]}
+                                    >
                                         {isSpeakerOn ? <Volume2 size={24} color="#fff" /> : <VolumeX size={24} color="#fff" />}
                                     </TouchableOpacity>
                                 )}

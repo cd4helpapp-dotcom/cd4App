@@ -452,12 +452,75 @@ type PrescriptionNarrative = {
   redFlags: string[];
 };
 
+type StructuredPrescriptionDraft = {
+  medicines: PrescriptionMedicineRow[];
+  narrative: Partial<PrescriptionNarrative>;
+};
+
 const splitVoiceLines = (voiceText: string): string[] =>
   String(voiceText || "")
     .replace(/\r/g, "\n")
     .split(/\n|[.?!]/g)
     .map((line) => line.trim())
     .filter((line) => line.length > 2);
+
+// The doctor review screen sends a labelled, editable prescription draft.
+// Parse that format directly instead of feeding headings and table rows back
+// through the free-form voice parser, which was mixing sections in the PDF.
+const parseStructuredPrescriptionDraft = (text: string): StructuredPrescriptionDraft => {
+  const sections = new Map<string, string[]>();
+  let current = "";
+  for (const rawLine of String(text || "").replace(/\r/g, "").split("\n")) {
+    const line = rawLine.trim();
+    const heading = line.match(/^([A-Za-z][A-Za-z\s()/-]+):$/);
+    if (heading) {
+      current = heading[1].trim().toUpperCase();
+      sections.set(current, []);
+      continue;
+    }
+    if (current && line && line !== "-") {
+      sections.get(current)!.push(line);
+    }
+  }
+
+  const values = (names: string[]): string[] => {
+    for (const name of names) {
+      const rows = sections.get(name);
+      if (rows?.length) return dedupeLines(rows, 6);
+    }
+    return [];
+  };
+
+  const medicines = values(["MEDICATIONS"])
+    .map((row) => row.replace(/^\d+[.)]\s*/, "").trim())
+    .filter((row) => !/medicine\s*\|\s*dose\s*\|\s*frequency/i.test(row))
+    .map((row): PrescriptionMedicineRow => {
+      const parts = row.split("|").map((part) => part.trim());
+      return {
+        medicine_name: normalizeMedicineName(parts[0] || null),
+        dosage: parts[1] || null,
+        frequency: normalizeFrequency(parts[2] || null),
+        duration: parts[3] || null,
+        instructions: parts.slice(4).filter(Boolean).join(" | ") || null,
+      };
+    })
+    .filter((row) => row.medicine_name);
+
+  const diagnosis = values(["DIAGNOSIS"])[0] || "";
+  return {
+    medicines: dedupeMedicines(medicines, 8),
+    narrative: {
+      concern: values(["CHIEF COMPLAINTS"])[0] || "",
+      chiefComplaints: values(["CHIEF COMPLAINTS"]),
+      historySummary: values(["HISTORY (SUMMARY)"]),
+      examination: values(["EXAMINATION"]),
+      diagnosis,
+      generalAdvice: values(["GENERAL ADVICE"]),
+      precautions: values(["PRECAUTIONS"]),
+      followUp: values(["FOLLOW-UP"]),
+    },
+  };
+};
 
 const dedupeLines = (items: string[], maxItems = 6): string[] => {
   const out: string[] = [];
@@ -802,6 +865,8 @@ Deno.serve(async (req: Request) => {
       throw new Error("Medicine name review is required before sending the prescription PDF.");
     }
 
+    const structuredDraft = parseStructuredPrescriptionDraft(doctorText);
+
     const { data: room, error: roomError } = await serviceClient
       .from("chat_rooms")
       .select("id, patient_id, doctor_id")
@@ -856,7 +921,10 @@ Deno.serve(async (req: Request) => {
     let parsedJson: any = {};
     let parserModel = "heuristic-fallback";
 
-    if (openAiApiKey) {
+    // A doctor-edited structured draft is already reviewed and authoritative.
+    // Do not send it through the AI parser again, otherwise headings/table
+    // rows can be reinterpreted and doctor edits can be lost.
+    if (openAiApiKey && structuredDraft.medicines.length === 0) {
       try {
         const parsePrompt = buildParserPrompt(doctorText);
         parsed = await invokeOpenAIParser(openAiApiKey, parsePrompt);
@@ -873,7 +941,12 @@ Deno.serve(async (req: Request) => {
     // The heuristic parser is a fallback only. Merging it with an AI result
     // can create duplicate or conflicting medicines (for example a brand and
     // its generic name). Keep one authoritative parse for the PDF.
-    const medicines = dedupeMedicines(aiMedicines.length ? aiMedicines : heuristicMedicines, 8);
+    const medicines = dedupeMedicines(
+      structuredDraft.medicines.length
+        ? structuredDraft.medicines
+        : (aiMedicines.length ? aiMedicines : heuristicMedicines),
+      8
+    );
     if (medicines.length === 0) {
       throw new Error("At least one clearly named medicine is required before sending a prescription PDF.");
     }
@@ -884,17 +957,20 @@ Deno.serve(async (req: Request) => {
       body?.narrative && typeof body.narrative === "object" ? body.narrative : {};
     const parsedNarrative = normalizeNarrativeFromParsed(parsedJson || {});
     const inferredNarrative = extractNarrativeFromVoice(doctorText);
+    const draftNarrative = structuredDraft.narrative;
     const narrative: PrescriptionNarrative = {
       concern: clipText(
         typeof bodyNarrative.concern === "string"
           ? bodyNarrative.concern
-          : parsedNarrative.concern || contextualConcern || inferredNarrative.concern,
+          : draftNarrative.concern || parsedNarrative.concern || contextualConcern || inferredNarrative.concern,
         120
       ),
       chiefComplaints: dedupeLines(
         Array.isArray(bodyNarrative.chiefComplaints)
           ? bodyNarrative.chiefComplaints
-          : parsedNarrative.chiefComplaints?.length
+          : draftNarrative.chiefComplaints?.length
+            ? draftNarrative.chiefComplaints
+            : parsedNarrative.chiefComplaints?.length
             ? parsedNarrative.chiefComplaints
             : inferredNarrative.chiefComplaints,
         4
@@ -902,7 +978,9 @@ Deno.serve(async (req: Request) => {
       historySummary: dedupeLines(
         Array.isArray(bodyNarrative.historySummary)
           ? bodyNarrative.historySummary
-          : parsedNarrative.historySummary?.length
+          : draftNarrative.historySummary?.length
+            ? draftNarrative.historySummary
+            : parsedNarrative.historySummary?.length
             ? parsedNarrative.historySummary
             : inferredNarrative.historySummary,
         4
@@ -914,7 +992,9 @@ Deno.serve(async (req: Request) => {
       examination: dedupeLines(
         Array.isArray(bodyNarrative.examination)
           ? bodyNarrative.examination
-          : parsedNarrative.examination?.length
+          : draftNarrative.examination?.length
+            ? draftNarrative.examination
+            : parsedNarrative.examination?.length
             ? parsedNarrative.examination
             : inferredNarrative.examination,
         3
@@ -922,13 +1002,15 @@ Deno.serve(async (req: Request) => {
       diagnosis: clipText(
         typeof bodyNarrative.diagnosis === "string"
           ? bodyNarrative.diagnosis
-          : parsedNarrative.diagnosis || inferredNarrative.diagnosis || contextualConcern,
+          : draftNarrative.diagnosis || parsedNarrative.diagnosis || inferredNarrative.diagnosis || contextualConcern,
         90
       ),
       generalAdvice: dedupeLines(
         Array.isArray(bodyNarrative.generalAdvice)
           ? bodyNarrative.generalAdvice
-          : parsedNarrative.generalAdvice?.length
+          : draftNarrative.generalAdvice?.length
+            ? draftNarrative.generalAdvice
+            : parsedNarrative.generalAdvice?.length
             ? parsedNarrative.generalAdvice
             : inferredNarrative.generalAdvice,
         4
@@ -936,7 +1018,9 @@ Deno.serve(async (req: Request) => {
       precautions: dedupeLines(
         Array.isArray(bodyNarrative.precautions)
           ? bodyNarrative.precautions
-          : parsedNarrative.precautions?.length
+          : draftNarrative.precautions?.length
+            ? draftNarrative.precautions
+            : parsedNarrative.precautions?.length
             ? parsedNarrative.precautions
             : inferredNarrative.precautions,
         4
@@ -944,7 +1028,9 @@ Deno.serve(async (req: Request) => {
       followUp: dedupeLines(
         Array.isArray(bodyNarrative.followUp)
           ? bodyNarrative.followUp
-          : parsedNarrative.followUp?.length
+          : draftNarrative.followUp?.length
+            ? draftNarrative.followUp
+            : parsedNarrative.followUp?.length
             ? parsedNarrative.followUp
             : inferredNarrative.followUp,
         2

@@ -25,7 +25,7 @@ import { ArrowLeft, MoreVertical, Send, CheckCheck, Bot, Mic, X, Paperclip, Star
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import Svg, { Circle } from 'react-native-svg';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../src/lib/supabase';
@@ -1262,22 +1262,20 @@ export default function AiGuidanceScreen() {
   const voiceLiveSpeechQueueRef = useRef<string[]>([]);
   const voiceLiveSpeechBusyRef = useRef(false);
   const voiceLiveSpokenCharsRef = useRef(0);
-  const voiceSpeakerRouteReadyRef = useRef(false);
-
   const ensureVoiceSpeakerOutput = async () => {
-    if (voiceSpeakerRouteReadyRef.current) return;
     try {
-      // Android may route Expo AV playback to the call earpiece when the
-      // app has recently used microphone/voice APIs. Explicitly request the
-      // media speaker route for AI voice responses.
+      // Speech recognition can take Android's audio focus and leave the app
+      // on the earpiece route. Re-apply this immediately before every AI
+      // response; caching this setting breaks on some Samsung/Android builds.
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
         staysActiveInBackground: false,
+        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
         shouldDuckAndroid: false,
         playThroughEarpieceAndroid: false,
       });
-      voiceSpeakerRouteReadyRef.current = true;
     } catch (error) {
       console.warn('[AI Voice] Could not set speaker audio route:', error);
     }
@@ -4874,6 +4872,9 @@ export default function AiGuidanceScreen() {
     setIsVoicePromptVisible(false);
     setVoiceStage('idle');
     void stopActiveVoicePlayback();
+    // Release the recognition audio focus and leave the next playback in
+    // normal media-speaker mode instead of the handset earpiece.
+    void ensureVoiceSpeakerOutput();
   };
 
   const openVoiceModal = () => {
@@ -4891,6 +4892,9 @@ export default function AiGuidanceScreen() {
     if (isListening) {
       ExpoSpeechRecognitionModule?.stop();
       setVoiceStage('processing', 'Finalizing your voice input...');
+      // stop() is asynchronous on Android. The playback path also reapplies
+      // this, but doing it here prevents the route from racing the response.
+      void ensureVoiceSpeakerOutput();
       return;
     }
 

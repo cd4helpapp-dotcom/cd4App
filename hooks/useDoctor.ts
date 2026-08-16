@@ -203,11 +203,27 @@ export const useDoctorProfile = () => {
 };
 
 export type DoctorEarnings = {
-    paidConsultations: number;
-    totalPaid: number;
-    doctorPayout: number;
-    pendingPayout: number;
-    settledPayout: number;
+  paidConsultations: number;
+  totalPaid: number;
+  doctorPayout: number;
+  platformCommission: number;
+  pendingPayout: number;
+  settledPayout: number;
+};
+
+export type DoctorTransaction = {
+  id: string;
+  appointmentId: string | null;
+  patientId: string;
+  patientName: string;
+  grossAmount: number;
+  doctorShare: number;
+  platformCommission: number;
+  payoutStatus: string;
+  paymentId: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  currency: string;
 };
 
 export const useDoctorEarnings = () => {
@@ -218,7 +234,7 @@ export const useDoctorEarnings = () => {
         queryFn: async (): Promise<DoctorEarnings> => {
             const { data, error } = await supabase
                 .from('appointment_payments')
-                .select('gross_amount, doctor_share, payout_status')
+                .select('gross_amount, doctor_share, platform_commission, payout_status')
                 .eq('doctor_id', session!.user.id)
                 .eq('status', 'paid')
                 .limit(20000);
@@ -230,10 +246,58 @@ export const useDoctorEarnings = () => {
                 summary.paidConsultations += 1;
                 summary.totalPaid += gross;
                 summary.doctorPayout += share;
+                summary.platformCommission += Number(row?.platform_commission || 0);
                 if (row?.payout_status === 'paid') summary.settledPayout += share;
                 else summary.pendingPayout += share;
                 return summary;
-            }, { paidConsultations: 0, totalPaid: 0, doctorPayout: 0, pendingPayout: 0, settledPayout: 0 });
+            }, { paidConsultations: 0, totalPaid: 0, doctorPayout: 0, platformCommission: 0, pendingPayout: 0, settledPayout: 0 });
+        },
+        staleTime: 20 * 1000,
+    });
+};
+
+export const useDoctorTransactions = () => {
+    const { session } = useAuthContext();
+    return useQuery({
+        queryKey: [...DOCTOR_QUERY_KEYS.earnings, 'transactions', session?.user?.id || ''],
+        enabled: Boolean(session?.user?.id),
+        queryFn: async (): Promise<DoctorTransaction[]> => {
+            const { data, error } = await supabase
+                .from('appointment_payments')
+                .select('id, appointment_id, patient_id, gross_amount, doctor_share, platform_commission, payout_status, payment_id, paid_at, created_at, currency')
+                .eq('doctor_id', session!.user.id)
+                .eq('status', 'paid')
+                .order('paid_at', { ascending: false })
+                .limit(500);
+            if (error) throw error;
+
+            const patientIds = Array.from(new Set((data || []).map((row: any) => row.patient_id).filter(Boolean)));
+            const patientNames = new Map<string, string>();
+            if (patientIds.length) {
+                const { data: profiles } = await supabase
+                    .from('profiles')
+                    .select('id, first_name, last_name')
+                    .in('id', patientIds);
+                (profiles || []).forEach((profile: any) => {
+                    const name = `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim();
+                    if (name) patientNames.set(profile.id, name);
+                });
+            }
+
+            return (data || []).map((row: any) => ({
+                id: row.id,
+                appointmentId: row.appointment_id || null,
+                patientId: row.patient_id,
+                patientName: patientNames.get(row.patient_id) || 'Patient',
+                grossAmount: Number(row.gross_amount || 0),
+                doctorShare: Number(row.doctor_share || 0),
+                platformCommission: Number(row.platform_commission || 0),
+                payoutStatus: row.payout_status || 'pending',
+                paymentId: row.payment_id || null,
+                paidAt: row.paid_at || null,
+                createdAt: row.created_at,
+                currency: row.currency || 'INR',
+            }));
         },
         staleTime: 20 * 1000,
     });

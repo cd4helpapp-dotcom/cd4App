@@ -171,7 +171,7 @@ export default function DoctorPatientsScreen() {
     const showSyncingState = (isLoading || isFetching) && insights.patients.length === 0;
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} panHandlers={tabSwipeHandlers}>
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
             <View style={styles.headerContainer}>
                 <Text style={[styles.headerTitle, { color: theme.text }]}>Patients</Text>
                 <Text style={[styles.headerSub, { color: theme.textSecondary }]}>

@@ -313,15 +313,11 @@ export const useLogout = () => {
     return useMutation({
         mutationFn: async () => {
             // Best-effort cleanup: detach this device token from current user on explicit logout.
-            try {
-                await supabase.functions.invoke('register-push-token', {
-                    body: { token: null },
-                });
-            } catch (tokenCleanupError) {
-                console.warn('Push token cleanup before logout failed:', tokenCleanupError);
-            }
+            void supabase.functions.invoke('register-push-token', { body: { token: null } }).catch((tokenCleanupError) => {
+                console.warn('Push token cleanup after logout failed:', tokenCleanupError);
+            });
 
-            const { error } = await supabase.auth.signOut();
+            const { error } = await supabase.auth.signOut({ scope: 'local' });
             if (error) throw error;
         },
         onSuccess: async () => {

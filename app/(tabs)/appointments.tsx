@@ -57,6 +57,7 @@ type DoctorWithScore = {
 
 type DropdownType = 'city' | 'category' | null;
 type SlotAction = 'consult' | 'book';
+type AppointmentType = 'consultation' | 'second_opinion';
 type FilterDropdownOption = { value: string; label: string };
 
 type AvailabilitySlot = {
@@ -252,12 +253,14 @@ export default function AppointmentsScreen() {
     doctorId?: string | string[];
     reportId?: string | string[];
     conversationId?: string | string[];
+    appointmentType?: string | string[];
   }>();
   const { user } = useAuthContext();
   const concern = parseConcernParam(params.concern);
   const preselectedDoctorId = parseConcernParam(params.doctorId);
   const reportId = Array.isArray(params.reportId) ? params.reportId[0] : params.reportId;
   const conversationId = Array.isArray(params.conversationId) ? params.conversationId[0] : params.conversationId;
+  const preferredAppointmentType: AppointmentType = parseConcernParam(params.appointmentType) === 'second_opinion' ? 'second_opinion' : 'consultation';
 
   const { data: doctorsData = [] as Doctor[], isLoading, error: doctorsError, refetch: refetchDoctors } = useDoctors();
 
@@ -273,6 +276,7 @@ export default function AppointmentsScreen() {
   const [isBookingModalVisible, setIsBookingModalVisible] = React.useState(false);
   const [bookingDoctor, setBookingDoctor] = React.useState<Doctor | null>(null);
   const [selectedSlot, setSelectedSlot] = React.useState<Slot | null>(null);
+  const [appointmentType, setAppointmentType] = React.useState<AppointmentType>('consultation');
   const [autoOpenedDoctorId, setAutoOpenedDoctorId] = React.useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = React.useState(0);
 
@@ -707,6 +711,7 @@ export default function AppointmentsScreen() {
 
     setBookingDoctor(doctor);
     setSelectedSlot(null);
+    setAppointmentType(preferredAppointmentType);
     setIsBookingModalVisible(true);
   };
 
@@ -810,6 +815,7 @@ export default function AppointmentsScreen() {
         slotEndTime: String(selectedSlot.endTime || ''),
         reportId: reportId || '',
         conversationId: conversationId || '',
+        appointmentType,
       },
     });
   };
@@ -1012,6 +1018,9 @@ export default function AppointmentsScreen() {
                     <Text numberOfLines={1} style={[styles.nextTime, { color: isBooked ? theme.tint : theme.text }]}>
                       {isBooked ? bookedTimeLabel : t('appointments.viewAvailableSlots')}
                     </Text>
+                    {isBooked && bookedApt?.appointmentType === 'second_opinion' ? (
+                      <Text style={[styles.appointmentTypeHint, { color: theme.tint }]}>Second Opinion</Text>
+                    ) : null}
                   </View>
                   {isBooked ? (
                     <TouchableOpacity
@@ -1222,6 +1231,24 @@ export default function AppointmentsScreen() {
 
             <Text style={[styles.timeTitle, { color: theme.textSecondary }]}>{t('appointments.availableSlots')}</Text>
 
+            <View style={styles.appointmentTypeSection}>
+              <Text style={[styles.appointmentTypeLabel, { color: theme.textSecondary }]}>Type of appointment</Text>
+              <View style={[styles.appointmentTypeToggle, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
+                {([
+                  { value: 'consultation' as const, label: 'Consultation' },
+                  { value: 'second_opinion' as const, label: 'Second Opinion' },
+                ]).map((option) => {
+                  const isSelected = appointmentType === option.value;
+                  return (
+                    <TouchableOpacity key={option.value} style={[styles.appointmentTypeOption, isSelected && { backgroundColor: theme.tint }]} onPress={() => setAppointmentType(option.value)} activeOpacity={0.85}>
+                      <Text style={[styles.appointmentTypeOptionText, { color: isSelected ? '#fff' : theme.textSecondary }]}>{option.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {appointmentType === 'second_opinion' && <Text style={[styles.appointmentTypeHint, { color: theme.textSecondary }]}>Get an expert review of an existing diagnosis or treatment plan.</Text>}
+            </View>
+
             {loadingSlots ? (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={theme.tint} />
@@ -1357,6 +1384,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   dropdownValue: { flex: 1, fontSize: 13, fontWeight: '600', marginRight: 8 },
+  appointmentTypeSection: { marginBottom: 14 },
+  appointmentTypeLabel: { fontSize: 11, fontWeight: '700', marginBottom: 7, textTransform: 'uppercase' },
+  appointmentTypeToggle: { borderWidth: 1, borderRadius: 12, padding: 3, flexDirection: 'row' },
+  appointmentTypeOption: { flex: 1, minHeight: 38, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  appointmentTypeOptionText: { fontSize: 12, fontWeight: '700' },
+  appointmentTypeHint: { fontSize: 11, lineHeight: 16, marginTop: 6 },
   dropdownMenu: {
     position: 'absolute',
     top: 66,

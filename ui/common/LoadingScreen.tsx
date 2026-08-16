@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, View, Text, StyleSheet, useColorScheme } from 'react-native';
+import { ActivityIndicator, Image, View, Text, StyleSheet, useColorScheme } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
 
@@ -15,6 +15,7 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({ message = 'Loading...' })
   return (
     <SafeAreaView edges={['top', 'bottom']} style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.centerWrap}>
+        <Image source={require('../../assets/images/cd4_logo.png')} style={styles.logo} resizeMode="contain" />
         <ActivityIndicator size="large" color={theme.tint} />
         <Text
           style={[
@@ -42,6 +43,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  logo: { width: 76, height: 76, borderRadius: 18, marginBottom: 18 },
   message: {
     textAlign: 'center',
     fontSize: 14,
