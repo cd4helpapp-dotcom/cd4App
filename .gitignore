@@ -12,7 +12,7 @@ android/build/
 android/.gradle/
 android/app/build/
 android/app/.gradle/
-ios/
+/ios/
 
 # Environment
 .env*

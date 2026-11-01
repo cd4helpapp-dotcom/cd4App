@@ -1,7 +1,9 @@
 .git
 node_modules
 .expo
-android
-ios
+# Only the generated top-level native projects (EAS regenerates them from app.json).
+# Unanchored "android"/"ios" also dropped modules/speaker-route/android and /ios from the upload.
+/android
+/ios
 *.lock
 

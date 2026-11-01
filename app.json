@@ -6,15 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "splash": {
-      "image": "./assets/images/cd4_logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "notification": {
-      "icon": "./assets/icon.png",
-      "color": "#ffffff"
-    },
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -78,7 +69,13 @@
       ],
       "expo-web-browser",
       "@react-native-community/datetimepicker",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff"
+        }
+      ],
       "expo-image-picker",
       "expo-document-picker",
       "expo-secure-store",
@@ -97,7 +94,19 @@
         }
       ],
       "expo-font",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/cd4_logo.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "image": "./assets/images/cd4_logo.png",
+            "backgroundColor": "#0B1220"
+          }
+        }
+      ],
       "expo-status-bar",
       [
         "expo-audio",
@@ -105,7 +114,8 @@
           "microphonePermission": "CD4 uses your microphone for the AI voice assistant and calls with your doctor."
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-asset"
     ],
     "scheme": [
       "cd4",
