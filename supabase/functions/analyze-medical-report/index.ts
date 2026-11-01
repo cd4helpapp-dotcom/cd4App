@@ -2795,6 +2795,10 @@ Deno.serve(async (req) => {
     const responseLanguage =
       typeof body?.responseLanguage === "string" ? body.responseLanguage.trim().toLowerCase() : "auto"
     const forceEnglishResponse = responseLanguage === "en" || responseLanguage === "english"
+    const forceHindiResponse = responseLanguage === "hi" || responseLanguage === "hindi"
+    // A retry sends force:true. Without it the dedupe below treated the retry as "already in progress" (the app marks the
+    // row as processing just before calling) and nothing was ever re-analysed.
+    const forceReanalyze = body?.force === true
     if (!reportId) {
       throw new Error("reportId is required.")
     }
@@ -2820,7 +2824,7 @@ Deno.serve(async (req) => {
     })
 
     const reportStatus = String(reportRow?.analysis_status || "").toLowerCase()
-    if (reportStatus === "processing") {
+    if (reportStatus === "processing" && !forceReanalyze) {
       const updatedAtMs = Date.parse(String(reportRow?.updated_at || ""))
       const processingAgeMs = Number.isFinite(updatedAtMs) ? Date.now() - updatedAtMs : Number.POSITIVE_INFINITY
       const PROCESSING_DEDUP_WINDOW_MS = 12 * 60 * 1000
@@ -2891,7 +2895,9 @@ Deno.serve(async (req) => {
       "Analyze the uploaded patient report and return strict JSON only.",
       forceEnglishResponse
         ? "All output text must be in professional English only. Do not use Hindi or mixed-script output."
-        : "Match the user's preferred language when available.",
+        : forceHindiResponse
+          ? "Write every patient-facing text field (summary, patient_friendly_explanation, key point meanings, advice, follow-ups) in simple, natural Hindi (Devanagari). Keep test names, medicine names, numeric values and units exactly as printed on the report, in English."
+          : "Match the user's preferred language when available.",
       "Rules:",
       "1) Explain the report in simple, patient-friendly language. Lead with the main conclusion.",
       "2) Stay factual to report content only. Do not invent details.",

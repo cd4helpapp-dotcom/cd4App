@@ -104,7 +104,7 @@ export default function CommunityPostDeepLinkScreen() {
         </View>
       ) : postQuery.isLoading ? (
         <View style={styles.centeredState}>
-          <ActivityIndicator color={theme.success} />
+          <ActivityIndicator color={theme.primary} />
           <Text style={[styles.stateText, { color: theme.textSecondary }]}>Loading post...</Text>
         </View>
       ) : postQuery.error || !post ? (

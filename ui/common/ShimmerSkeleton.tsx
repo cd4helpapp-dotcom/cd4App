@@ -1,5 +1,8 @@
 import React from 'react';
-import { Animated, Easing, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+import { Animated, Easing, Platform, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
+
+// Web has no native animated module; asking for it there only logs a warning per block.
+const useNativeDriver = Platform.OS !== 'web';
 
 type ShimmerBlockProps = {
     width?: number | `${number}%`;
@@ -50,7 +53,7 @@ export default function ShimmerBlock({
                 toValue: 1,
                 duration: 1200,
                 easing: Easing.linear,
-                useNativeDriver: true,
+                useNativeDriver,
             })
         );
         loop.start();

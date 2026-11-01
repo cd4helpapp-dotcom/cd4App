@@ -1,6 +1,6 @@
 import React from 'react';
-import { InteractionManager } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { runAfterInteractions } from '../src/utils/afterInteractions';
+import { useFocusEffect } from 'expo-router';
 
 type DeferredFocusSyncOptions = {
   sync: () => Promise<unknown> | unknown;
@@ -38,7 +38,7 @@ export const useDeferredFocusSync = ({
       const isFirstSync = !hasSyncedOnceRef.current;
       const showInitialLoading = isFirstSync && Boolean(shouldShowInitialLoadingRef.current?.());
 
-      interactionTask = InteractionManager.runAfterInteractions(() => {
+      interactionTask = runAfterInteractions(() => {
         delayTimer = setTimeout(() => {
           if (!isActive) return;
 

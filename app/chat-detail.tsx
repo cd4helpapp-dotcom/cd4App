@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Toast from 'react-native-toast-message';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView, LayoutAnimation, UIManager } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { useColorScheme } from 'react-native';
 import Colors from '../constants/Colors';
@@ -8,7 +9,7 @@ import { getImageUrl } from '../constants/Config';
 import { ArrowLeft, Video, Phone, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, ChevronUp, ChevronDown, Maximize2, MessageCircle } from 'lucide-react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { PanResponder, Animated } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from 'expo-router';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
@@ -865,7 +866,7 @@ export default function ChatDetailScreen() {
     const insets = useSafeAreaInsets();
     const { user } = useAuthContext();
     const flatListRef = useRef<FlatList>(null);
-    const chatInputRef = useRef<TextInput>(null);
+    const chatInputRef = useRef<TextInputInstance | null>(null);
     const [isResolvingRoom, setIsResolvingRoom] = useState(!roomId && !!otherId);
     const [isCallMinimized, setIsCallMinimized] = useState(false);
     const [isTyping, setIsTyping] = useState(false);
@@ -923,8 +924,8 @@ export default function ChatDetailScreen() {
         }
         const pulse = Animated.loop(
             Animated.sequence([
-                Animated.timing(rxListeningPulse, { toValue: 1.08, duration: 700, useNativeDriver: true }),
-                Animated.timing(rxListeningPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+                Animated.timing(rxListeningPulse, { toValue: 1.08, duration: 700, useNativeDriver: Platform.OS !== 'web' }),
+                Animated.timing(rxListeningPulse, { toValue: 1, duration: 700, useNativeDriver: Platform.OS !== 'web' }),
             ])
         );
         pulse.start();
@@ -2137,11 +2138,11 @@ export default function ChatDetailScreen() {
                     </View>
                     <View style={styles.rxFullScreenBody}>
                     <View style={[styles.rxModalCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                        <View style={[styles.rxInfoBanner, { backgroundColor: theme.successLight, borderColor: theme.success }]}>
+                        <View style={[styles.rxInfoBanner, { backgroundColor: theme.primarySoft, borderColor: theme.primary }]}>
                             <Animated.View
-                                style={[styles.rxInfoBadge, { backgroundColor: theme.successLight, transform: [{ scale: rxListeningPulse }] }]}
+                                style={[styles.rxInfoBadge, { backgroundColor: theme.primarySoft, transform: [{ scale: rxListeningPulse }] }]}
                             >
-                                <Mic size={14} color={theme.success} />
+                                <Mic size={14} color={theme.primary} />
                             </Animated.View>
                             <View style={{ flex: 1 }}>
                                 <Text style={[styles.rxInfoTitle, { color: theme.text }]}>Speak the prescription naturally</Text>
@@ -2152,11 +2153,11 @@ export default function ChatDetailScreen() {
                             <View
                                 style={[
                                     styles.rxStatusPill,
-                                    { backgroundColor: isRxListening ? theme.successLight : theme.background, borderColor: theme.borderColor },
+                                    { backgroundColor: isRxListening ? theme.primarySoft : theme.background, borderColor: theme.borderColor },
                                 ]}
                             >
-                                <View style={[styles.rxStatusDot, { backgroundColor: isRxListening ? theme.success : theme.textSecondary }]} />
-                                <Text style={[styles.rxStatusText, { color: isRxListening ? theme.success : theme.textSecondary }]}>
+                                <View style={[styles.rxStatusDot, { backgroundColor: isRxListening ? theme.primary : theme.textSecondary }]} />
+                                <Text style={[styles.rxStatusText, { color: isRxListening ? theme.primary : theme.textSecondary }]}>
                                     {isRxAiParsing ? 'Analyzing prescription…' : isRxListening ? 'Listening' : 'Ready'}
                                 </Text>
                             </View>
@@ -2168,7 +2169,7 @@ export default function ChatDetailScreen() {
                             showsVerticalScrollIndicator={false}
                         >
                             <View style={styles.rxEditorHeader}>
-                                <Text style={[styles.rxEditorLabel, { color: theme.success }]}>Live transcription</Text>
+                                <Text style={[styles.rxEditorLabel, { color: theme.primary }]}>Live transcription</Text>
                                 <Text style={[styles.rxEditorHint, { color: theme.textSecondary }]}>Tap to edit</Text>
                             </View>
                             <View style={[styles.rxTranscriptBox, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
@@ -2188,7 +2189,7 @@ export default function ChatDetailScreen() {
                                 />
                                 <View style={[styles.rxWaveform, { opacity: isRxListening ? 1 : 0.35 }]} pointerEvents="none">
                                     {[8, 18, 30, 14, 24].map((height, index) => (
-                                        <View key={index} style={[styles.rxWaveformBar, { height, backgroundColor: theme.success }]} />
+                                        <View key={index} style={[styles.rxWaveformBar, { height, backgroundColor: theme.primary }]} />
                                     ))}
                                 </View>
                             </View>
@@ -2205,8 +2206,8 @@ export default function ChatDetailScreen() {
                             <View style={styles.rxClinicalHeader}>
                                 <Text style={[styles.rxClinicalTitle, { color: theme.text }]}>Clinical details</Text>
                                 <TouchableOpacity onPress={() => toggleRxSection('complaints')} style={styles.rxAddSectionButton}>
-                                    <Text style={[styles.rxAddSectionPlus, { color: theme.success }]}>＋</Text>
-                                    <Text style={[styles.rxAddSectionText, { color: theme.success }]}>Add section</Text>
+                                    <Text style={[styles.rxAddSectionPlus, { color: theme.primary }]}>＋</Text>
+                                    <Text style={[styles.rxAddSectionText, { color: theme.primary }]}>Add section</Text>
                                 </TouchableOpacity>
                             </View>
 
@@ -2222,15 +2223,15 @@ export default function ChatDetailScreen() {
                                 ] as const).map(([key, label, placeholder]) => {
                                     const expanded = rxExpandedSection === key;
                                     return (
-                                        <View key={key} style={[styles.rxAccordionCard, { backgroundColor: theme.cardBackground, borderColor: expanded ? theme.success : theme.borderColor }]}>
+                                        <View key={key} style={[styles.rxAccordionCard, { backgroundColor: theme.cardBackground, borderColor: expanded ? theme.primary : theme.borderColor }]}>
                                             <TouchableOpacity
                                                 onPress={() => toggleRxSection(key)}
                                                 style={styles.rxAccordionHeader}
                                                 activeOpacity={0.86}
                                             >
-                                                <Text style={[styles.rxAccordionTitle, { color: expanded ? theme.success : theme.text }]}>{label}</Text>
-                                                <View style={[styles.rxAccordionIcon, { borderColor: expanded ? theme.success : theme.textSecondary }]}>
-                                                    {expanded ? <ChevronUp size={13} color={theme.success} strokeWidth={2.5} /> : <ChevronDown size={13} color={theme.textSecondary} strokeWidth={2.5} />}
+                                                <Text style={[styles.rxAccordionTitle, { color: expanded ? theme.primary : theme.text }]}>{label}</Text>
+                                                <View style={[styles.rxAccordionIcon, { borderColor: expanded ? theme.primary : theme.textSecondary }]}>
+                                                    {expanded ? <ChevronUp size={13} color={theme.primary} strokeWidth={2.5} /> : <ChevronDown size={13} color={theme.textSecondary} strokeWidth={2.5} />}
                                                 </View>
                                             </TouchableOpacity>
                                             {expanded ? (
@@ -2242,9 +2243,9 @@ export default function ChatDetailScreen() {
                                                         placeholderTextColor={theme.textSecondary}
                                                         multiline
                                                         textAlignVertical="top"
-                                                        style={[styles.rxSectionTextarea, { color: theme.text, borderColor: theme.success, backgroundColor: theme.cardBackground }]}
+                                                        style={[styles.rxSectionTextarea, { color: theme.text, borderColor: theme.primary, backgroundColor: theme.cardBackground }]}
                                                     />
-                                                    <TouchableOpacity onPress={handleApplySectionNotes} style={[styles.rxSectionApplyButton, { backgroundColor: theme.success }]}>
+                                                    <TouchableOpacity onPress={handleApplySectionNotes} style={[styles.rxSectionApplyButton, { backgroundColor: theme.primary }]}>
                                                         <Text style={styles.rxMedAddButtonText}>Apply to draft</Text>
                                                     </TouchableOpacity>
                                                 </View>
@@ -2261,8 +2262,8 @@ export default function ChatDetailScreen() {
                                 activeOpacity={0.86}
                             >
                                 <View style={styles.rxMedicationRowContent}>
-                                    <View style={[styles.rxMedicationIcon, { backgroundColor: theme.successLight }]}>
-                                        <FileText size={17} color={theme.success} />
+                                    <View style={[styles.rxMedicationIcon, { backgroundColor: theme.primarySoft }]}>
+                                        <FileText size={17} color={theme.primary} />
                                     </View>
                                 <View>
                                     <Text style={[styles.rxMedFormTitle, { color: theme.text }]}>Medications</Text>
@@ -2308,12 +2309,12 @@ export default function ChatDetailScreen() {
                                             style={[
                                                 styles.rxFreqChip,
                                                 {
-                                                    backgroundColor: isActive ? theme.successLight : theme.cardBackground,
-                                                    borderColor: isActive ? theme.success : theme.borderColor,
+                                                    backgroundColor: isActive ? theme.primarySoft : theme.cardBackground,
+                                                    borderColor: isActive ? theme.primary : theme.borderColor,
                                                 },
                                             ]}
                                         >
-                                            <Text style={{ color: isActive ? theme.success : theme.textSecondary, fontSize: 11, fontWeight: '700' }}>
+                                            <Text style={{ color: isActive ? theme.primary : theme.textSecondary, fontSize: 11, fontWeight: '700' }}>
                                                 {option}
                                             </Text>
                                         </TouchableOpacity>
@@ -2687,7 +2688,7 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     rxFullScreenWrap: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         zIndex: 3000,
         elevation: 30,
     },

@@ -792,7 +792,7 @@ export default function HospitalDashboard() {
                                             key={patient.id}
                                             style={[
                                                 styles.chip,
-                                                { borderColor: theme.borderColor, backgroundColor: selected ? theme.successLight : theme.background },
+                                                { borderColor: theme.borderColor, backgroundColor: selected ? theme.primarySoft : theme.background },
                                             ]}
                                             onPress={() => setSelectedPatientId(patient.patientId)}
                                         >
@@ -862,7 +862,7 @@ export default function HospitalDashboard() {
                                             key={doctor.id}
                                             style={[
                                                 styles.chip,
-                                                { borderColor: theme.borderColor, backgroundColor: selected ? theme.successLight : theme.background },
+                                                { borderColor: theme.borderColor, backgroundColor: selected ? theme.primarySoft : theme.background },
                                             ]}
                                             onPress={() => setSelectedDoctorId(doctor.doctorId)}
                                         >
@@ -946,7 +946,7 @@ export default function HospitalDashboard() {
                                                             style={[
                                                                 styles.chatBubble,
                                                                 isAi
-                                                                    ? [styles.chatBubbleAi, { backgroundColor: theme.successLight, alignSelf: 'flex-start' }]
+                                                                    ? [styles.chatBubbleAi, { backgroundColor: theme.primarySoft, alignSelf: 'flex-start' }]
                                                                     : [styles.chatBubbleUser, { backgroundColor: theme.tint, alignSelf: 'flex-end' }],
                                                             ]}
                                                         >
@@ -963,14 +963,14 @@ export default function HospitalDashboard() {
                                                     );
                                                 })}
                                                 {isChatLoading && (
-                                                    <View style={[styles.chatBubble, styles.chatBubbleAi, { backgroundColor: theme.successLight, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center' }]}>
+                                                    <View style={[styles.chatBubble, styles.chatBubbleAi, { backgroundColor: theme.primarySoft, alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center' }]}>
                                                         <ActivityIndicator size="small" color={theme.tint} style={{ marginRight: 6 }} />
                                                         <Text style={[styles.chatBubbleText, { color: theme.textSecondary }]}>AI is thinking...</Text>
                                                     </View>
                                                 )}
                                             </ScrollView>
 
-                                            <View style={[styles.voiceStatusBox, { backgroundColor: theme.successLight }]}>
+                                            <View style={[styles.voiceStatusBox, { backgroundColor: theme.primarySoft }]}>
                                                 <Mic size={15} color={theme.tint} />
                                                 <Text style={[styles.voiceStatusBoxText, { color: theme.text }]}>{voiceStatus}</Text>
                                             </View>
@@ -1061,7 +1061,7 @@ export default function HospitalDashboard() {
                                 </>
                             ) : (
                                 <>
-                                    <View style={[styles.voiceStatusBox, { backgroundColor: theme.successLight }]}>
+                                    <View style={[styles.voiceStatusBox, { backgroundColor: theme.primarySoft }]}>
                                         <Mic size={15} color={theme.tint} />
                                         <Text style={[styles.voiceStatusBoxText, { color: theme.text }]}>{voiceStatus}</Text>
                                     </View>
@@ -1111,7 +1111,7 @@ export default function HospitalDashboard() {
 function StatCard({ title, value, icon: Icon, theme }: { title: string; value: string | number; icon: any; theme: any }) {
     return (
         <View style={[styles.statCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-            <View style={[styles.statIconWrap, { backgroundColor: theme.successLight }]}>
+            <View style={[styles.statIconWrap, { backgroundColor: theme.primarySoft }]}>
                 <Icon size={16} color={theme.tint} />
             </View>
             <Text style={[styles.statValue, { color: theme.text }]} numberOfLines={1}>
@@ -1125,7 +1125,7 @@ function StatCard({ title, value, icon: Icon, theme }: { title: string; value: s
 function QuickAction({ title, subtitle, icon: Icon, theme, onPress }: { title: string; subtitle: string; icon: any; theme: any; onPress: () => void }) {
     return (
         <TouchableOpacity style={[styles.quickCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onPress}>
-            <View style={[styles.quickIconWrap, { backgroundColor: theme.successLight }]}>
+            <View style={[styles.quickIconWrap, { backgroundColor: theme.primarySoft }]}>
                 <Icon size={18} color={theme.tint} />
             </View>
             <Text style={[styles.quickTitle, { color: theme.text }]}>{title}</Text>
@@ -1154,7 +1154,7 @@ function Row({ title, subtitle, icon: Icon, theme }: { title: string; subtitle: 
     return (
         <View style={[styles.row, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
             {Icon && (
-                <View style={[styles.rowIconWrap, { backgroundColor: theme.successLight }]}>
+                <View style={[styles.rowIconWrap, { backgroundColor: theme.primarySoft }]}>
                     <Icon size={16} color={theme.tint} />
                 </View>
             )}

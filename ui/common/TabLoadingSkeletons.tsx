@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Theme } from '../../constants/Colors';
+import Colors, { Theme } from '../../constants/Colors';
 import ShimmerBlock from './ShimmerSkeleton';
 
 type SkeletonProps = {
@@ -8,10 +8,10 @@ type SkeletonProps = {
 };
 
 const getPalette = (theme: Theme) => ({
-    base: theme.background.toLowerCase() === '#121212'
+    base: theme.background === Colors.dark.background
         ? 'rgba(255,255,255,0.10)'
         : 'rgba(15,23,42,0.08)',
-    glow: theme.background.toLowerCase() === '#121212'
+    glow: theme.background === Colors.dark.background
         ? 'rgba(255,255,255,0.20)'
         : 'rgba(255,255,255,0.72)',
 });
@@ -106,19 +106,24 @@ export function AppointmentsTabSkeleton({ theme }: SkeletonProps) {
     );
 }
 
-export function RecordsTabSkeleton({ theme }: SkeletonProps) {
+// cardsOnly: the Reports screen draws its real header and filter tabs at once, so only the cards shimmer.
+export function RecordsTabSkeleton({ theme, cardsOnly = false }: SkeletonProps & { cardsOnly?: boolean }) {
     const palette = getPalette(theme);
     return (
-        <View style={styles.screenPad}>
-            <ShimmerBlock width="100%" height={48} borderRadius={12} baseColor={palette.base} highlightColor={palette.glow} />
-            <View style={styles.gap16} />
-            <View style={styles.tabsRow}>
-                <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
-                <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
-                <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
-                <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
-            </View>
-            <View style={styles.gap16} />
+        <View style={cardsOnly ? undefined : styles.screenPad}>
+            {cardsOnly ? null : (
+                <>
+                    <ShimmerBlock width="100%" height={48} borderRadius={12} baseColor={palette.base} highlightColor={palette.glow} />
+                    <View style={styles.gap16} />
+                    <View style={styles.tabsRow}>
+                        <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
+                        <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
+                        <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
+                        <ShimmerBlock width="24%" height={28} borderRadius={14} baseColor={palette.base} highlightColor={palette.glow} />
+                    </View>
+                    <View style={styles.gap16} />
+                </>
+            )}
             {Array.from({ length: 3 }).map((_, index) => (
                 <View
                     key={`records-skel-${index}`}

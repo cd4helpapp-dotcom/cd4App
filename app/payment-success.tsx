@@ -32,7 +32,7 @@ export default function PaymentSuccessScreen() {
         if (active) {
           setIsValid(false);
           setIsValidating(false);
-          router.replace('/(tabs)/appointments');
+          router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } });
         }
         return;
       }
@@ -50,7 +50,7 @@ export default function PaymentSuccessScreen() {
       if (error || !data?.id) {
         setIsValid(false);
         setIsValidating(false);
-        router.replace('/(tabs)/appointments');
+        router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } });
         return;
       }
       setIsValid(true);

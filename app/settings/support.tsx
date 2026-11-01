@@ -11,6 +11,7 @@ import {
   View,
   useColorScheme,
 } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,7 +27,7 @@ export default function SupportPage() {
   const insets = useSafeAreaInsets();
   const { data, isLoading } = useManagedAppContent('support');
   const { user } = useAuthContext();
-  const scrollRef = React.useRef<ScrollView>(null);
+  const scrollRef = React.useRef<ScrollViewInstance | null>(null);
 
   const [name, setName] = React.useState(`${user?.firstName || ''} ${user?.lastName || ''}`.trim());
   const [email, setEmail] = React.useState(user?.email || '');

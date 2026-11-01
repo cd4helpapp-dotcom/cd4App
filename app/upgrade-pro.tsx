@@ -324,16 +324,16 @@ export default function UpgradeProScreen() {
           })}
         </View>
 
-        <View style={[styles.planCard, { borderColor: theme.successBorder, backgroundColor: theme.cardBackground }]}>
+        <View style={[styles.planCard, { borderColor: theme.primaryBorder, backgroundColor: theme.cardBackground }]}>
           <View style={styles.planTopRow}>
             <Text style={[styles.planName, { color: theme.text }]}>{activePlan.title}</Text>
             {isAlreadyPro ? (
-              <View style={[styles.bestBadge, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
+              <View style={[styles.bestBadge, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
                 <Star size={12} color={theme.tint} />
                 <Text style={[styles.bestBadgeText, { color: theme.tint }]}>Active Plan</Text>
               </View>
             ) : billingCycle === 'yearly' ? (
-              <View style={[styles.bestBadge, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
+              <View style={[styles.bestBadge, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
                 <Star size={12} color={theme.tint} />
                 <Text style={[styles.bestBadgeText, { color: theme.tint }]}>Best Value</Text>
               </View>
@@ -346,7 +346,7 @@ export default function UpgradeProScreen() {
           {activePlan.originalPrice ? (
             <View style={styles.priceCompareRow}>
               <Text style={[styles.originalPriceText, { color: theme.textSecondary }]}>{activePlan.originalPrice}</Text>
-              <Text style={[styles.discountTagText, { color: theme.success }]}>Discount Active</Text>
+              <Text style={[styles.discountTagText, { color: theme.primary }]}>Discount Active</Text>
             </View>
           ) : null}
           <Text style={[styles.planSubtitle, { color: theme.textSecondary }]}>{activePlan.subtitle}</Text>
@@ -354,7 +354,7 @@ export default function UpgradeProScreen() {
             <Text style={[styles.billingMetaText, { color: theme.textSecondary }]}>{activePlan.billingMeta}</Text>
           ) : null}
           {activePlan.savings ? (
-            <Text style={[styles.savingsText, { color: theme.success }]}>{activePlan.savings}</Text>
+            <Text style={[styles.savingsText, { color: theme.primary }]}>{activePlan.savings}</Text>
           ) : null}
         </View>
 
@@ -364,7 +364,7 @@ export default function UpgradeProScreen() {
             <Text style={[styles.subscriptionStatusText, { color: theme.textSecondary }]}>Checking Pro status...</Text>
           </View>
         ) : isAlreadyPro ? (
-          <View style={[styles.subscriptionStatusCard, { borderColor: theme.successBorder, backgroundColor: theme.successLight }]}>
+          <View style={[styles.subscriptionStatusCard, { borderColor: theme.primaryBorder, backgroundColor: theme.primarySoft }]}>
             <Text style={[styles.subscriptionStatusTitle, { color: theme.tint }]}>You are a Pro member</Text>
             <Text style={[styles.subscriptionStatusText, { color: theme.textSecondary }]}>
               {`Plan: ${currentSubscription?.billingCycle || 'yearly'} • Expires: ${

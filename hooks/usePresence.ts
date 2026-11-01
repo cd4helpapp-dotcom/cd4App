@@ -14,7 +14,7 @@ export const usePresence = () => {
     const { user } = useAuthContext();
     const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
     const channelRef = useRef<any>(null);
-    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const appStateRef = useRef<AppStateStatus>((AppState.currentState ?? 'active') as AppStateStatus);
 
     const updateLastSeen = async () => {
         if (!user) return;

@@ -57,7 +57,7 @@ export default function DoctorTransactionsScreen() {
                 keyExtractor={(item) => item.id}
                 renderItem={renderItem}
                 contentContainerStyle={styles.content}
-                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={theme.tint} />}
+                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={theme.tint} />}
                 ListHeaderComponent={
                     <View>
                         <View style={styles.header}>

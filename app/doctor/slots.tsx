@@ -4,8 +4,9 @@ import {
     Modal, ActivityIndicator, Alert, Platform, ScrollView, TextInput, SectionList
 } from 'react-native';
 import Colors from '../../constants/Colors';
-import { Calendar, Clock, Plus, X, ChevronDown, ListFilter, Archive } from 'lucide-react-native';
-import { useDoctorSlots, useAddSlot } from '../../hooks/useAppointment';
+import { Calendar, Clock, Plus, X, ChevronDown, ListFilter, Archive, Trash2 } from 'lucide-react-native';
+import { useDoctorSlots, useAddSlot, useDeleteSlot } from '../../hooks/useAppointment';
+import { confirmAction } from '../../src/utils/confirm';
 import { Slot } from '../../src/types';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
@@ -34,6 +35,34 @@ function getEndTime(startTime: string): string {
     return '12:00 AM';
 }
 
+// Slot times arrive from the database as "07:00:00" but the picker stores "07:00 AM"; accept both.
+function toMinutes(value: string): number {
+    const text = String(value || '').trim();
+    const pm = /pm/i.test(text);
+    const am = /am/i.test(text);
+    const [h = '0', m = '0'] = text.replace(/(am|pm)/i, '').trim().split(':');
+    let hours = parseInt(h, 10) || 0;
+    if (pm && hours !== 12) hours += 12;
+    if (am && hours === 12) hours = 0;
+    return hours * 60 + (parseInt(m, 10) || 0);
+}
+
+function formatClock(value: string): string {
+    const total = toMinutes(value);
+    const h24 = Math.floor(total / 60) % 24;
+    const minutes = total % 60;
+    const suffix = h24 >= 12 ? 'PM' : 'AM';
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    return `${h12}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+function slotMoment(date: string, time: string): number {
+    const [y, m, d] = String(date || '').slice(0, 10).split('-').map(Number);
+    if (!y) return 0;
+    const total = toMinutes(time);
+    return new Date(y, m - 1, d, Math.floor(total / 60), total % 60).getTime();
+}
+
 export default function DoctorSlots() {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
@@ -51,6 +80,7 @@ export default function DoctorSlots() {
 
     const { data: slots = [], isLoading } = useDoctorSlots();
     const addSlotMutation = useAddSlot();
+    const deleteSlotMutation = useDeleteSlot();
 
     const handleSuccess = () => {
         setIsAddModalVisible(false);
@@ -100,6 +130,16 @@ export default function DoctorSlots() {
             ? (webDateValue || getTodayISO())
             : formatDateForAPI(selectedDate);
 
+        // Reject a time that has already passed today and a slot that already exists (the database allowed both).
+        if (slotMoment(dateStr, selectedStartTime) < Date.now()) {
+            Alert.alert('Time already passed', 'Please choose a time later than now.');
+            return;
+        }
+        if (slots.some((existing) => String(existing.date).slice(0, 10) === dateStr && toMinutes(existing.startTime) === toMinutes(selectedStartTime))) {
+            Alert.alert('Slot already exists', 'You already have a slot at this time on this date.');
+            return;
+        }
+
         addSlotMutation.mutate({
             date: dateStr,
             startTime: selectedStartTime,
@@ -110,53 +150,19 @@ export default function DoctorSlots() {
         });
     };
 
-    // Filtering & Grouping
+    // Filtering & Grouping. Upcoming = the slot has not ended yet; Previous = it has (so a slot at 7 AM today is
+    // "previous" this afternoon instead of still looking available).
     const groupedSlots = React.useMemo(() => {
         if (!slots || slots.length === 0) return [];
-        
-        const todayRaw = new Date();
-        const todayStr = formatDateForAPI(todayRaw);
 
-        // Sort chronologically
-        const sortedSlots = [...slots].sort((a, b) => {
-            const dateA = new Date(a.date).getTime();
-            const dateB = new Date(b.date).getTime();
-            if (dateA !== dateB) return dateA - dateB;
+        const todayStr = formatDateForAPI(new Date());
+        const nowMs = Date.now();
+        const endMs = (slot: Slot) => slotMoment(slot.date, slot.endTime || slot.startTime);
+        const startMs = (slot: Slot) => slotMoment(slot.date, slot.startTime);
 
-            // Rudimentary string comparison for time slot
-            const parseTime = (t: string) => {
-                const isPM = t.toLowerCase().includes('pm');
-                const parts = t.replace(/(am|pm)/i, '').trim().split(':');
-                let h = parseInt(parts[0], 10);
-                if (isPM && h !== 12) h += 12;
-                if (!isPM && h === 12) h = 0;
-                return h * 60 + parseInt(parts[1], 10);
-            };
-
-            return parseTime(a.startTime) - parseTime(b.startTime);
-        });
-
-        // Filter based on todayStr
-        const filtered = sortedSlots.filter(s => {
-            const slotDateRaw = new Date(s.date);
-            const slotDateStr = formatDateForAPI(slotDateRaw);
-            
-            if (filterMode === 'upcoming') {
-                return slotDateStr >= todayStr;
-            } else {
-                return slotDateStr < todayStr;
-            }
-        });
-
-        // If 'past', we usually want newest past dates first
-        if (filterMode === 'past') {
-            filtered.sort((a, b) => {
-                const dateA = new Date(a.date).getTime();
-                const dateB = new Date(b.date).getTime();
-                if (dateA !== dateB) return dateB - dateA; // reverse date
-                return 0; 
-            });
-        }
+        const filtered = [...slots]
+            .filter((slot) => (filterMode === 'upcoming' ? endMs(slot) >= nowMs : endMs(slot) < nowMs))
+            .sort((a, b) => (filterMode === 'upcoming' ? startMs(a) - startMs(b) : startMs(b) - startMs(a)));
 
         // Group by human-readable date string
         const groups: { [key: string]: Slot[] } = {};
@@ -190,40 +196,65 @@ export default function DoctorSlots() {
     }, [slots, filterMode]);
 
 
+    const handleDeleteSlot = async (item: Slot) => {
+        const confirmed = await confirmAction({
+            title: 'Delete this slot?',
+            message: `${formatClock(item.startTime)} – ${formatClock(item.endTime)}. Patients will no longer be able to book it.`,
+            confirmText: 'Delete',
+            destructive: true,
+        });
+        if (!confirmed) return;
+        deleteSlotMutation.mutate(item._id || item.id, {
+            onError: (error: any) => Alert.alert('Could not delete', error?.message || 'Please try again.'),
+        });
+    };
+
     const renderSlotCard = ({ item }: { item: Slot }) => {
-        const isPast = filterMode === 'past';
-        const colorBooked = '#FF4D4D';
-        const colorAvailable = theme.success;
-        const activeColor = item.isBooked ? colorBooked : colorAvailable;
+        const hasEnded = slotMoment(item.date, item.endTime || item.startTime) < Date.now();
+        const state: 'booked' | 'passed' | 'available' = item.isBooked ? 'booked' : hasEnded ? 'passed' : 'available';
+        const palette = {
+            booked: { fg: theme.warning, bg: theme.warningSoft, label: 'Booked' },
+            passed: { fg: theme.textSecondary, bg: theme.surfaceMuted, label: 'Passed' },
+            available: { fg: theme.success, bg: theme.successLight, label: 'Available' },
+        }[state];
 
         return (
             <View style={[
-                styles.slotCard, 
+                styles.slotCard,
                 { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
-                isPast && { opacity: 0.65 }
+                state === 'passed' && { opacity: 0.7 },
             ]}>
-                <View style={[styles.slotBorderLeft, { backgroundColor: activeColor }]} />
-                
+                <View style={[styles.slotBorderLeft, { backgroundColor: palette.fg }]} />
+
                 <View style={styles.slotContent}>
                     <View style={styles.slotTopRow}>
                         <View style={styles.timeGroup}>
                             <Clock size={16} color={theme.text} style={{ marginRight: 6 }} />
                             <Text style={[styles.timeText, { color: theme.text }]}>
-                                {item.startTime} - {item.endTime}
+                                {formatClock(item.startTime)} – {formatClock(item.endTime)}
                             </Text>
                         </View>
 
-                        <View style={[styles.statusBadge, { 
-                            backgroundColor: item.isBooked ? `${colorBooked}15` : theme.successLight 
-                        }]}>
-                            <View style={[styles.statusDot, { backgroundColor: activeColor }]} />
-                            <Text style={[styles.statusText, { color: activeColor }]}>
-                                {item.isBooked ? 'Booked' : 'Available'}
-                            </Text>
+                        <View style={styles.rightGroup}>
+                            <View style={[styles.statusBadge, { backgroundColor: palette.bg }]}>
+                                <View style={[styles.statusDot, { backgroundColor: palette.fg }]} />
+                                <Text style={[styles.statusText, { color: palette.fg }]}>{palette.label}</Text>
+                            </View>
+                            {state === 'available' ? (
+                                <TouchableOpacity
+                                    onPress={() => handleDeleteSlot(item)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Delete slot"
+                                    hitSlop={8}
+                                    style={[styles.deleteButton, { backgroundColor: theme.dangerSoft }]}
+                                >
+                                    <Trash2 size={15} color={theme.danger} />
+                                </TouchableOpacity>
+                            ) : null}
                         </View>
                     </View>
 
-                    {item.isBooked && (
+                    {state === 'booked' && (
                         <View style={styles.patientInfoRow}>
                             <View style={[styles.patientPill, { backgroundColor: theme.background }]}>
                                 <Text style={[styles.consultLabel, { color: theme.textSecondary }]}>Teleconsultation</Text>
@@ -243,6 +274,7 @@ export default function DoctorSlots() {
 
     return (
         <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
+            <View style={styles.page}>
             <View style={styles.header}>
                 <View>
                     <Text style={[styles.headerTitle, { color: theme.text }]}>Manage Slots</Text>
@@ -328,6 +360,8 @@ export default function DoctorSlots() {
                     }
                 />
             )}
+
+            </View>
 
             {/* Add Slot Modal */}
             <Modal
@@ -474,6 +508,10 @@ export default function DoctorSlots() {
 }
 
 const styles = StyleSheet.create({
+    // Keeps the list readable on tablets / desktop web instead of stretching edge to edge.
+    page: { flex: 1, width: '100%', maxWidth: 720, alignSelf: 'center' },
+    rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    deleteButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',

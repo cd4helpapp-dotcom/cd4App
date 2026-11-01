@@ -86,6 +86,11 @@ export default function ConfirmConsultationScreen() {
     ? parsedSlotDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
     : 'Selected date';
 
+  const leaveBooking = React.useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)/appointments');
+  }, [router]);
+
   const [quote, setQuote] = React.useState<QuoteSnapshot | null>(null);
   const [isPreparing, setIsPreparing] = React.useState(true);
   const [isPaying, setIsPaying] = React.useState(false);
@@ -94,7 +99,7 @@ export default function ConfirmConsultationScreen() {
   const loadQuote = React.useCallback(async () => {
     if (!doctorId || !slotId) {
       showUiAlert('Booking failed', 'Doctor or slot details missing. Please select slot again.');
-      router.replace('/(tabs)/appointments');
+      leaveBooking();
       return;
     }
 
@@ -147,14 +152,14 @@ export default function ConfirmConsultationScreen() {
       await request;
     } catch (error: any) {
       showUiAlert('Payment setup failed', error?.message || 'Could not prepare payment right now.');
-      router.replace('/(tabs)/appointments');
+      leaveBooking();
     } finally {
       if (quoteRequestRef.current?.key === requestKey) {
         quoteRequestRef.current = null;
       }
       setIsPreparing(false);
     }
-  }, [appointmentType, doctorId, fallbackGrossAmount, router, session?.access_token, slotId]);
+  }, [appointmentType, doctorId, fallbackGrossAmount, leaveBooking, session?.access_token, slotId]);
 
   React.useEffect(() => {
     void loadQuote();
@@ -172,6 +177,7 @@ export default function ConfirmConsultationScreen() {
     }
 
     setIsPaying(true);
+    let chargedPaymentId = '';
     try {
       const paymentResult = await openRazorpayCheckout({
         description: 'Consultation Fee',
@@ -184,6 +190,7 @@ export default function ConfirmConsultationScreen() {
         },
       });
 
+      chargedPaymentId = String(paymentResult?.razorpay_payment_id || '');
       const appointment = await bookAppointmentMutation.mutateAsync({
         doctorId,
         slotId,
@@ -221,7 +228,17 @@ export default function ConfirmConsultationScreen() {
         },
       });
     } catch (error: any) {
-      showUiAlert('Payment failed', error?.message || 'Could not complete payment.');
+      if (chargedPaymentId) {
+        // The payment went through but the booking step failed. Never call this "payment failed": the patient
+        // would pay again. The payment webhook reconciles the booking; support can confirm with the payment id.
+        showUiAlert(
+          'Payment received',
+          `Your payment (${chargedPaymentId}) was successful, but we could not confirm the slot yet. Please do not pay again. Check My appointments in a minute, or contact support with this payment ID.`
+        );
+        router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } });
+      } else {
+        showUiAlert('Payment failed', error?.message || 'Could not complete payment.');
+      }
     } finally {
       setIsPaying(false);
     }
@@ -245,7 +262,7 @@ export default function ConfirmConsultationScreen() {
         <View style={[styles.summaryCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
           <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Booking Summary</Text>
           <View style={styles.identityRow}>
-            <View style={[styles.identityIcon, { backgroundColor: theme.successLight }]}>
+            <View style={[styles.identityIcon, { backgroundColor: theme.primarySoft }]}>
               <Stethoscope size={18} color={theme.tint} />
             </View>
             <View style={styles.identityText}>

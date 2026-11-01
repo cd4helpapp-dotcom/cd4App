@@ -39,6 +39,7 @@
       "env": {
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "902668215449-rlceg5t7j52gde53jajbe2l6obdnfjvr.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "902668215449-odm61vl468r4lrad17diclp63tvnum4s.apps.googleusercontent.com",
+        "EXPO_PUBLIC_RAZORPAY_KEY_ID": "rzp_test_S4wRCfFc9MXQ8w",
         "EXPO_PUBLIC_AGORA_APP_ID": "1726b727a8db4ccb9223fb6042714844",
         "EXPO_PUBLIC_SUPABASE_URL": "https://prcpnwectrptrpblmezy.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_4n1CyNZta7Xjzun0Ni_ALQ_nwXv5w8Y",

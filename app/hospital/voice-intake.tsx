@@ -188,7 +188,7 @@ export default function HospitalVoiceIntakeScreen() {
         <ScrollView
             style={[styles.container, { backgroundColor: theme.background }]}
             contentContainerStyle={[styles.content, { paddingTop: insets.top + 20 }]}
-            refreshControl={<RefreshControl refreshing={voiceQuery.isRefetching} onRefresh={voiceQuery.refetch} tintColor={theme.tint} />}
+            refreshControl={<RefreshControl refreshing={voiceQuery.isRefetching} onRefresh={() => { void voiceQuery.refetch(); }} tintColor={theme.tint} />}
             keyboardShouldPersistTaps="handled"
         >
             <Text style={[styles.kicker, { color: theme.tint }]}>Hospital Voice</Text>
@@ -234,7 +234,7 @@ export default function HospitalVoiceIntakeScreen() {
                     ))}
                 </ScrollView>
 
-                <View style={[styles.voiceStatus, { backgroundColor: theme.successLight }]}>
+                <View style={[styles.voiceStatus, { backgroundColor: theme.primarySoft }]}>
                     <Mic size={16} color={theme.tint} />
                     <Text style={[styles.voiceStatusText, { color: theme.text }]}>{voiceStatus}</Text>
                 </View>
@@ -291,7 +291,7 @@ export default function HospitalVoiceIntakeScreen() {
                                     </Text>
                                 </View>
                                 <TouchableOpacity
-                                    style={[styles.pdfBadge, { borderColor: theme.borderColor, backgroundColor: theme.successLight }]}
+                                    style={[styles.pdfBadge, { borderColor: theme.borderColor, backgroundColor: theme.primarySoft }]}
                                     onPress={() =>
                                         router.push({
                                             pathname: '/hospital/voice-intake-report',
@@ -329,7 +329,7 @@ function Chip({ label, selected, onPress, theme }: { label: string; selected: bo
         <TouchableOpacity
             style={[
                 styles.chip,
-                { borderColor: theme.borderColor, backgroundColor: selected ? theme.successLight : theme.background },
+                { borderColor: theme.borderColor, backgroundColor: selected ? theme.primarySoft : theme.background },
             ]}
             onPress={onPress}
         >

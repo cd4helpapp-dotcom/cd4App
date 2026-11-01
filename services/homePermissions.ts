@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import * as Calendar from 'expo-calendar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
-import { Audio } from 'expo-av';
+import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from 'expo-audio';
 import { requestLocationPermissionOnce } from './locationPermission';
 
 const HOME_PERMISSIONS_REQUESTED_KEY = '@cd4/home_permissions_requested';
@@ -44,7 +44,7 @@ export const requestHomePermissionsOnce = async (): Promise<void> => {
   await AsyncStorage.setItem(HOME_PERMISSIONS_REQUESTED_KEY, 'true');
 
   await requestLocationPermissionOnce();
-  await requestIfNeeded(Audio.getPermissionsAsync, Audio.requestPermissionsAsync);
+  await requestIfNeeded(getRecordingPermissionsAsync, requestRecordingPermissionsAsync);
   await requestSpeechRecognitionPermission();
   await requestIfNeeded(ImagePicker.getCameraPermissionsAsync, ImagePicker.requestCameraPermissionsAsync);
   await requestIfNeeded(Calendar.getCalendarPermissionsAsync, Calendar.requestCalendarPermissionsAsync);

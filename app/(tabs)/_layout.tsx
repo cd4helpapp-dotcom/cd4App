@@ -19,7 +19,7 @@ import RouteLoadingScreen from '../../ui/common/RouteLoadingScreen';
 import SmoothTabBar from '../../ui/navigation/SmoothTabBar';
 
 function TabIcon({ Icon, color }: { Icon: any; color: string }) {
-  return <Icon size={22} color={color} />;
+  return <Icon size={22} color={color as string} />;
 }
 
 function ModernTabIcon({
@@ -33,7 +33,7 @@ function ModernTabIcon({
   activeName: React.ComponentProps<typeof Ionicons>['name'];
   inactiveName: React.ComponentProps<typeof Ionicons>['name'];
 }) {
-  return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
+  return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color as string} />;
 }
 
 export default function TabLayout() {
@@ -184,7 +184,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="home"
                 inactiveName="home-outline"
               />
@@ -202,7 +202,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="pulse"
                 inactiveName="pulse-outline"
               />
@@ -218,7 +218,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="calendar"
                 inactiveName="calendar-outline"
               />
@@ -236,7 +236,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="restaurant"
                 inactiveName="restaurant-outline"
               />
@@ -252,7 +252,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="document-text"
                 inactiveName="document-text-outline"
               />
@@ -271,7 +271,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="chatbubble"
                 inactiveName="chatbubble-outline"
               />
@@ -290,7 +290,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color, focused }) => (
               <ModernTabIcon
                 focused={focused}
-                color={color}
+                color={color as string}
                 activeName="people"
                 inactiveName="people-outline"
               />
@@ -305,7 +305,7 @@ export default function TabLayout() {
             href: null, // Hides the tab
             title: t('tab.profile'),
             tabBarIcon: ({ color }) => (
-              <TabIcon Icon={User} color={color} />
+              <TabIcon Icon={User} color={color as string} />
             ),
           }}
         />

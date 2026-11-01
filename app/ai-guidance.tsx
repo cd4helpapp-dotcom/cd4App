@@ -20,12 +20,14 @@ import {
 } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { fetch as expoStreamingFetch } from 'expo/fetch';
+import TypingIndicator from '../ui/common/ThinkingIndicator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, MoreVertical, Send, CheckCheck, Bot, Mic, X, Paperclip, Star, MapPin, Trash2 } from 'lucide-react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Toast from 'react-native-toast-message';
 import Svg, { Circle } from 'react-native-svg';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../src/lib/supabase';
@@ -46,12 +48,12 @@ const ThinkingIndicator = ({ text, palette, theme, isInitialLoad = false }: any)
         Animated.timing(pulseAnim, {
           toValue: 1.3,
           duration: 1000,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
           duration: 1000,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ])
     );
@@ -106,12 +108,12 @@ const PulsingDot = ({ size = 8, theme }: any) => {
         Animated.timing(pulseAnim, {
           toValue: 1.4,
           duration: 800,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(pulseAnim, {
           toValue: 1,
           duration: 800,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ])
     );
@@ -335,6 +337,11 @@ const nowIso = (): string => new Date().toISOString();
 const AGENT_PROGRESS_HINTS = [
   'Thinking...',
 ];
+// A reply bubble whose text is still empty or a progress hint is shown as the animated thinking indicator.
+const isPendingReply = (text: string): boolean => {
+  const value = (text || '').trim();
+  return value === '' || AGENT_PROGRESS_HINTS.includes(value) || value === 'Processing...';
+};
 
 const VOICE_STAGE_FLOW: Array<{ key: Exclude<VoiceLiveStage, 'idle'>; label: string }> = [
   { key: 'listening', label: 'Listening' },
@@ -670,22 +677,22 @@ const getInitialMessages = (concern: string, isAssistantMode: boolean, user?: an
 };
 
 const CONCERN_HEADER_IMAGE_ASSETS = {
-  diabetes: require('../assets/departments/department_image_018.jpeg'),
-  pcos: require('../assets/departments/department_image_028.jpeg'),
-  heart: require('../assets/departments/department_image_022.jpeg'),
-  skin: require('../assets/departments/department_image_027.jpeg'),
-  reproductive: require('../assets/departments/department_image_028.jpeg'),
-  gastro: require('../assets/departments/department_image_017.jpeg'),
-  orthopedics: require('../assets/departments/department_image_024.jpeg'),
-  psychiatry: require('../assets/departments/department_image_026.jpeg'),
-  pulmonary: require('../assets/departments/department_image_020.jpeg'),
-  ophthalmology: require('../assets/departments/department_image_023.jpeg'),
-  ent: require('../assets/departments/department_image_025.jpeg'),
-  urology: require('../assets/departments/department_image_016.jpeg'),
-  neurology: require('../assets/departments/department_image_019.jpeg'),
-  hematology: require('../assets/departments/department_image_010.jpeg'),
-  general: require('../assets/departments/department_image_029.jpeg'),
-  assistant: require('../assets/concerns/general_assistant_1777377591600.jpg'),
+  diabetes: require('../assets/thumbs/departments/department_image_018.jpg'),
+  pcos: require('../assets/thumbs/departments/department_image_028.jpg'),
+  heart: require('../assets/thumbs/departments/department_image_022.jpg'),
+  skin: require('../assets/thumbs/departments/department_image_027.jpg'),
+  reproductive: require('../assets/thumbs/departments/department_image_028.jpg'),
+  gastro: require('../assets/thumbs/departments/department_image_017.jpg'),
+  orthopedics: require('../assets/thumbs/departments/department_image_024.jpg'),
+  psychiatry: require('../assets/thumbs/departments/department_image_026.jpg'),
+  pulmonary: require('../assets/thumbs/departments/department_image_020.jpg'),
+  ophthalmology: require('../assets/thumbs/departments/department_image_023.jpg'),
+  ent: require('../assets/thumbs/departments/department_image_025.jpg'),
+  urology: require('../assets/thumbs/departments/department_image_016.jpg'),
+  neurology: require('../assets/thumbs/departments/department_image_019.jpg'),
+  hematology: require('../assets/thumbs/departments/department_image_010.jpg'),
+  general: require('../assets/thumbs/departments/department_image_029.jpg'),
+  assistant: require('../assets/thumbs/concerns/general_assistant_1777377591600.jpg'),
 } as const;
 
 const resolveConcernHeaderImageSource = (
@@ -996,7 +1003,10 @@ const toWebSocketBaseUrl = (baseUrl: string): string => {
 const AGENT_WS_ENDPOINT = FUNCTIONS_BASE_URL
   ? `${toWebSocketBaseUrl(FUNCTIONS_BASE_URL)}/functions/v1/chat-agent-ws`
   : '';
+// React Native's built-in fetch has no streaming body; expo/fetch does, so native uses it for SSE.
+const streamingFetch: typeof fetch = Platform.OS === 'web' ? fetch : (expoStreamingFetch as unknown as typeof fetch);
 const hasReadableStreamSupport = (): boolean => {
+  if (Platform.OS !== 'web') return typeof expoStreamingFetch === 'function';
   if (typeof ReadableStream === 'undefined' || typeof TextDecoder === 'undefined' || typeof Response === 'undefined') {
     return false;
   }
@@ -1251,7 +1261,7 @@ export default function AiGuidanceScreen() {
   const [hasRateLimitSnapshot, setHasRateLimitSnapshot] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const [isAttachmentPicking, setIsAttachmentPicking] = useState(false);
-  const activeVoiceSoundRef = useRef<Audio.Sound | null>(null);
+  const activeVoiceSoundRef = useRef<AudioPlayer | null>(null);
   const activeSpeechRef = useRef(false);
   const serverVoiceAudioChunksMapRef = useRef<Map<number, { audio: string; text: string; mimeType?: string }>>(new Map());
   const nextExpectedVoiceAudioIndexRef = useRef<number>(0);
@@ -1263,18 +1273,17 @@ export default function AiGuidanceScreen() {
   const voiceLiveSpeechBusyRef = useRef(false);
   const voiceLiveSpokenCharsRef = useRef(0);
   const ensureVoiceSpeakerOutput = async () => {
+    if (Platform.OS === 'web') return;
     try {
       // Speech recognition can take Android's audio focus and leave the app
       // on the earpiece route. Re-apply this immediately before every AI
       // response; caching this setting breaks on some Samsung/Android builds.
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldPlayInBackground: false,
+        interruptionMode: 'doNotMix',
+        shouldRouteThroughEarpiece: false,
       });
     } catch (error) {
       console.warn('[AI Voice] Could not set speaker audio route:', error);
@@ -1389,13 +1398,13 @@ export default function AiGuidanceScreen() {
           toValue: 1.22,
           duration: 950,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(voicePulse, {
           toValue: 1,
           duration: 950,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ])
     );
@@ -1430,13 +1439,13 @@ export default function AiGuidanceScreen() {
             toValue: 1,
             duration: 320,
             easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
+            useNativeDriver: Platform.OS !== 'web',
           }),
           Animated.timing(dot, {
             toValue: 0.28,
             duration: 320,
             easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
+            useNativeDriver: Platform.OS !== 'web',
           }),
           Animated.delay(120),
         ])
@@ -1920,9 +1929,9 @@ export default function AiGuidanceScreen() {
     inputText: theme.text,
     placeholder: theme.textSecondary,
     sendBg: theme.tint,
-    consultBg: theme.successLight,
+    consultBg: theme.primarySoft,
     consultText: theme.tint,
-    consultBorder: theme.successBorder,
+    consultBorder: theme.primaryBorder,
   };
 
   const aiMarkdownStyles = React.useMemo(
@@ -2178,7 +2187,7 @@ export default function AiGuidanceScreen() {
       toValue: 0,
       duration: 220,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
     void refetchConversationList();
   };
@@ -2188,7 +2197,7 @@ export default function AiGuidanceScreen() {
       toValue: 360,
       duration: 200,
       easing: Easing.in(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start(({ finished }) => {
       if (finished) {
         setIsConversationDrawerVisible(false);
@@ -2517,8 +2526,8 @@ export default function AiGuidanceScreen() {
       try {
         const sound = activeVoiceSoundRef.current;
         activeVoiceSoundRef.current = null;
-        await sound.stopAsync();
-        await sound.unloadAsync();
+        sound.pause();
+        sound.remove();
       } catch (error) {
         console.warn('Failed to stop active voice audio:', error);
       }
@@ -3185,7 +3194,7 @@ export default function AiGuidanceScreen() {
         const controller = new AbortController();
         streamAbortControllerRef.current = controller;
 
-        const response = await fetch(streamUrl, {
+        const response = await streamingFetch(streamUrl, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${accessToken}`,
@@ -3239,24 +3248,24 @@ export default function AiGuidanceScreen() {
 
         const ensureStreamMessage = () => {
           if (streamedMessageId) return;
-          streamedMessageId = nextMessageId('a');
-          streamedCreatedAt = nowIso();
+          // Reuse the "Thinking" bubble: the first words replace it in place, so no stale bubble stays above the answer.
+          streamedMessageId = optimisticDraftId;
+          streamedCreatedAt = optimisticDraftCreatedAt;
           streamingMessageIdRef.current = streamedMessageId;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: streamedMessageId as string,
-              sender: 'ai',
-              text: '',
-              createdAt: streamedCreatedAt as string,
-            },
-          ]);
+          setMessages((prev) => {
+            if (prev.some((msg) => msg.id === optimisticDraftId)) {
+              return prev.map((msg) => (msg.id === optimisticDraftId ? { ...msg, text: '' } : msg));
+            }
+            return [...prev, { id: optimisticDraftId, sender: 'ai', text: '', createdAt: optimisticDraftCreatedAt }];
+          });
         };
 
         const flushPendingStreamText = () => {
           if (!pendingStreamChunk) return;
           const candidateText = `${streamedText}${pendingStreamChunk}`;
-          const cleanText = extractReplyFromStructuredText(candidateText);
+          // Only unwrap JSON; plain streamed text must keep its newlines and spaces exactly. Trimming here removed
+          // the newline between list items whenever a chunk happened to end on one.
+          const cleanText = /^\s*(```|\{)/.test(candidateText) ? extractReplyFromStructuredText(candidateText) : candidateText;
           const looksLikeUnfinishedStructuredOutput =
             candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}');
           if (looksLikeUnfinishedStructuredOutput) {
@@ -3425,24 +3434,24 @@ export default function AiGuidanceScreen() {
 
         const ensureStreamMessage = () => {
           if (streamedMessageId) return;
-          streamedMessageId = nextMessageId('a');
-          streamedCreatedAt = nowIso();
+          // Reuse the "Thinking" bubble: the first words replace it in place, so no stale bubble stays above the answer.
+          streamedMessageId = optimisticDraftId;
+          streamedCreatedAt = optimisticDraftCreatedAt;
           streamingMessageIdRef.current = streamedMessageId;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: streamedMessageId as string,
-              sender: 'ai',
-              text: '',
-              createdAt: streamedCreatedAt as string,
-            },
-          ]);
+          setMessages((prev) => {
+            if (prev.some((msg) => msg.id === optimisticDraftId)) {
+              return prev.map((msg) => (msg.id === optimisticDraftId ? { ...msg, text: '' } : msg));
+            }
+            return [...prev, { id: optimisticDraftId, sender: 'ai', text: '', createdAt: optimisticDraftCreatedAt }];
+          });
         };
 
         const flushPendingStreamText = () => {
           if (!pendingStreamChunk) return;
           const candidateText = `${streamedText}${pendingStreamChunk}`;
-          const cleanText = extractReplyFromStructuredText(candidateText);
+          // Only unwrap JSON; plain streamed text must keep its newlines and spaces exactly. Trimming here removed
+          // the newline between list items whenever a chunk happened to end on one.
+          const cleanText = /^\s*(```|\{)/.test(candidateText) ? extractReplyFromStructuredText(candidateText) : candidateText;
           const looksLikeUnfinishedStructuredOutput =
             candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}');
           if (looksLikeUnfinishedStructuredOutput) {
@@ -3924,29 +3933,24 @@ export default function AiGuidanceScreen() {
       await ensureVoiceSpeakerOutput();
     const sourceUri = `data:${chunk.mimeType || 'audio/mpeg'};base64,${chunk.audio}`;
       
-      const created = await Audio.Sound.createAsync(
-        { uri: sourceUri },
-        { shouldPlay: true }
-      );
-      const sound = created.sound;
+      const sound = createAudioPlayer({ uri: sourceUri });
       activeVoiceSoundRef.current = sound;
-      
+      sound.play();
+
+      // expo-audio reports isLoaded=false until the clip is ready, so only didJustFinish ends playback;
+      // the timeout covers a clip that never loads.
       await new Promise<void>((resolve) => {
         let finished = false;
-        sound.setOnPlaybackStatusUpdate((status: any) => {
-          if (!status?.isLoaded) {
-            if (!finished) {
-              finished = true;
-              resolve();
-            }
-            return;
-          }
-          if (status?.didJustFinish) {
-            if (!finished) {
-              finished = true;
-              resolve();
-            }
-          }
+        const done = () => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(safetyTimer);
+          subscription.remove();
+          resolve();
+        };
+        const safetyTimer = setTimeout(done, 60000);
+        const subscription = sound.addListener('playbackStatusUpdate', (status) => {
+          if (status.didJustFinish) done();
         });
       });
 
@@ -3954,7 +3958,7 @@ export default function AiGuidanceScreen() {
         activeVoiceSoundRef.current = null;
       }
       try {
-        await sound.unloadAsync();
+        sound.remove();
       } catch {
         // ignore
       }
@@ -4010,22 +4014,21 @@ export default function AiGuidanceScreen() {
       await ensureVoiceSpeakerOutput();
       const mimeType = (audioMimeType || 'audio/wav').trim() || 'audio/wav';
       const sourceUri = `data:${mimeType};base64,${trimmed}`;
-      const created = await Audio.Sound.createAsync(
-        { uri: sourceUri },
-        { shouldPlay: true }
-      );
-      const sound = created.sound;
+      const sound = createAudioPlayer({ uri: sourceUri });
       activeVoiceSoundRef.current = sound;
-      sound.setOnPlaybackStatusUpdate((status: any) => {
-        if (!status?.isLoaded || status?.didJustFinish) {
-          sound.unloadAsync().catch(() => undefined);
-          if (activeVoiceSoundRef.current === sound) {
-            activeVoiceSoundRef.current = null;
-          }
-          if (status?.didJustFinish) {
-            setVoiceStage('idle');
-          }
+      sound.play();
+      const subscription = sound.addListener('playbackStatusUpdate', (status) => {
+        if (!status.didJustFinish) return;
+        subscription.remove();
+        try {
+          sound.remove();
+        } catch {
+          // ignore
         }
+        if (activeVoiceSoundRef.current === sound) {
+          activeVoiceSoundRef.current = null;
+        }
+        setVoiceStage('idle');
       });
       return true;
     } catch (error) {
@@ -4882,6 +4885,7 @@ export default function AiGuidanceScreen() {
     // Listening begins only after the user taps Start inside the modal.
     setIsVoicePromptVisible(true);
     setVoiceStage('idle', 'Tap Start when you are ready to speak.');
+    void ensureVoiceSpeakerOutput();
   };
 
   const handleMicPress = async (forceVoiceCapture: boolean = false) => {
@@ -4901,6 +4905,7 @@ export default function AiGuidanceScreen() {
     await stopActiveVoicePlayback();
 
     setIsVoicePromptVisible(true);
+    void ensureVoiceSpeakerOutput();
 
     if (!ExpoSpeechRecognitionModule) {
       Toast.show({
@@ -5053,6 +5058,8 @@ export default function AiGuidanceScreen() {
             <Text style={[styles.messageText, { color: palette.userBubbleText }]}>
               {msg.text}
             </Text>
+          ) : isPendingReply(msg.text) && (isStreamingDraft || isSending) ? (
+            <TypingIndicator />
           ) : isStreamingDraft ? (
             <Markdown style={aiMarkdownStyles}>
               {msg.text}
@@ -5109,8 +5116,8 @@ export default function AiGuidanceScreen() {
         style={[
           styles.conversationCard,
           {
-            backgroundColor: isActiveConversation ? theme.successLight : theme.background,
-            borderColor: isActiveConversation ? theme.successBorder : theme.borderColor,
+            backgroundColor: isActiveConversation ? theme.primarySoft : theme.background,
+            borderColor: isActiveConversation ? theme.primaryBorder : theme.borderColor,
           },
         ]}
         activeOpacity={0.86}
@@ -5345,6 +5352,8 @@ export default function AiGuidanceScreen() {
           />
           <TouchableOpacity
             onPress={handleSend}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
             style={[styles.sendButton, { backgroundColor: canSendMessage ? theme.tint : theme.borderColor }]}
             disabled={!canSendMessage}
           >
@@ -5604,7 +5613,7 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   chatWallpaperWrap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     pointerEvents: 'none',
@@ -5951,7 +5960,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   conversationDrawerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0, 0, 0, 0.38)',
   },
   conversationDrawerPanel: {
@@ -6121,7 +6130,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   voiceBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(4, 14, 12, 0.72)',
   },
   voiceSheet: {

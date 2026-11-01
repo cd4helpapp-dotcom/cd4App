@@ -26,7 +26,7 @@ function ModernTabIcon({
     activeName: React.ComponentProps<typeof Ionicons>['name'];
     inactiveName: React.ComponentProps<typeof Ionicons>['name'];
 }) {
-    return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
+    return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color as string} />;
 }
 
 const DOCTOR_VISIBLE_TABS = ['dashboard', 'slots', 'chats', 'community', 'patients'] as const;
@@ -161,7 +161,7 @@ export default function DoctorTabLayout() {
                     title: 'Dashboard',
                     tabBarLabel: 'Home',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="home" inactiveName="home-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="home" inactiveName="home-outline" />
                     ),
                 }}
             />
@@ -171,7 +171,7 @@ export default function DoctorTabLayout() {
                     title: 'Slots',
                     tabBarLabel: 'Slots',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="calendar" inactiveName="calendar-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="calendar" inactiveName="calendar-outline" />
                     ),
                 }}
             />
@@ -182,7 +182,7 @@ export default function DoctorTabLayout() {
                     title: 'Chats',
                     tabBarLabel: 'Chats',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="chatbubble" inactiveName="chatbubble-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="chatbubble" inactiveName="chatbubble-outline" />
                     ),
                 }}
             />
@@ -192,7 +192,7 @@ export default function DoctorTabLayout() {
                     title: 'Community',
                     tabBarLabel: 'Community',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="people" inactiveName="people-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="people" inactiveName="people-outline" />
                     ),
                 }}
             />
@@ -202,7 +202,7 @@ export default function DoctorTabLayout() {
                     title: 'Patients',
                     tabBarLabel: 'Patients',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="person-circle" inactiveName="person-circle-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="person-circle" inactiveName="person-circle-outline" />
                     ),
                 }}
             />
@@ -213,7 +213,7 @@ export default function DoctorTabLayout() {
                     title: 'Settings',
                     tabBarLabel: 'Settings',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="settings" inactiveName="settings-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="settings" inactiveName="settings-outline" />
                     ),
                 }}
             />

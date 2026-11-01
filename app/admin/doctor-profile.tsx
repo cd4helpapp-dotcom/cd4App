@@ -275,7 +275,7 @@ export default function AdminDoctorProfileScreen() {
                 <View key={`${doc.path}-${index}`} style={[styles.documentCard, { borderColor: theme.borderColor, backgroundColor: theme.background }]}>
                   <Text style={[styles.documentPath, { color: theme.text }]} numberOfLines={2}>{doc.path}</Text>
                   {doc.isImage && doc.url ? <Image source={{ uri: doc.url }} style={[styles.documentPreview, { backgroundColor: theme.borderColor }]} /> : null}
-                  <TouchableOpacity style={[styles.documentBtn, { borderColor: theme.tint, backgroundColor: theme.successLight }]} onPress={() => void openDocument(doc)}>
+                  <TouchableOpacity style={[styles.documentBtn, { borderColor: theme.tint, backgroundColor: theme.primarySoft }]} onPress={() => void openDocument(doc)}>
                     <Text style={[styles.documentBtnText, { color: theme.tint }]}>Open Document</Text>
                   </TouchableOpacity>
                 </View>
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     color: '#fff',
     fontSize: 16,
-    fontFamily: 'Outfit-SemiBold',
+    fontWeight: '600',
   },
   loaderWrap: {
     flex: 1,
@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   avatar: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#333' },
-  name: { color: '#fff', fontSize: 18, fontFamily: 'Outfit-Bold' },
+  name: { color: '#fff', fontSize: 18, fontWeight: '700' },
   sub: { color: '#c6c6c6', fontSize: 13, marginTop: 2 },
   subMuted: { color: '#9c9c9c', fontSize: 12, marginTop: 2 },
   sectionCard: {
@@ -347,7 +347,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: '#fff',
     fontSize: 15,
-    fontFamily: 'Outfit-Bold',
+    fontWeight: '700',
     marginBottom: 8,
   },
   detailRow: { marginBottom: 8 },
@@ -361,7 +361,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     lineHeight: 19,
-    fontFamily: 'Outfit-Medium',
+    fontWeight: '500',
   },
   noDocs: { color: '#b4b4b4', fontSize: 13 },
   documentCard: {
@@ -372,7 +372,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: '#171717',
   },
-  documentPath: { color: '#fff', fontSize: 12, fontFamily: 'Outfit-Medium' },
+  documentPath: { color: '#fff', fontSize: 12, fontWeight: '500' },
   documentPreview: {
     width: '100%',
     height: 130,
@@ -392,6 +392,6 @@ const styles = StyleSheet.create({
   documentBtnText: {
     color: '#43e97b',
     fontSize: 12,
-    fontFamily: 'Outfit-SemiBold',
+    fontWeight: '600',
   },
 });

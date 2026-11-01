@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, Dimensions, Animated } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, Dimensions, Animated, Platform } from 'react-native';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
 import { useCallContext } from '../context/CallContext';
@@ -48,12 +48,12 @@ export default function GlobalCallObserver() {
                     Animated.timing(pulseAnim, {
                         toValue: 1.15,
                         duration: 800,
-                        useNativeDriver: true,
+                        useNativeDriver: Platform.OS !== 'web',
                     }),
                     Animated.timing(pulseAnim, {
                         toValue: 1,
                         duration: 800,
-                        useNativeDriver: true,
+                        useNativeDriver: Platform.OS !== 'web',
                     })
                 ])
             ).start();

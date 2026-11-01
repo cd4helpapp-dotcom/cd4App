@@ -1,318 +1,233 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ScrollView, ActivityIndicator, Image } from 'react-native';
-import Colors from '../../constants/Colors';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { useAuthContext } from '../../context/AuthContext';
-import { LogOut, User, Image as ImageIcon, MessageCircle, Stethoscope, Bell, Globe, HelpCircle, SunMoon, CreditCard, ChevronRight, Receipt } from 'lucide-react-native';
-import { useLogout } from '../../hooks/useAuth';
+import Constants from 'expo-constants';
 import Toast from 'react-native-toast-message';
+import {
+  Bell,
+  ChevronRight,
+  CreditCard,
+  FileText,
+  Globe,
+  HelpCircle,
+  Image as ImageIcon,
+  LogOut,
+  MessageCircle,
+  Receipt,
+  Shield,
+  Stethoscope,
+  SunMoon,
+  Trash2,
+  User,
+} from 'lucide-react-native';
+import { useAuthContext } from '../../context/AuthContext';
+import { useLogout } from '../../hooks/useAuth';
 import { useThemePreference } from '../../context/ThemePreferenceContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { useStorageInsights } from '../../hooks/useStorageInsights';
-
+import { useAppTheme } from '../../hooks/useAppTheme';
 import { getImageUrl } from '../../constants/Config';
+import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
+import { SettingsGroup, SettingsRow } from '../../ui/common/SettingsGroup';
+import { confirmAction } from '../../src/utils/confirm';
 
 export default function SettingsScreen() {
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
+  const { theme } = useAppTheme();
   const { user } = useAuthContext();
   const logoutMutation = useLogout();
   const { themePreference, resolvedColorScheme } = useThemePreference();
   const { t, languageLabel } = useAppLanguage();
   const storageInsights = useStorageInsights();
   const unreadCount = Number(storageInsights.unreadNotifications || 0);
-  const notificationCountText = unreadCount > 99 ? '99+' : String(unreadCount);
-  const storageLabel = storageInsights.totalFormatted || t('common.notAvailable');
-  const appearanceModeLabel =
+
+  const appearanceValue =
     themePreference === 'system'
-      ? `${t('appearance.mode.system')} (${resolvedColorScheme === 'dark' ? t('appearance.mode.dark') : t('appearance.mode.light')})`
+      ? `${t('appearance.mode.system')} · ${resolvedColorScheme === 'dark' ? t('appearance.mode.dark') : t('appearance.mode.light')}`
       : themePreference === 'dark'
         ? t('appearance.mode.dark')
         : t('appearance.mode.light');
-  const appearanceLabel =
-    themePreference === 'system' ? appearanceModeLabel : appearanceModeLabel;
-  const subscriptionStatusLabel = React.useMemo(() => {
+
+  const subscription = React.useMemo(() => {
     const current = user?.subscription;
-    if (!current) return t('settings.subscriptionFree');
+    if (!current) return { label: t('settings.subscriptionFree'), isActive: false };
 
     const status = String(current.status || '').toLowerCase();
-    const expiryMs =
-      typeof current.expiresAt === 'string' && current.expiresAt.trim().length > 0
-        ? new Date(current.expiresAt).getTime()
-        : null;
+    const expiryMs = typeof current.expiresAt === 'string' && current.expiresAt.trim() ? new Date(current.expiresAt).getTime() : null;
     const hasExpired = typeof expiryMs === 'number' && Number.isFinite(expiryMs) && expiryMs <= Date.now();
 
-    if (hasExpired && (status === 'active' || status === 'trialing' || status === 'grace')) {
-      return t('settings.subscriptionExpired');
-    }
-    if (status === 'active' || status === 'trialing') return t('settings.subscriptionActive');
-    if (status === 'grace') return t('settings.subscriptionGrace');
-    if (status === 'cancelled') return t('settings.subscriptionCancelled');
-    if (status === 'expired') return t('settings.subscriptionExpired');
-    if (status === 'pending') return t('settings.subscriptionPending');
-    return t('settings.subscriptionStatusUnknown');
+    if (hasExpired && (status === 'active' || status === 'trialing' || status === 'grace')) return { label: t('settings.subscriptionExpired'), isActive: false };
+    if (status === 'active' || status === 'trialing') return { label: t('settings.subscriptionActive'), isActive: true };
+    if (status === 'grace') return { label: t('settings.subscriptionGrace'), isActive: true };
+    if (status === 'cancelled') return { label: t('settings.subscriptionCancelled'), isActive: false };
+    if (status === 'expired') return { label: t('settings.subscriptionExpired'), isActive: false };
+    if (status === 'pending') return { label: t('settings.subscriptionPending'), isActive: false };
+    return { label: t('settings.subscriptionStatusUnknown'), isActive: false };
   }, [t, user?.subscription]);
 
   const handleLogout = async () => {
+    const confirmed = await confirmAction({
+      title: 'Log out of CD4?',
+      message: 'You will need to sign in again to access your consultations and reports.',
+      confirmText: t('settings.logout'),
+      destructive: true,
+    });
+    if (!confirmed) return;
+
     try {
       await logoutMutation.mutateAsync();
-
-      Toast.show({
-        type: 'success',
-        text1: t('settings.loggedOutTitle'),
-        text2: t('settings.loggedOutBody'),
-      });
-
-      // Navigate to login
+      Toast.show({ type: 'success', text1: t('settings.loggedOutTitle'), text2: t('settings.loggedOutBody') });
       router.replace('/auth/login');
-    } catch (error) {
-      Toast.show({
-        type: 'error',
-        text1: t('settings.logoutFailed'),
-        text2: t('settings.logoutFailedBody'),
-      });
+    } catch {
+      Toast.show({ type: 'error', text1: t('settings.logoutFailed'), text2: t('settings.logoutFailedBody') });
     }
   };
 
-  // Group settings for better structure
-  const accountSettings = [
-    { key: 'account', label: t('settings.account'), icon: User, action: () => router.push('/(tabs)/profile-details') },
-    { key: 'avatar', label: t('settings.avatar'), icon: ImageIcon, action: () => router.push('/settings/avatar') },
-    { key: 'chats', label: t('settings.chats'), icon: MessageCircle, action: () => router.push('/settings/chats') },
-    {
-      key: 'subscription',
-      label: t('settings.subscriptionWithStatus', { status: subscriptionStatusLabel }),
-      icon: CreditCard,
-      action: () => router.push('/settings/subscription'),
-    },
-    { key: 'paymentHistory', label: 'Payment history', icon: Receipt, action: () => router.push('/payment-history') },
-    { key: 'deleteAccount', label: 'Delete account', icon: Receipt, action: () => router.push('/settings/delete-account') },
-  ];
-
-  // Add Doctor Recruitment for Marketing and Admin roles
-  if (user?.role === 'Marketing' || user?.role === 'Admin') {
-    accountSettings.push({
-      key: 'doctorRecruitment',
-      label: t('settings.doctorRecruitment'),
-      icon: Stethoscope,
-      action: () => router.push('/doctor-recruitment'),
-    });
-  }
-
-  const appSettings = [
-    {
-      key: 'appearance',
-      label: t('settings.appearanceWithMode', { mode: appearanceLabel }),
-      icon: SunMoon,
-      action: () => router.push('/settings/appearance'),
-    },
-    {
-      key: 'notifications',
-      label: t('settings.notificationsWithCount', { count: notificationCountText }),
-      icon: Bell,
-      action: () => router.push('/settings/notifications'),
-    },
-    // Temporarily disabled as requested:
-    // {
-    //   key: 'storageData',
-    //   label: t('settings.storageWithSize', { size: storageLabel }),
-    //   icon: Database,
-    //   action: () => router.push('/settings/storage'),
-    // },
-    {
-      key: 'appLanguage',
-      label: t('settings.languageWithLabel', { language: languageLabel }),
-      icon: Globe,
-      action: () => router.push('/settings/language'),
-    },
-    { key: 'help', label: t('settings.help'), icon: HelpCircle, action: () => router.push('/settings/help') }
-  ];
-
-  // Construct full image URL
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || 'Your profile';
+  const initials = `${user?.firstName?.[0] || ''}${user?.lastName?.[0] || ''}`.toUpperCase() || 'U';
   const profileImageUrl = getImageUrl(user?.profilePicture);
-  const settingsIconSize = 17;
-  const settingsIconStrokeWidth = 2;
+  const canRecruitDoctors = user?.role === 'Marketing' || user?.role === 'Admin';
+  const appVersion = Constants.expoConfig?.version || '1.0.0';
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-      {/* Profile Header Block */}
-      <TouchableOpacity
-        style={[styles.profileHeader, { backgroundColor: theme.cardBackground, borderBottomColor: theme.borderColor, paddingTop: 20 }]}
-        onPress={() => router.push('/(tabs)/profile-details')}
-      >
-        <View style={styles.avatarContainer}>
-          {profileImageUrl ? (
-            <Image
-              source={{ uri: profileImageUrl }}
-              style={styles.avatarImage}
-            />
-          ) : (
-            <Text style={styles.avatarText}>{user?.firstName?.[0] || '?'}{user?.lastName?.[0] || '?'}</Text>
-          )}
-        </View>
-        <View>
-          <Text style={[styles.profileName, { color: theme.text }]}>{user?.firstName} {user?.lastName}</Text>
-          <Text style={[styles.profileSubtitle, { color: theme.textSecondary }]}>{t('settings.patientGreeting')}</Text>
-        </View>
-      </TouchableOpacity>
-
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View
-          style={[
-            styles.section,
-            { backgroundColor: theme.cardBackground, borderColor: theme.borderColor, borderTopColor: theme.borderColor },
+    <ScrollView style={{ backgroundColor: theme.background }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.inner}>
+        <Pressable
+          onPress={() => router.push('/(tabs)/profile-details')}
+          accessibilityRole="button"
+          accessibilityLabel={`${fullName}, view profile`}
+          style={({ pressed }) => [
+            styles.profileCard,
+            { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
+            elevation(1),
+            pressed && { opacity: 0.9 },
           ]}
         >
-          {accountSettings.map((option, index) => {
-            const Icon = option.icon;
-            return (
-            <View key={option.key}>
-              <TouchableOpacity style={styles.optionRow} onPress={option.action}>
-                <View style={styles.optionLeft}>
-                  <View style={[styles.iconWrap, { backgroundColor: theme.tint + '10' }]}>
-                    <Icon size={settingsIconSize} strokeWidth={settingsIconStrokeWidth} color={theme.tint} />
-                  </View>
-                  <Text style={[styles.optionText, { color: theme.text }]}>{option.label}</Text>
-                </View>
-                <ChevronRight size={16} strokeWidth={2.2} color={theme.textSecondary} />
-              </TouchableOpacity>
-              {index < accountSettings.length - 1 && <View style={[styles.separator, { backgroundColor: theme.borderColor }]} />}
+          <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
+            {profileImageUrl ? (
+              <Image source={{ uri: profileImageUrl }} style={styles.avatarImage} />
+            ) : (
+              <Text style={[Typography.title, { color: theme.primary }]}>{initials}</Text>
+            )}
+          </View>
+          <View style={styles.profileText}>
+            <Text style={[Typography.heading, { color: theme.text }]} numberOfLines={1}>
+              {fullName}
+            </Text>
+            {user?.email ? (
+              <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>
+                {user.email}
+              </Text>
+            ) : null}
+            <View style={[styles.planPill, { backgroundColor: subscription.isActive ? theme.primarySoft : theme.surfaceMuted }]}>
+              <Text style={[Typography.caption, { color: subscription.isActive ? theme.primary : theme.textSecondary, fontWeight: '600' }]}>
+                {subscription.isActive ? 'CD4 Pro' : 'Free plan'}
+              </Text>
             </View>
-          )})}
+          </View>
+          <ChevronRight size={20} color={theme.textTertiary} />
+        </Pressable>
 
-          <View style={[styles.groupDivider, { backgroundColor: theme.borderColor }]} />
+        <SettingsGroup title="Account">
+          <SettingsRow icon={User} label={t('settings.account')} onPress={() => router.push('/(tabs)/profile-details')} />
+          <SettingsRow icon={ImageIcon} label={t('settings.avatar')} onPress={() => router.push('/settings/avatar')} />
+          <SettingsRow icon={CreditCard} label={t('settings.subscription')} value={subscription.label} onPress={() => router.push('/settings/subscription')} />
+          <SettingsRow icon={Receipt} label="Payment history" onPress={() => router.push('/payment-history')} />
+          {canRecruitDoctors ? (
+            <SettingsRow icon={Stethoscope} label={t('settings.doctorRecruitment')} onPress={() => router.push('/doctor-recruitment')} />
+          ) : null}
+        </SettingsGroup>
 
-          {appSettings.map((option, index) => {
-            const Icon = option.icon;
-            return (
-            <View key={option.key}>
-              <TouchableOpacity style={styles.optionRow} onPress={option.action}>
-                <View style={styles.optionLeft}>
-                  <View style={[styles.iconWrap, { backgroundColor: theme.tint + '10' }]}>
-                    <Icon size={settingsIconSize} strokeWidth={settingsIconStrokeWidth} color={theme.tint} />
-                  </View>
-                  <Text style={[styles.optionText, { color: theme.text }]}>{option.label}</Text>
-                </View>
-                <ChevronRight size={16} strokeWidth={2.2} color={theme.textSecondary} />
-              </TouchableOpacity>
-              {index < appSettings.length - 1 && <View style={[styles.separator, { backgroundColor: theme.borderColor }]} />}
-            </View>
-          )})}
-        </View>
+        <SettingsGroup title="Preferences">
+          <SettingsRow icon={SunMoon} tone="accent" label={t('appearance.title')} value={appearanceValue} onPress={() => router.push('/settings/appearance')} />
+          <SettingsRow icon={Bell} tone="accent" label={t('notifications.title')} badge={unreadCount} onPress={() => router.push('/settings/notifications')} />
+          <SettingsRow icon={Globe} tone="accent" label={t('language.title')} value={languageLabel} onPress={() => router.push('/settings/language')} />
+          <SettingsRow icon={MessageCircle} tone="accent" label={t('settings.chats')} onPress={() => router.push('/settings/chats')} />
+        </SettingsGroup>
 
-        <TouchableOpacity
-          style={[styles.logoutButton, { backgroundColor: theme.cardBackground, flexDirection: 'row', justifyContent: 'center' }]}
+        <SettingsGroup title="Support & legal">
+          <SettingsRow icon={HelpCircle} tone="success" label={t('settings.help')} onPress={() => router.push('/settings/help')} />
+          <SettingsRow icon={Shield} tone="success" label="Privacy policy" onPress={() => router.push('/privacy-policy')} />
+          <SettingsRow icon={FileText} tone="success" label="Terms of service" onPress={() => router.push('/terms')} />
+        </SettingsGroup>
+
+        <SettingsGroup footer="Permanently deletes your account, consultations and reports.">
+          <SettingsRow icon={Trash2} label="Delete account" destructive onPress={() => router.push('/settings/delete-account')} />
+        </SettingsGroup>
+
+        <Pressable
           onPress={handleLogout}
           disabled={logoutMutation.isPending}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.logoutButton,
+            { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
+            pressed && { backgroundColor: theme.surfaceMuted },
+          ]}
         >
           {logoutMutation.isPending ? (
-            <ActivityIndicator color="#e74c3c" />
+            <ActivityIndicator color={theme.danger} />
           ) : (
             <>
-              <LogOut size={18} strokeWidth={2} color="#e74c3c" style={{ marginRight: 8 }} />
-              <Text style={styles.logoutText}>{t('settings.logout')}</Text>
+              <LogOut size={18} color={theme.danger} />
+              <Text style={[Typography.bodyStrong, { color: theme.danger }]}>{t('settings.logout')}</Text>
             </>
           )}
-        </TouchableOpacity>
+        </Pressable>
 
-        <Text style={styles.versionText}>{t('settings.version')}</Text>
-      </ScrollView>
-    </View>
+        <Text style={[Typography.caption, styles.version, { color: theme.textTertiary }]}>CD4 Health · Version {appVersion}</Text>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  scrollContent: {
-    paddingBottom: 28,
+  content: {
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.huge,
   },
-  headerSpace: { height: 20 },
-  profileHeader: {
+  inner: {
+    width: '100%',
+    maxWidth: Layout.contentMaxWidth,
+    alignSelf: 'center',
+  },
+  profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    marginBottom: 0,
+    gap: Spacing.md + 2,
+    borderWidth: 1,
+    borderRadius: Radius.xl,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xxl,
   },
-  avatarContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#ddd',
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 15,
     overflow: 'hidden',
   },
-  avatarImage: {
-    width: '100%',
-    height: '100%',
-  },
-  avatarText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#555',
-  },
-  profileName: {
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  profileSubtitle: {
-    fontSize: 14,
-  },
-  section: {
-    borderTopWidth: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    marginBottom: 14,
-  },
-  groupDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 20,
-    marginRight: 20,
-  },
-  optionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-  },
-  optionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  optionText: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  separator: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 20,
+  avatarImage: { width: '100%', height: '100%' },
+  profileText: { flex: 1, gap: 2 },
+  planPill: {
+    alignSelf: 'flex-start',
+    borderRadius: Radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    marginTop: 6,
   },
   logoutButton: {
-    marginHorizontal: 20,
-    paddingVertical: 15,
-    borderRadius: 12,
+    height: 52,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
   },
-  logoutText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FF3B30',
-  },
-  versionText: {
+  version: {
     textAlign: 'center',
-    marginTop: 20,
-    fontSize: 12,
-    color: '#999',
+    marginTop: Spacing.xl,
   },
 });

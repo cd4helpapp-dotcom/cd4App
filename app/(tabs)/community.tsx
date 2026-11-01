@@ -19,6 +19,7 @@ import {
   Share,
   Linking,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -160,7 +161,7 @@ export default function CommunityScreen() {
   const [likesVisible, setLikesVisible] = React.useState(false);
   const [activeLikesPostId, setActiveLikesPostId] = React.useState<string | null>(null);
   const [modalKeyboardHeight, setModalKeyboardHeight] = React.useState(0);
-  const commentInputRef = React.useRef<TextInput>(null);
+  const commentInputRef = React.useRef<TextInputInstance | null>(null);
   const tabSwipeHandlers = useTabSwipeNavigation('community', {
     disabled: commentsVisible || postActionsVisible || editPostVisible || likesVisible,
   });
@@ -674,8 +675,8 @@ export default function CommunityScreen() {
     return (
       <View style={[styles.adCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
         <View style={styles.adHeader}>
-          <View style={[styles.adIconWrap, { backgroundColor: theme.successLight }]}>
-            <Megaphone size={16} color={theme.success} />
+          <View style={[styles.adIconWrap, { backgroundColor: theme.primarySoft }]}>
+            <Megaphone size={16} color={theme.primary} />
           </View>
           <Text style={[styles.adMeta, { color: theme.textSecondary }]}>Sponsored</Text>
         </View>
@@ -684,10 +685,10 @@ export default function CommunityScreen() {
         {ad.imageUrl ? <Image source={{ uri: ad.imageUrl }} style={styles.adImage} /> : null}
         {ad.ctaLabel && ad.ctaUrl ? (
           <TouchableOpacity
-            style={[styles.adCtaButton, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}
+            style={[styles.adCtaButton, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}
             onPress={() => handleAdOpen(ad)}
           >
-            <Text style={[styles.adCtaText, { color: theme.success }]}>{ad.ctaLabel}</Text>
+            <Text style={[styles.adCtaText, { color: theme.primary }]}>{ad.ctaLabel}</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -706,10 +707,10 @@ export default function CommunityScreen() {
       </View>
 
       {/* Temporarily disabled static challenge card until dynamic challenge API is integrated. */}
-      {/* <View style={[styles.challengeCard, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
+      {/* <View style={[styles.challengeCard, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
         <View style={styles.challengeHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={[styles.challengeIcon, { backgroundColor: theme.success }]}>
+            <View style={[styles.challengeIcon, { backgroundColor: theme.primary }]}>
               <TrendingDown size={18} color="#fff" />
             </View>
             <View>
@@ -717,10 +718,10 @@ export default function CommunityScreen() {
               <Text style={[styles.challengeSubtitle, { color: theme.textSecondary }]}>Post-Meal Walk • Day 3/7</Text>
             </View>
           </View>
-          <Text style={[styles.challengeStatus, { color: theme.success, backgroundColor: theme.background }]}>On Track</Text>
+          <Text style={[styles.challengeStatus, { color: theme.primary, backgroundColor: theme.background }]}>On Track</Text>
         </View>
         <View style={[styles.progressBarBg, { backgroundColor: theme.background }]}>
-          <View style={[styles.progressBarFill, { backgroundColor: theme.success, width: '45%' }]} />
+          <View style={[styles.progressBarFill, { backgroundColor: theme.primary, width: '45%' }]} />
         </View>
         <Text style={[styles.challengeMotivational, { color: theme.textSecondary }]}>You are on a streak. Keep it up.</Text>
       </View> */}
@@ -773,7 +774,7 @@ export default function CommunityScreen() {
         ) : null}
         <View style={[styles.postActions, { borderTopColor: theme.borderColor }]}>
           <TouchableOpacity style={[styles.actionButton, { backgroundColor: theme.background }]} onPress={pickComposerAssets}>
-            <Camera size={16} color={theme.success} />
+            <Camera size={16} color={theme.primary} />
             <Text style={[styles.actionButtonText, { color: theme.textSecondary }]}>
               {composerAssets.length > 0 ? `${composerAssets.length} Selected` : 'Media'}
             </Text>
@@ -782,13 +783,13 @@ export default function CommunityScreen() {
             style={[styles.actionButton, { backgroundColor: theme.background }]}
             onPress={cycleComposerCategory}
           >
-            <Tag size={16} color={theme.success} />
+            <Tag size={16} color={theme.primary} />
             <Text style={[styles.actionButtonText, { color: theme.textSecondary }]}>
               {getComposerCategoryLabel(composerCategory)}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.postButton, { backgroundColor: theme.success, opacity: createPostMutation.isPending ? 0.7 : 1 }]}
+            style={[styles.postButton, { backgroundColor: theme.primary, opacity: createPostMutation.isPending ? 0.7 : 1 }]}
             disabled={createPostMutation.isPending}
             onPress={handleCreatePost}
           >
@@ -845,7 +846,7 @@ export default function CommunityScreen() {
       <FlatList
         data={showFeedSkeleton ? [] : feedItems}
         keyExtractor={(item) => item.id}
-        ListHeaderComponent={showFeedSkeleton ? null : headerComponent}
+        ListHeaderComponent={showFeedSkeleton ? undefined : headerComponent}
         renderItem={({ item }) => {
           if (item.type === 'ad') {
             return renderAdCard(item.ad);
@@ -881,9 +882,9 @@ export default function CommunityScreen() {
           )
         }
         ListFooterComponent={
-          showFeedSkeleton ? null : feedQuery.isFetchingNextPage ? (
+          showFeedSkeleton ? undefined : feedQuery.isFetchingNextPage ? (
             <View style={styles.listFooterLoader}>
-              <ActivityIndicator color={theme.success} />
+              <ActivityIndicator color={theme.primary} />
             </View>
           ) : (
             <View style={styles.listFooterSpace} />
@@ -1026,7 +1027,7 @@ export default function CommunityScreen() {
                   }
                 }}
               >
-                <Camera size={16} color={theme.success} />
+                <Camera size={16} color={theme.primary} />
                 <Text style={[styles.actionButtonText, { color: theme.textSecondary }]}>
                   {editPostAssets.length > 0 ? 'Replace Media' : 'Add/Change Media'}
                 </Text>
@@ -1040,7 +1041,7 @@ export default function CommunityScreen() {
                   <Text style={[styles.editCancelText, { color: theme.textSecondary }]}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.editSaveBtn, { backgroundColor: theme.success, opacity: editPostMutation.isPending ? 0.7 : 1 }]}
+                  style={[styles.editSaveBtn, { backgroundColor: theme.primary, opacity: editPostMutation.isPending ? 0.7 : 1 }]}
                   disabled={editPostMutation.isPending}
                   onPress={handleSaveEditedPost}
                 >
@@ -1125,7 +1126,7 @@ export default function CommunityScreen() {
                       </View>
                       
                       {parentComment && (
-                        <Text style={{ fontSize: 11, color: theme.success, marginBottom: 2, fontWeight: '600' }}>
+                        <Text style={{ fontSize: 11, color: theme.primary, marginBottom: 2, fontWeight: '600' }}>
                           Replying to <Text style={{ color: theme.textSecondary }}>@{parentComment.author.fullName}</Text>
                         </Text>
                       )}
@@ -1149,7 +1150,7 @@ export default function CommunityScreen() {
               ListEmptyComponent={
                 commentsQuery.isLoading ? (
                   <View style={styles.commentsLoadingWrap}>
-                    <ActivityIndicator color={theme.success} />
+                    <ActivityIndicator color={theme.primary} />
                   </View>
                 ) : (
                   <View style={[styles.commentsLoadingWrap, { flex: 1 }]}>
@@ -1194,7 +1195,7 @@ export default function CommunityScreen() {
                 multiline
               />
               <TouchableOpacity
-                style={[styles.commentSendBtn, { backgroundColor: theme.success, opacity: addCommentMutation.isPending ? 0.7 : 1 }]}
+                style={[styles.commentSendBtn, { backgroundColor: theme.primary, opacity: addCommentMutation.isPending ? 0.7 : 1 }]}
                 disabled={addCommentMutation.isPending}
                 onPress={handleSubmitComment}
               >
@@ -1409,7 +1410,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.3)',
   },
   modalTapCatch: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   modalCard: {
     borderTopLeftRadius: 20,

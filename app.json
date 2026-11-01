@@ -88,13 +88,24 @@
           "android": {
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
+            "extraProguardRules": "-keep class org.webrtc.** { *; }\n-dontwarn org.webrtc.**\n-keep class com.oney.WebRTCModule.** { *; }\n-keep class io.agora.** { *; }\n-dontwarn io.agora.**",
             "buildArchs": [
               "armeabi-v7a",
               "arm64-v8a"
             ]
           }
         }
-      ]
+      ],
+      "expo-font",
+      "expo-splash-screen",
+      "expo-status-bar",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "CD4 uses your microphone for the AI voice assistant and calls with your doctor."
+        }
+      ],
+      "expo-video"
     ],
     "scheme": [
       "cd4",

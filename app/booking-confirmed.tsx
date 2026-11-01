@@ -32,7 +32,7 @@ export default function BookingConfirmedScreen() {
         if (active) {
           setIsValid(false);
           setIsValidating(false);
-          router.replace('/(tabs)/appointments');
+          router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } });
         }
         return;
       }
@@ -50,7 +50,7 @@ export default function BookingConfirmedScreen() {
       if (error || !data?.id) {
         setIsValid(false);
         setIsValidating(false);
-        router.replace('/(tabs)/appointments');
+        router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } });
         return;
       }
       setIsValid(true);
@@ -80,7 +80,7 @@ export default function BookingConfirmedScreen() {
           <Text style={[styles.infoText, { color: theme.textSecondary }]}>Payment ID: {params.paymentId || 'N/A'}</Text>
         </View>
 
-        <TouchableOpacity style={[styles.button, { backgroundColor: theme.buttonPrimary }]} onPress={() => router.replace('/(tabs)/appointments')}>
+        <TouchableOpacity style={[styles.button, { backgroundColor: theme.buttonPrimary }]} onPress={() => router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } })}>
           <Text style={[styles.buttonText, { color: theme.buttonText }]}>Go To Appointments</Text>
         </TouchableOpacity>
       </View>

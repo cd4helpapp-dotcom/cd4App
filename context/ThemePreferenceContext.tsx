@@ -161,7 +161,7 @@ export function ThemePreferenceProvider({ children }: { children: React.ReactNod
 
   useEffect(() => {
     try {
-      Appearance.setColorScheme(themePreference === 'system' ? null : themePreference);
+      Appearance.setColorScheme(themePreference === 'system' ? 'unspecified' : themePreference);
     } catch (error) {
       console.warn('Failed to apply app theme preference:', error);
     }

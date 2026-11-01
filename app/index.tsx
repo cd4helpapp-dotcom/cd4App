@@ -1,7 +1,6 @@
 import React from 'react';
 import { Redirect } from 'expo-router';
 import { useAuthContext } from '../context/AuthContext';
-import LoadingScreen from '../ui/common/LoadingScreen';
 import RouteLoadingScreen from '../ui/common/RouteLoadingScreen';
 import { needsPatientProfileSetup } from '../utils/profileSetup';
 
@@ -9,7 +8,7 @@ export default function Index() {
   const { isAuthenticated, isLoading, isProfileResolved, isProfileLoadedFromDb, user, session } = useAuthContext();
 
   if (isLoading) {
-    return <LoadingScreen message="Initializing app..." />;
+    return <RouteLoadingScreen />;
   }
 
   if (isAuthenticated) {

@@ -285,7 +285,7 @@ const getDayWindowInOffset = (now: Date, offsetMinutes: number) => {
   const utcMs = now.getTime()
   const offsetMs = offsetMinutes * 60 * 1000
   const shifted = new Date(utcMs + offsetMs)
-  const year = shifted.getUTCFulloear()
+  const year = shifted.getUTCFullYear()
   const month = shifted.getUTCMonth()
   const day = shifted.getUTCDate()
   const startMs = Date.UTC(year, month, day, 0, 0, 0) - offsetMs
@@ -947,6 +947,7 @@ Deno.serve(async (req) => {
     const question = clipText(typeof body?.question === "string" ? body.question : "", 2000)
     const responseLanguage = typeof body?.responseLanguage === "string" ? body.responseLanguage.trim().toLowerCase() : "auto"
     const forceEnglishResponse = responseLanguage === "en" || responseLanguage === "english"
+    const preferHindiResponse = responseLanguage === "hi" || responseLanguage === "hindi"
     if (!reportId) {
       throw new Error("reportId is required.")
     }
@@ -1141,7 +1142,9 @@ Deno.serve(async (req) => {
       "If user asks unrelated/non-medical topic, politely refuse and redirect to report-related question.",
       forceEnglishResponse
         ? "Respond only in clear professional English. Do not use Hindi or mixed-script output."
-        : "Mirror user's language/script from latest message.",
+        : preferHindiResponse
+          ? "Respond in simple Hindi (Devanagari) unless the user's latest message is clearly in another language, in which case mirror that language. Keep test names, medicine names, values and units in English as printed on the report."
+          : "Mirror user's language/script from latest message.",
       "Keep response factual, simple, and clear; if data is missing, say 'not clearly visible in report'.",
       "No diagnosis certainty and no dosage/treatment prescription.",
       "You may explain prescription details already visible in uploaded report, but never invent new medicine instructions.",

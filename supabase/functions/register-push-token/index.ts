@@ -53,7 +53,13 @@ Deno.serve(async (req: Request) => {
 
     const body = await req.json().catch(() => null);
     const rawToken = typeof body?.token === "string" ? body.token.trim() : "";
-    const shouldClear = !rawToken;
+    // Clearing is only on an explicit `token: null` (logout). A missing or empty token used to clear too, so any
+    // malformed call silently switched off the user's notifications.
+    const shouldClear = body !== null && typeof body === "object" && body.token === null;
+
+    if (!shouldClear && !rawToken) {
+      return jsonResponse({ success: false, message: "missing_push_token" }, 400);
+    }
 
     if (!shouldClear && !isLikelyExpoToken(rawToken)) {
       return jsonResponse({ success: false, message: "invalid_push_token_format" }, 400);

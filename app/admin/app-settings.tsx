@@ -355,7 +355,7 @@ export default function AdminAppSettingsScreen() {
                 void saveSupportAlertsSetting(value);
               }}
               disabled={isSavingSupportSetting}
-              trackColor={{ false: theme.borderColor, true: theme.success }}
+              trackColor={{ false: theme.borderColor, true: theme.primary }}
             />
           </View>
 

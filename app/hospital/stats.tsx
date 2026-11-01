@@ -93,7 +93,7 @@ export default function HospitalStatsScreen() {
             {/* Voice Intake Summary Analytics */}
             <View style={[styles.analyticsCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                 <View style={styles.cardHeaderRow}>
-                    <View style={[styles.iconBadge, { backgroundColor: theme.successLight }]}>
+                    <View style={[styles.iconBadge, { backgroundColor: theme.primarySoft }]}>
                         <TrendingUp size={18} color={theme.tint} />
                     </View>
                     <Text style={[styles.cardHeaderTitle, { color: theme.text }]}>Voice Summary Metrics</Text>
@@ -130,7 +130,7 @@ export default function HospitalStatsScreen() {
             {/* Doctor Specialization Breakdown */}
             <View style={[styles.analyticsCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                 <View style={styles.cardHeaderRow}>
-                    <View style={[styles.iconBadge, { backgroundColor: theme.successLight }]}>
+                    <View style={[styles.iconBadge, { backgroundColor: theme.primarySoft }]}>
                         <BarChart3 size={18} color={theme.tint} />
                     </View>
                     <Text style={[styles.cardHeaderTitle, { color: theme.text }]}>Doctors by Specialization</Text>
@@ -141,7 +141,7 @@ export default function HospitalStatsScreen() {
                         {sortedSpecs.map(([spec, count]) => (
                             <View key={spec} style={[styles.specRow, { borderBottomColor: theme.borderColor }]}>
                                 <Text style={[styles.specName, { color: theme.text }]}>{spec}</Text>
-                                <View style={[styles.specBadge, { backgroundColor: theme.successLight }]}>
+                                <View style={[styles.specBadge, { backgroundColor: theme.primarySoft }]}>
                                     <Text style={[styles.specBadgeText, { color: theme.tint }]}>{count} linked</Text>
                                 </View>
                             </View>
@@ -155,7 +155,7 @@ export default function HospitalStatsScreen() {
             {/* Patient Assignment Analytics */}
             <View style={[styles.analyticsCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor, marginBottom: 20 }]}>
                 <View style={styles.cardHeaderRow}>
-                    <View style={[styles.iconBadge, { backgroundColor: theme.successLight }]}>
+                    <View style={[styles.iconBadge, { backgroundColor: theme.primarySoft }]}>
                         <CheckCircle2 size={18} color={theme.tint} />
                     </View>
                     <Text style={[styles.cardHeaderTitle, { color: theme.text }]}>Patient Assignment Rates</Text>
@@ -197,7 +197,7 @@ function StatCard({
             onPress={onPress}
             activeOpacity={0.7}
         >
-            <View style={[styles.statIconWrap, { backgroundColor: theme.successLight }]}>
+            <View style={[styles.statIconWrap, { backgroundColor: theme.primarySoft }]}>
                 <Icon size={16} color={theme.tint} />
             </View>
             <Text style={[styles.statValue, { color: theme.text }]} numberOfLines={1}>

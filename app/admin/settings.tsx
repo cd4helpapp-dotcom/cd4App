@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   avatarOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 48,
     alignItems: 'center',
     justifyContent: 'center',

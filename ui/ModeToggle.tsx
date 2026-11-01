@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions, useColorScheme } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions, Platform, useColorScheme } from 'react-native';
 import Colors from '../constants/Colors';
 import { useAppMode } from '../context/AppModeContext';
 
@@ -17,7 +17,7 @@ export default function ModeToggle() {
     useEffect(() => {
         Animated.spring(translateX, {
             toValue: mode === 'reversal' ? TAB_WIDTH : 0,
-            useNativeDriver: true,
+            useNativeDriver: Platform.OS !== 'web',
             bounciness: 0,
         }).start();
     }, [mode]);

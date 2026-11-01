@@ -8,6 +8,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Theme } from '../../constants/Colors';
 
@@ -24,7 +25,7 @@ type AppInputProps = TextInputProps & {
   gradientColors?: [string, string];
 };
 
-const AppInput = React.forwardRef<RNTextInput, AppInputProps>(
+const AppInput = React.forwardRef<TextInputInstance, AppInputProps>(
   (
     {
       theme,

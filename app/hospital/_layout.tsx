@@ -19,7 +19,7 @@ function ModernTabIcon({
     activeName: React.ComponentProps<typeof Ionicons>['name'];
     inactiveName: React.ComponentProps<typeof Ionicons>['name'];
 }) {
-    return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
+    return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color as string} />;
 }
 
 const HOSPITAL_VISIBLE_TABS = ['dashboard', 'stats', 'doctors', 'patients', 'settings'] as const;
@@ -120,7 +120,7 @@ export default function HospitalLayout() {
                     title: 'Hospital',
                     tabBarLabel: 'Home',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="home" inactiveName="home-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="home" inactiveName="home-outline" />
                     ),
                 }}
             />
@@ -130,7 +130,7 @@ export default function HospitalLayout() {
                     title: 'Stats',
                     tabBarLabel: 'Stats',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="stats-chart" inactiveName="stats-chart-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="stats-chart" inactiveName="stats-chart-outline" />
                     ),
                 }}
             />
@@ -140,7 +140,7 @@ export default function HospitalLayout() {
                     title: 'Doctors',
                     tabBarLabel: 'Doctors',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="medkit" inactiveName="medkit-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="medkit" inactiveName="medkit-outline" />
                     ),
                 }}
             />
@@ -150,7 +150,7 @@ export default function HospitalLayout() {
                     title: 'Patients',
                     tabBarLabel: 'Patients',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="people" inactiveName="people-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="people" inactiveName="people-outline" />
                     ),
                 }}
             />
@@ -167,7 +167,7 @@ export default function HospitalLayout() {
                     title: 'Profile',
                     tabBarLabel: 'Profile',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="person" inactiveName="person-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="person" inactiveName="person-outline" />
                     ),
                 }}
             />

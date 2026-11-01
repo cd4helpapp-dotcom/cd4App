@@ -50,7 +50,7 @@ export default function HospitalPatientProfileScreen() {
             ) : (
                 <>
                     <View style={[styles.profileCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                        <View style={[styles.avatar, { backgroundColor: theme.successLight }]}><UserRound size={22} color={theme.tint} /></View>
+                        <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}><UserRound size={22} color={theme.tint} /></View>
                         <View style={{ flex: 1 }}>
                             <Text style={[styles.profileName, { color: theme.text }]}>{patient.patientName}</Text>
                             <Text style={[styles.muted, { color: theme.textSecondary }]}>{patient.patientEmail || patient.patientPhone || 'Contact not available'}</Text>
@@ -65,7 +65,7 @@ export default function HospitalPatientProfileScreen() {
 
                     {intakesQuery.isLoading ? <ActivityIndicator color={theme.tint} /> : intakes.length ? intakes.map((intake) => (
                         <TouchableOpacity key={intake.id} style={[styles.reportCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => router.push({ pathname: '/hospital/voice-intake-report', params: { id: intake.id } })} activeOpacity={0.82}>
-                            <View style={[styles.reportIcon, { backgroundColor: theme.successLight }]}><FileText size={18} color={theme.tint} /></View>
+                            <View style={[styles.reportIcon, { backgroundColor: theme.primarySoft }]}><FileText size={18} color={theme.tint} /></View>
                             <View style={{ flex: 1 }}>
                                 <Text style={[styles.reportTitle, { color: theme.text }]}>{intake.title}</Text>
                                 <Text style={[styles.muted, { color: theme.textSecondary }]}>{formatDate(intake.createdAt)} • {formatStatus(intake.status)}</Text>

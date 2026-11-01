@@ -26,7 +26,7 @@ export default function AdminRevenueScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}>
-      <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}>
+      <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} />}>
         <View style={styles.header}><View><Text style={[styles.title, { color: theme.text }]}>Revenue</Text><Text style={[styles.sub, { color: theme.textSecondary }]}>Complete payment ledger and doctor settlements</Text></View><Ionicons name="analytics" size={28} color={theme.tint} /></View>
         {isLoading ? <ActivityIndicator color={theme.tint} /> : <>
           <View style={styles.grid}>

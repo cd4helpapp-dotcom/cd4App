@@ -155,7 +155,7 @@ export default function AdminDashboard() {
                         </View>
                     </View>
                     <TouchableOpacity
-                        style={[styles.reviewActionBtn, { borderColor: theme.tint, backgroundColor: theme.successLight }]}
+                        style={[styles.reviewActionBtn, { borderColor: theme.tint, backgroundColor: theme.primarySoft }]}
                         onPress={() => router.push('/admin/doctors')}
                     >
                         <Text style={[styles.reviewActionText, { color: theme.tint }]}>Open</Text>
@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
     miniTitle: {
         color: '#fff',
         fontSize: 13,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
         alignSelf: 'flex-start',
         marginLeft: 8,
     },
@@ -477,12 +477,12 @@ const styles = StyleSheet.create({
     welcomeText: {
         color: '#aaa',
         fontSize: 14,
-        fontFamily: 'Outfit-Regular',
+        fontWeight: '400',
     },
     adminText: {
         color: '#fff',
         fontSize: 24,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
     },
     profileButton: {
         padding: 5,
@@ -524,14 +524,14 @@ const styles = StyleSheet.create({
     cardTitle: {
         fontSize: 12,
         lineHeight: 16,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
         color: '#A0A0A0',
         marginBottom: 8,
     },
     cardValue: {
         fontSize: 32,
         lineHeight: 36,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
         color: '#FFF',
     },
     statsGrid: {
@@ -571,11 +571,11 @@ const styles = StyleSheet.create({
     filterChipText: {
         color: '#B5B5B5',
         fontSize: 12,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
     },
     filterChipTextActive: {
         color: Colors.dark.tint,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     monthPickerRow: {
         flexDirection: 'row',
@@ -585,7 +585,7 @@ const styles = StyleSheet.create({
     monthPickerLabel: {
         color: '#aaa',
         fontSize: 12,
-        fontFamily: 'Outfit-Regular',
+        fontWeight: '400',
         marginRight: 8,
     },
     monthPickerButton: {
@@ -601,7 +601,7 @@ const styles = StyleSheet.create({
     monthPickerButtonText: {
         color: '#fff',
         fontSize: 12,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
         marginHorizontal: 6,
     },
     monthPickerBackdrop: {
@@ -629,12 +629,12 @@ const styles = StyleSheet.create({
     monthPickerModalTitle: {
         color: '#fff',
         fontSize: 15,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     monthPickerClose: {
         color: Colors.dark.tint,
         fontSize: 12,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     monthPickerItem: {
         borderWidth: 1,
@@ -654,11 +654,11 @@ const styles = StyleSheet.create({
     monthPickerItemText: {
         color: '#ddd',
         fontSize: 12,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
     },
     monthPickerItemTextActive: {
         color: Colors.dark.tint,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     monthChip: {
         borderWidth: 1,
@@ -676,21 +676,21 @@ const styles = StyleSheet.create({
     monthChipText: {
         color: '#B5B5B5',
         fontSize: 11,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
     },
     monthChipTextActive: {
         color: Colors.dark.tint,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     sectionTitle: {
         color: '#fff',
         fontSize: 20,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
     },
     viewAllText: {
         color: Colors.dark.tint,
         fontSize: 13,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     revenueCard: {
         padding: 20,
@@ -702,12 +702,12 @@ const styles = StyleSheet.create({
     revenueLabel: {
         color: '#888',
         fontSize: 14,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
     },
     revenueAmount: {
         color: '#fff',
         fontSize: 36,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
         marginVertical: 10,
     },
     revenueGrowth: {
@@ -723,7 +723,7 @@ const styles = StyleSheet.create({
         color: '#43e97b',
         fontSize: 12,
         marginLeft: 5,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
     },
     doctorItem: {
         flexDirection: 'row',
@@ -752,18 +752,18 @@ const styles = StyleSheet.create({
     },
     avatarText: {
         fontSize: 16,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
         color: '#fff',
     },
     doctorName: {
         color: '#fff',
         fontSize: 16,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
     },
     doctorSpec: {
         color: '#666',
         fontSize: 12,
-        fontFamily: 'Outfit-Regular',
+        fontWeight: '400',
         marginTop: 2,
     },
     statusBadge: {
@@ -773,7 +773,7 @@ const styles = StyleSheet.create({
     },
     statusText: {
         fontSize: 10,
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
         textTransform: 'uppercase',
     },
     topAdsCard: {
@@ -786,13 +786,13 @@ const styles = StyleSheet.create({
     },
     topAdsTitle: {
         color: '#fff',
-        fontFamily: 'Outfit-Bold',
+        fontWeight: '700',
         fontSize: 14,
         marginBottom: 8,
     },
     topAdsEmpty: {
         color: '#aaa',
-        fontFamily: 'Outfit-Regular',
+        fontWeight: '400',
         fontSize: 12,
     },
     topAdsRow: {
@@ -803,13 +803,13 @@ const styles = StyleSheet.create({
     topAdsName: {
         color: '#fff',
         fontSize: 12,
-        fontFamily: 'Outfit-Medium',
+        fontWeight: '500',
         marginBottom: 2,
     },
     topAdsMeta: {
         color: '#bbb',
         fontSize: 11,
-        fontFamily: 'Outfit-Regular',
+        fontWeight: '400',
     },
     reviewCard: {
         backgroundColor: '#1e1e1e',
@@ -839,13 +839,13 @@ const styles = StyleSheet.create({
     reviewTitle: {
         color: '#fff',
         fontSize: 14,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
     },
     reviewSubtitle: {
         color: '#b8b8b8',
         fontSize: 12,
         marginTop: 2,
-        fontFamily: 'Outfit-Regular',
+        fontWeight: '400',
     },
     reviewActionBtn: {
         borderWidth: 1,
@@ -857,7 +857,7 @@ const styles = StyleSheet.create({
     },
     reviewActionText: {
         color: Colors.dark.tint,
-        fontFamily: 'Outfit-SemiBold',
+        fontWeight: '600',
         fontSize: 12,
     },
 });

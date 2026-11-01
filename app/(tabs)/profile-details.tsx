@@ -176,7 +176,7 @@ export default function ProfileDetailsScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={[styles.card, { backgroundColor: theme.cardBackground, shadowColor: theme.text }]}>
           <TouchableOpacity onPress={pickImage} disabled={uploadMutation.isPending}>
-            <View style={[styles.avatarContainer, { backgroundColor: theme.successLight }]}>
+            <View style={[styles.avatarContainer, { backgroundColor: theme.primarySoft }]}>
               {uploadMutation.isPending ? (
                 <ActivityIndicator color={theme.tint} />
               ) : profileImageUrl ? (

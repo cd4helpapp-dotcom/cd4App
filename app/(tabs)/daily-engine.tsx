@@ -21,7 +21,7 @@ export default function DailyEngineScreen() {
 
         <View style={[styles.aiCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
           <View style={styles.aiHeader}>
-            <View style={[styles.aiAvatar, { backgroundColor: theme.success }]}>
+            <View style={[styles.aiAvatar, { backgroundColor: theme.primary }]}>
               <Bot size={24} color="#fff" />
             </View>
             <View style={{ flex: 1 }}>

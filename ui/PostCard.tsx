@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Animated, FlatList, Dimensions, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Animated, FlatList, Dimensions, Platform, Pressable } from 'react-native';
 import { Heart, MessageSquare, Share2, Pin, ShieldCheck, MoreHorizontal, Play, Pause } from 'lucide-react-native';
-import { Video, ResizeMode } from 'expo-av';
+import { useEvent } from 'expo';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { Theme } from '../constants/Colors';
 
 const { width: WINDOW_WIDTH } = Dimensions.get('window');
@@ -83,36 +84,25 @@ const normalizeImageAspectRatio = (ratio: number): number => {
 };
 
 function VideoPlayer({ url, theme, isActive }: { url: string; theme: Theme; isActive: boolean }) {
-  const video = React.useRef<Video>(null);
-  const [status, setStatus] = React.useState<any>({});
+  const player = useVideoPlayer({ uri: url }, (instance) => {
+    instance.loop = true;
+  });
+  const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
   React.useEffect(() => {
-    if (!isActive) {
-      video.current?.pauseAsync();
-    }
-  }, [isActive]);
+    if (!isActive) player.pause();
+  }, [isActive, player]);
 
   const togglePlay = () => {
-    if (status.isPlaying) {
-      video.current?.pauseAsync();
-    } else {
-      video.current?.playAsync();
-    }
+    if (isPlaying) player.pause();
+    else player.play();
   };
 
   return (
     <View style={styles.videoContainer}>
-      <Video
-        ref={video}
-        style={styles.videoPlayer}
-        source={{ uri: url }}
-        useNativeControls={false}
-        resizeMode={ResizeMode.COVER}
-        isLooping
-        onPlaybackStatusUpdate={setStatus}
-      />
+      <VideoView player={player} style={styles.videoPlayer} contentFit="cover" nativeControls={false} />
       <Pressable style={styles.videoOverlay} onPress={togglePlay}>
-        {!status.isPlaying && (
+        {!isPlaying && (
           <View style={[styles.playButton, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
             <Play size={32} color="#fff" fill="#fff" />
           </View>
@@ -154,13 +144,13 @@ export default function PostCard({
       Animated.sequence([
         Animated.spring(likeScale, {
           toValue: 1.25,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
           speed: 18,
           bounciness: 9,
         }),
         Animated.spring(likeScale, {
           toValue: 1,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
           speed: 14,
           bounciness: 7,
         }),
@@ -226,7 +216,7 @@ export default function PostCard({
         styles.postCard,
         {
           backgroundColor: theme.cardBackground,
-          borderColor: post.isPinned ? theme.successBorder : theme.borderColor,
+          borderColor: post.isPinned ? theme.primaryBorder : theme.borderColor,
           borderWidth: post.isPinned ? 1.5 : 1,
         },
       ]}
@@ -271,9 +261,9 @@ export default function PostCard({
             </TouchableOpacity>
           ) : null}
           {post.isPinned && (
-            <View style={[styles.pinnedLabel, { backgroundColor: theme.successLight }]}>
-              <Pin size={12} color={theme.success} style={{ marginRight: 4 }} />
-              <Text style={[styles.pinnedText, { color: theme.success }]}>Pinned</Text>
+            <View style={[styles.pinnedLabel, { backgroundColor: theme.primarySoft }]}>
+              <Pin size={12} color={theme.primary} style={{ marginRight: 4 }} />
+              <Text style={[styles.pinnedText, { color: theme.primary }]}>Pinned</Text>
             </View>
           )}
         </View>
@@ -300,7 +290,7 @@ export default function PostCard({
                   key={i}
                   style={[
                     styles.paginationDot,
-                    { backgroundColor: i === activeIndex ? theme.success : theme.textSecondary + '40' },
+                    { backgroundColor: i === activeIndex ? theme.primary : theme.textSecondary + '40' },
                     i === activeIndex ? styles.paginationDotActive : null,
                   ]}
                 />
@@ -321,8 +311,8 @@ export default function PostCard({
             <Animated.View style={{ transform: [{ scale: likeScale }] }}>
               <Heart
                 size={17}
-                color={post.likedByMe ? theme.success : theme.textSecondary}
-                fill={post.likedByMe ? theme.success : 'transparent'}
+                color={post.likedByMe ? theme.primary : theme.textSecondary}
+                fill={post.likedByMe ? theme.primary : 'transparent'}
               />
             </Animated.View>
           </TouchableOpacity>
@@ -332,7 +322,7 @@ export default function PostCard({
             onPress={() => onPressLikeCount?.(post)}
             style={{ paddingVertical: 4, minWidth: 20 }}
           >
-            <Text style={[styles.interactionText, { color: post.likedByMe ? theme.success : theme.textSecondary, marginLeft: 0 }]}>
+            <Text style={[styles.interactionText, { color: post.likedByMe ? theme.primary : theme.textSecondary, marginLeft: 0 }]}>
               {post.likeCount}
             </Text>
           </TouchableOpacity>
@@ -470,7 +460,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   videoOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },

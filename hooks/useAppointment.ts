@@ -244,15 +244,23 @@ export const useAvailableSlots = (doctorId: string) => {
                 throw error;
             }
 
-            return data.map((s: any) => ({
-                id: s.id,
-                _id: s.id,
-                doctor: s.doctor_id,
-                date: s.date,
-                startTime: s.start_time,
-                endTime: s.end_time,
-                isBooked: s.is_booked,
-            })) as Slot[];
+            // The query only filters by date, so slots earlier today would still show as bookable.
+            const bookableFrom = Date.now() + 10 * 60 * 1000;
+            return data
+                .filter((s: any) => {
+                    const [y, m, d] = String(s.date || '').split('-').map(Number);
+                    const [hh = 0, mm = 0] = String(s.start_time || '00:00').split(':').map(Number);
+                    return !y || new Date(y, m - 1, d, hh, mm).getTime() >= bookableFrom;
+                })
+                .map((s: any) => ({
+                    id: s.id,
+                    _id: s.id,
+                    doctor: s.doctor_id,
+                    date: s.date,
+                    startTime: s.start_time,
+                    endTime: s.end_time,
+                    isBooked: s.is_booked,
+                })) as Slot[];
         },
         enabled: !!doctorId,
     });
@@ -474,6 +482,34 @@ export const useAddSlot = () => {
 
             if (error) throw error;
             return newSlot;
+        },
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorSlots(session?.user?.id || '') });
+        },
+    });
+};
+
+// Deletes one of the doctor's own slots. Only unbooked slots can be removed; the update is filtered in SQL too,
+// so a slot that gets booked between render and tap is never deleted.
+export const useDeleteSlot = () => {
+    const queryClient = useQueryClient();
+    const { session } = useAuthContext();
+
+    return useMutation({
+        mutationFn: async (slotId: string) => {
+            if (!session?.user?.id) throw new Error('Not authenticated');
+            const { data, error } = await supabase
+                .from('slots')
+                .delete()
+                .eq('id', slotId)
+                .eq('doctor_id', session.user.id)
+                .eq('is_booked', false)
+                .select('id');
+            if (error) throw error;
+            if (!data || data.length === 0) {
+                throw new Error('This slot could not be deleted. It may have just been booked, or deleting slots is not enabled yet.');
+            }
+            return slotId;
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorSlots(session?.user?.id || '') });

@@ -1,7 +1,9 @@
+import React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
+import { useAppLanguage } from '../context/AppLanguageContext';
 
 export type MedicalReportStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
@@ -47,6 +49,30 @@ const FREE_PLAN_REPORT_UPLOAD_WINDOW_MS = FREE_PLAN_REPORT_UPLOAD_WINDOW_HOURS *
 const PRO_ACTIVE_STATUSES = new Set(['active', 'trialing', 'grace']);
 
 export type ReportUploadCategory = 'report' | 'prescription';
+
+export const REPORT_UPLOAD_LIMIT_FREE = FREE_PLAN_REPORT_UPLOAD_LIMIT;
+export const REPORT_UPLOAD_WINDOW_HOURS = FREE_PLAN_REPORT_UPLOAD_WINDOW_HOURS;
+export const REPORT_MAX_UPLOAD_MB = MAX_REPORT_UPLOAD_MB;
+// How long a scan may stay "processing" before the app treats it as stuck and offers a retry. A normal scan takes
+// well under two minutes; the server only gives up on its own after 12 minutes.
+export const REPORT_STUCK_AFTER_MS = 5 * 60 * 1000;
+
+export const isMedicalReportActive = (report: Pick<MedicalReport, 'analysisStatus'>): boolean =>
+  report.analysisStatus === 'pending' || report.analysisStatus === 'processing';
+
+export const isMedicalReportStuck = (report: Pick<MedicalReport, 'analysisStatus' | 'updatedAt' | 'createdAt'>, nowMs: number = Date.now()): boolean => {
+  if (!isMedicalReportActive(report)) return false;
+  const since = new Date(report.updatedAt || report.createdAt).getTime();
+  return Number.isFinite(since) && nowMs - since > REPORT_STUCK_AFTER_MS;
+};
+
+// The report explanation follows the app language: Hindi -> Hindi, English -> English, anything else mirrors the user.
+const useReportResponseLanguage = (): 'hi' | 'en' | 'auto' => {
+  const { language } = useAppLanguage();
+  if (language === 'hi') return 'hi';
+  if (language === 'en') return 'en';
+  return 'auto';
+};
 
 const sanitizeFileName = (value: string): string =>
   value
@@ -399,8 +425,9 @@ const formatRetryDuration = (ms: number): string => {
 
 export const useMedicalReports = () => {
   const { session } = useAuthContext();
+  const queryClient = useQueryClient();
 
-  return useQuery({
+  const query = useQuery({
     queryKey: MEDICAL_REPORT_QUERY_KEYS.reports,
     enabled: !!session?.user?.id,
     queryFn: async () => {
@@ -428,11 +455,71 @@ export const useMedicalReports = () => {
     staleTime: 20_000,
     refetchOnWindowFocus: false,
   });
+
+  // While a report is being scanned, poll only its status (a few bytes) and reload the full list once it changes.
+  // Re-fetching the whole list (large ai_structured JSON) every few seconds filled the browser's connection pool
+  // and left other requests "pending".
+  const activeIds = (query.data || []).filter(isMedicalReportActive).map((report) => report.id);
+  const activeKey = activeIds.join(',');
+  React.useEffect(() => {
+    if (!activeKey || !session?.user?.id) return;
+    let cancelled = false;
+    const ids = activeKey.split(',');
+    const timer = setInterval(async () => {
+      const { data } = await supabase.from('medical_reports').select('id, analysis_status').in('id', ids).is('deleted_at', null);
+      if (cancelled || !data) return;
+      const finished = data.some((row: any) => row.analysis_status === 'completed' || row.analysis_status === 'failed');
+      const removed = data.length < ids.length;
+      if (finished || removed) {
+        await queryClient.invalidateQueries({ queryKey: MEDICAL_REPORT_QUERY_KEYS.reports });
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeKey, session?.user?.id, queryClient]);
+
+  return query;
+};
+
+// Uploads used in the rolling free-plan window (deleted reports still count, as on the server side of things).
+export const useReportUploadQuota = () => {
+  const { session, user } = useAuthContext();
+  return useQuery({
+    queryKey: ['medical-reports', 'upload-quota', session?.user?.id || 'none'],
+    enabled: !!session?.user?.id,
+    staleTime: 15_000,
+    queryFn: async () => {
+      if (!session?.user?.id) return { used: 0, limit: FREE_PLAN_REPORT_UPLOAD_LIMIT, remaining: FREE_PLAN_REPORT_UPLOAD_LIMIT, isPro: false, resetsAt: null as string | null };
+      const isPro =
+        isSubscriptionCurrentlyActive({ status: user?.subscription?.status, expiresAt: user?.subscription?.expiresAt || null }) ||
+        (await hasActiveProSubscriptionInDb(session.user.id));
+      const since = new Date(Date.now() - FREE_PLAN_REPORT_UPLOAD_WINDOW_MS).toISOString();
+      const { data } = await supabase
+        .from('medical_reports')
+        .select('created_at')
+        .eq('patient_id', session.user.id)
+        .gte('created_at', since)
+        .order('created_at', { ascending: true })
+        .limit(50);
+      const used = data?.length || 0;
+      const resetsAt = data?.[0]?.created_at ? new Date(new Date(data[0].created_at).getTime() + FREE_PLAN_REPORT_UPLOAD_WINDOW_MS).toISOString() : null;
+      return {
+        used,
+        limit: FREE_PLAN_REPORT_UPLOAD_LIMIT,
+        remaining: isPro ? FREE_PLAN_REPORT_UPLOAD_LIMIT : Math.max(0, FREE_PLAN_REPORT_UPLOAD_LIMIT - used),
+        isPro,
+        resetsAt,
+      };
+    },
+  });
 };
 
 export const useUploadMedicalReport = () => {
   const queryClient = useQueryClient();
   const { session, user } = useAuthContext();
+  const responseLanguage = useReportResponseLanguage();
 
   return useMutation({
     mutationFn: async (
@@ -526,7 +613,7 @@ export const useUploadMedicalReport = () => {
             const { data: analyzeData, error: analyzeError } = await functionsClient.invoke('analyze-medical-report', {
               body: {
                 reportId: inserted.id,
-                responseLanguage: 'en',
+                responseLanguage,
               },
             });
 
@@ -574,6 +661,7 @@ export const useUploadMedicalReport = () => {
       }
     },
     onSuccess: (createdReport) => {
+      queryClient.invalidateQueries({ queryKey: ['medical-reports', 'upload-quota'] });
       queryClient.setQueryData(MEDICAL_REPORT_QUERY_KEYS.reports, (existing: MedicalReport[] | undefined) => {
         const list = Array.isArray(existing) ? existing : [];
         const withoutCurrent = list.filter((item) => item.id !== createdReport.id);
@@ -586,6 +674,7 @@ export const useUploadMedicalReport = () => {
 export const useReanalyzeMedicalReport = () => {
   const queryClient = useQueryClient();
   const { session } = useAuthContext();
+  const responseLanguage = useReportResponseLanguage();
 
   return useMutation({
     mutationFn: async ({ reportId }: { reportId: string }) => {
@@ -618,7 +707,8 @@ export const useReanalyzeMedicalReport = () => {
       const functionsClient = supabase.functions;
       functionsClient.setAuth(session.access_token);
       const { data: analyzeData, error: analyzeError } = await functionsClient.invoke('analyze-medical-report', {
-        body: { reportId, responseLanguage: 'en' },
+        // force: the row was just marked "processing" above, which the server would otherwise read as "already running".
+        body: { reportId, responseLanguage, force: true },
       });
 
       if (analyzeError && isTransientAnalyzeInvokeFailure(analyzeError)) {
@@ -726,6 +816,7 @@ export const useSoftDeleteMedicalReport = () => {
 export const useAskMedicalReportQuestion = () => {
   const queryClient = useQueryClient();
   const { session } = useAuthContext();
+  const responseLanguage = useReportResponseLanguage();
 
   return useMutation({
     mutationFn: async ({ reportId, question }: { reportId: string; question: string }) => {
@@ -736,22 +827,25 @@ export const useAskMedicalReportQuestion = () => {
       const functionsClient = supabase.functions;
       functionsClient.setAuth(session.access_token);
       const { data, error } = await functionsClient.invoke('medical-report-chat', {
-        body: { reportId, question, responseLanguage: 'en' },
+        body: { reportId, question, responseLanguage },
       });
 
       if (error) {
-        throw error;
+        // Never show raw server text to patients; keep the detail in the console for debugging.
+        console.warn('[medical-report-chat]', await extractEdgeFunctionErrorMessage(error));
+        throw new Error('AI could not answer right now. Please try again in a moment.');
       }
 
       if (!data?.success) {
-        throw new Error(data?.message || 'Could not answer this question.');
+        throw new Error(data?.message || 'AI could not answer this question. Please try again.');
       }
 
       return data;
     },
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: MEDICAL_REPORT_QUERY_KEYS.reportMessages(variables.reportId) });
-    },
+    // Returned so mutateAsync resolves only after the new messages are loaded; the screen's temporary
+    // "your question" bubble then hands over to the stored one without a gap.
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: MEDICAL_REPORT_QUERY_KEYS.reportMessages(variables.reportId) }),
   });
 };
 

@@ -93,7 +93,7 @@ export default function HospitalVoiceIntakeReportScreen() {
         <ScrollView
             style={[styles.container, { backgroundColor: theme.background }]}
             contentContainerStyle={[styles.content, { paddingTop: insets.top + 2 }]}
-            refreshControl={<RefreshControl refreshing={intakeQuery.isRefetching} onRefresh={intakeQuery.refetch} tintColor={theme.tint} />}
+            refreshControl={<RefreshControl refreshing={intakeQuery.isRefetching} onRefresh={() => { void intakeQuery.refetch(); }} tintColor={theme.tint} />}
         >
             <View style={styles.header}>
                 <TouchableOpacity

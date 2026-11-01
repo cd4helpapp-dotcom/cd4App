@@ -1,5 +1,6 @@
 import React from 'react';
-import { InteractionManager, StyleSheet, View, TouchableOpacity, Text } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, Text } from 'react-native';
+import { runAfterInteractions } from '../../src/utils/afterInteractions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from 'react-native';
 import Colors from '../../constants/Colors';
@@ -29,7 +30,7 @@ export default function HomeScreen() {
 
   React.useEffect(() => {
     let cancelled = false;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = runAfterInteractions(() => {
       if (!cancelled) setShouldMountHomeContent(true);
     });
     const fallbackTimer = setTimeout(() => {

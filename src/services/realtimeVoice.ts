@@ -1,17 +1,56 @@
 import { Platform } from 'react-native';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { setAudioModeAsync } from 'expo-audio';
+import { enableSpeaker, resetSpeaker } from '../../modules/speaker-route';
+
+export type RealtimeVoiceStatus = 'connecting' | 'connected' | 'listening' | 'thinking' | 'speaking' | 'closed';
 
 export type RealtimeVoiceCallbacks = {
   onInputTranscript?: (text: string) => void;
   onAssistantTranscript?: (text: string) => void;
   onAssistantDone?: (text: string) => void;
   onAssistantInterrupted?: () => void;
+  // Fired when the assistant's audio has actually finished playing on the device (not just finished generating).
+  // This is the safe moment to re-open the microphone without the assistant hearing its own voice.
+  onPlaybackFinished?: () => void;
   onToolCall?: (name: string, callId: string, argumentsJson: string) => Promise<unknown>;
   onToolResult?: (name: string, result: unknown) => void;
-  onStatus?: (status: 'connecting' | 'connected' | 'speaking' | 'listening' | 'closed') => void;
+  onStatus?: (status: RealtimeVoiceStatus) => void;
   onError?: (error: Error) => void;
 };
 
+const SESSION_REQUEST_TIMEOUT_MS = 15000;
+const SDP_EXCHANGE_TIMEOUT_MS = 15000;
+// After the SDP answer is applied the data channel should open within seconds; if not, fail loudly instead of
+// leaving the patient on "Connecting…" forever (blocked network, VPN, captive Wi-Fi).
+const CHANNEL_OPEN_TIMEOUT_MS = 20000;
+// If the provider never reports the output buffer stopping, estimate playback from transcript length.
+const PLAYBACK_FALLBACK_MS_PER_CHAR = 65;
+const PLAYBACK_FALLBACK_MIN_MS = 1200;
+const PLAYBACK_FALLBACK_MAX_MS = 25000;
+
+// --- Audio routing -----------------------------------------------------------------------------
+// WebRTC voice is "call" audio, which many phones play on the quiet earpiece. The local SpeakerRoute module
+// (modules/speaker-route) moves it to the loudspeaker with plain AudioManager / AVAudioSession calls.
+// react-native-incall-manager did this before, but its 4.3.0 native start() crashed the app the moment voice
+// opened, so it was replaced. The expo-audio session mode is still set first as a fallback for older builds.
+export async function ensureSpeakerAudioRoute(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    await setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      interruptionMode: 'doNotMix',
+      shouldRouteThroughEarpiece: false,
+    });
+  } catch (error) {
+    if (__DEV__) console.warn('[RealtimeVoice] Could not configure speaker audio mode:', error);
+  }
+  enableSpeaker();
+}
+
+// --- Transcript hygiene --------------------------------------------------------------------------
 const EMERGENCY_PATTERN = /\b(chest pain|pressure in chest|severe breathing|difficulty breathing|shortness of breath|can't breathe|cannot breathe|fainted|unconscious|loss of consciousness|confusion|confused|stroke|face drooping|slurred speech|severe bleeding|bleeding heavily|bahut khoon|saans nahi|saans lene mein dikkat|behosh|hosh nahi|seene mein tez dard|seizure|fit aa raha|severe dehydration|not passing urine|blue lips|throat swelling|face swelling|suicidal|kill myself|self harm|neck stiffness)\b/i;
 const NOISE_TRANSCRIPT_PATTERN = /^(uh+|um+|hmm+|mm+|ah+|oh+|echo+|noise+|background noise|\.+|[-_.]+)$/i;
 
@@ -23,9 +62,8 @@ const isLikelyNoiseTranscript = (value: string): boolean => {
   return false;
 };
 
-// WebRTC can briefly capture a small part of the assistant audio before the
-// local track is muted. Collapse only obvious repeated chunks so normal
-// clinical wording and the user's meaning remain unchanged.
+// WebRTC can briefly capture a small part of the assistant audio before the local track is muted.
+// Collapse only obvious repeated chunks so normal clinical wording stays unchanged.
 const collapseRepeatedTranscript = (value: string): string => {
   const words = value.trim().replace(/\s+/g, ' ').split(' ').filter(Boolean);
   if (words.length < 3) return words.join(' ');
@@ -56,6 +94,7 @@ export type RealtimeVoiceHandle = {
   close: () => Promise<void>;
   sendText: (text: string) => void;
   startAssistantResponse: () => void;
+  // Stops the assistant immediately (generation and the audio already playing).
   interrupt: () => void;
   setInputEnabled: (enabled: boolean) => void;
 };
@@ -69,16 +108,85 @@ const parseEvent = (raw: string): any | null => {
   }
 };
 
+const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out. Check your internet connection and try again.`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
+// WebRTC events, data-channel events and timers call back into React state synchronously. On web an exception
+// there is only logged, but in an Android/iOS release build an uncaught error in such a callback is fatal and
+// closes the whole app. Every callback and native handler therefore runs behind this guard.
+const reportVoiceError = (where: string, cause: unknown, onError?: (error: Error) => void) => {
+  console.warn(`[RealtimeVoice] ${where} failed:`, cause);
+  try {
+    onError?.(new Error(`Voice assistant ran into a problem (${where}). Please start again.`));
+  } catch {
+    // The error reporter itself must never take the app down.
+  }
+};
+
+const guardCallbacks = (raw: RealtimeVoiceCallbacks): RealtimeVoiceCallbacks => {
+  const wrap = <K extends keyof RealtimeVoiceCallbacks>(key: K) => {
+    const fn = raw[key] as any;
+    if (typeof fn !== 'function') return undefined;
+    return ((...args: any[]) => {
+      try {
+        // onToolCall is async: a rejected promise stays a rejection (handled by the caller), not a crash.
+        return fn(...args);
+      } catch (cause) {
+        if (key === 'onToolCall') return Promise.reject(cause);
+        if (key !== 'onError') reportVoiceError(String(key), cause, raw.onError);
+        return undefined;
+      }
+    }) as RealtimeVoiceCallbacks[K];
+  };
+  return {
+    onInputTranscript: wrap('onInputTranscript'),
+    onAssistantTranscript: wrap('onAssistantTranscript'),
+    onAssistantDone: wrap('onAssistantDone'),
+    onAssistantInterrupted: wrap('onAssistantInterrupted'),
+    onPlaybackFinished: wrap('onPlaybackFinished'),
+    onToolCall: wrap('onToolCall'),
+    onToolResult: wrap('onToolResult'),
+    onStatus: wrap('onStatus'),
+    onError: wrap('onError'),
+  };
+};
+
 export async function connectRealtimeVoice(
   supabase: SupabaseClient,
   context: Record<string, unknown>,
-  callbacks: RealtimeVoiceCallbacks = {},
+  rawCallbacks: RealtimeVoiceCallbacks = {},
 ): Promise<RealtimeVoiceHandle> {
+  const callbacks = guardCallbacks(rawCallbacks);
+  // Wraps a native event handler / timer body so an exception inside it cannot crash a release build.
+  const guard = <A extends any[]>(where: string, fn: (...args: A) => void) => (...args: A) => {
+    try {
+      fn(...args);
+    } catch (cause) {
+      reportVoiceError(where, cause, rawCallbacks.onError);
+    }
+  };
   callbacks.onStatus?.('connecting');
+  void ensureSpeakerAudioRoute();
+
   let data: any;
   let error: any;
   try {
-    const response = await supabase.functions.invoke('voice-realtime-session', { body: context });
+    const response = await withTimeout(
+      supabase.functions.invoke('voice-realtime-session', { body: context }),
+      SESSION_REQUEST_TIMEOUT_MS,
+      'Starting the voice session'
+    );
     data = response.data;
     error = response.error;
   } catch (cause) {
@@ -86,12 +194,25 @@ export async function connectRealtimeVoice(
   }
   const clientSecret = data?.data?.clientSecret;
   if (error || typeof clientSecret !== 'string' || !clientSecret) {
-    throw new Error(`Realtime session failed: ${error?.message || data?.message || 'client secret missing'}`);
+    // supabase-js hides the JSON body of a non-2xx reply inside error.context; read it so the patient sees
+    // the real reason (e.g. the daily voice limit) instead of "Edge Function returned a non-2xx status code".
+    let serverMessage = '';
+    try {
+      const body = await (error as any)?.context?.json?.();
+      serverMessage = typeof body?.message === 'string' ? body.message : '';
+      if (body?.code === 'voice_quota') {
+        const quotaError = new Error(serverMessage || 'Daily voice limit reached.');
+        (quotaError as any).code = 'voice_quota';
+        throw quotaError;
+      }
+    } catch (parsed) {
+      if ((parsed as any)?.code === 'voice_quota') throw parsed;
+    }
+    throw new Error(`Realtime session failed: ${serverMessage || error?.message || data?.message || 'client secret missing'}`);
   }
 
-  // Keep the native package out of the web module graph. Metro otherwise
-  // tries to bundle react-native-webrtc on web and fails on native-only files
-  // such as RTCPIPView.
+  // Keep the native package out of the web module graph (Metro would otherwise try to bundle
+  // react-native-webrtc's native-only files for web).
   let rtc: any;
   if (Platform.OS === 'web') {
     rtc = {
@@ -100,8 +221,6 @@ export async function connectRealtimeVoice(
     };
   } else {
     try {
-      // Keep this require conditional so the native module is bundled in an
-      // Android/iOS build without being initialized by the web bundle.
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const loaded = require('react-native-webrtc');
       rtc = loaded?.default ?? loaded;
@@ -134,11 +253,18 @@ export async function connectRealtimeVoice(
       },
       video: false,
     });
+    void ensureSpeakerAudioRoute();
   } catch (cause) {
     peer.close?.();
     throw new Error(`Microphone capture failed: ${toErrorMessage(cause)}`);
   }
   localStream.getTracks().forEach((track: any) => peer.addTrack(track, localStream));
+
+  const setMicEnabled = (enabled: boolean) => {
+    localStream.getAudioTracks().forEach((track: any) => {
+      track.enabled = enabled;
+    });
+  };
 
   if (Platform.OS === 'web') {
     peer.ontrack = (event: any) => {
@@ -154,39 +280,65 @@ export async function connectRealtimeVoice(
       document.body.appendChild(audio);
     };
   } else {
-    const { RTCView } = rtc;
-    void RTCView;
-    peer.addEventListener?.('track', () => undefined);
+    peer.addEventListener?.('track', guard('track', () => {
+      void ensureSpeakerAudioRoute();
+    }));
   }
 
+  let isClosed = false;
   const channel = peer.createDataChannel('oai-events');
   let assistantTranscriptBuffer = '';
-  let assistantTranscriptMode: 'audio' | 'text' | null = null;
   let assistantResponseId: string | null = null;
   let assistantAudioActive = false;
   let lastAssistantDoneText = '';
   let lastAssistantDoneAt = 0;
-  let userTurnSequence = 0;
   let lastCompletedAssistantResponseId: string | null = null;
-  let toolFollowUpExpected = false;
   let lastInputTranscript = '';
   let lastInputTranscriptAt = 0;
   let assistantResponseQueued = false;
   let assistantResponseStarted = false;
+  let playbackFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let channelOpenTimer: ReturnType<typeof setTimeout> | null = null;
+  let isPlaybackPending = false;
   const autoStartResponse = context?.autoStartResponse === true;
+
   const sendChannelEvent = (event: unknown): boolean => {
     if (channel.readyState !== 'open') return false;
     try {
       channel.send(JSON.stringify(event));
       return true;
     } catch {
-      // The payment handoff and user closing the modal can close the channel
-      // between the readyState check and send(). Voice cleanup must stay
-      // non-fatal to the rest of the app.
+      // The payment handoff and the user closing the sheet can close the channel between the
+      // readyState check and send(). Voice cleanup must stay non-fatal to the rest of the app.
       return false;
     }
   };
+
+  const clearPlaybackFallback = () => {
+    if (playbackFallbackTimer) clearTimeout(playbackFallbackTimer);
+    playbackFallbackTimer = null;
+  };
+
+  // Single exit point for "the assistant finished talking", whichever signal arrives first.
+  const finishPlayback = () => {
+    clearPlaybackFallback();
+    if (!isPlaybackPending || isClosed) return;
+    isPlaybackPending = false;
+    assistantAudioActive = false;
+    callbacks.onPlaybackFinished?.();
+  };
+
+  const schedulePlaybackFallback = (spokenText: string) => {
+    clearPlaybackFallback();
+    const estimate = Math.min(
+      PLAYBACK_FALLBACK_MAX_MS,
+      Math.max(PLAYBACK_FALLBACK_MIN_MS, spokenText.length * PLAYBACK_FALLBACK_MS_PER_CHAR)
+    );
+    playbackFallbackTimer = setTimeout(guard('playback timer', finishPlayback), estimate);
+  };
+
   const requestAssistantResponse = () => {
+    void ensureSpeakerAudioRoute();
     if (assistantResponseStarted) return;
     if (sendChannelEvent({ type: 'response.create' })) {
       assistantResponseStarted = true;
@@ -194,80 +346,103 @@ export async function connectRealtimeVoice(
       assistantResponseQueued = true;
     }
   };
+
   const flushAssistantTranscript = (fallbackText = '') => {
     const completeText = String(fallbackText || assistantTranscriptBuffer || '').trim();
     const now = Date.now();
     const duplicateDone = completeText === lastAssistantDoneText && now - lastAssistantDoneAt < 2500;
-    // Realtime audio and input-transcription events can arrive out of order.
-    // Do not use the user-turn counter to cancel audio; deduplicate completed
-    // responses by text/response id instead.
+    // Realtime audio and input-transcription events can arrive out of order; de-duplicate completed
+    // responses by text/response id instead of a user-turn counter.
     if (completeText && !duplicateDone) {
       lastAssistantDoneText = completeText;
       lastAssistantDoneAt = now;
       if (assistantResponseId) lastCompletedAssistantResponseId = assistantResponseId;
       callbacks.onAssistantDone?.(completeText);
     }
-    toolFollowUpExpected = false;
     assistantTranscriptBuffer = '';
-    assistantTranscriptMode = null;
     assistantResponseId = null;
+    return completeText;
   };
-  channel.onopen = () => {
+
+  const failConnection = (message: string) => {
+    if (isClosed) return;
+    callbacks.onError?.(new Error(message));
+    void handle.close();
+  };
+
+  peer.onconnectionstatechange = guard('connection state', () => {
+    const state = String(peer.connectionState || '');
+    if (state === 'failed') failConnection('Voice connection lost. Please check your internet and start again.');
+  });
+
+  channel.onopen = guard('channel open', () => {
+    if (channelOpenTimer) clearTimeout(channelOpenTimer);
+    channelOpenTimer = null;
+    void ensureSpeakerAudioRoute();
     callbacks.onStatus?.('connected');
     if (autoStartResponse || assistantResponseQueued) {
       assistantResponseQueued = false;
-      // Start the welcome turn at the data-channel boundary. This removes
-      // the extra UI/JS round trip after the WebRTC handshake completes.
+      // Start the welcome turn at the data-channel boundary (no extra UI round trip).
       requestAssistantResponse();
     }
-  };
-  channel.onmessage = async (event: any) => {
+  });
+
+  channel.onclose = guard('channel close', () => {
+    if (!isClosed) failConnection('Voice session ended unexpectedly. Please start again.');
+  });
+
+  const handleChannelMessage = async (event: any) => {
     const payload = parseEvent(typeof event.data === 'string' ? event.data : '');
     if (!payload) return;
     const type = String(payload.type || '');
+
     if (type === 'response.cancelled' || type === 'response.canceled') {
-      // A cancelled partial response (especially an emergency override) must
-      // never become a visible second assistant bubble.
-      assistantAudioActive = false;
+      // A cancelled partial response (e.g. an emergency override) must never become a visible bubble.
       assistantTranscriptBuffer = '';
-      assistantTranscriptMode = null;
       assistantResponseId = null;
       callbacks.onAssistantInterrupted?.();
       return;
     }
+
     if (type === 'response.created' || type === 'response.output_audio.started' || type === 'response.audio.started') {
       assistantAudioActive = true;
-      localStream.getAudioTracks().forEach((track: any) => {
-        track.enabled = false;
-      });
+      isPlaybackPending = true;
+      clearPlaybackFallback();
+      // Half-duplex: keep the mic closed while the assistant talks so phones with weak echo
+      // cancellation cannot make the assistant interrupt itself.
+      setMicEnabled(false);
+      void ensureSpeakerAudioRoute();
       callbacks.onStatus?.('speaking');
     }
-    // Only persist the completed user turn. Processing delta/committed events
-    // here creates duplicate user messages and can trigger duplicate replies.
+
+    // WebRTC-only events that track the device's actual playback buffer.
+    if (type === 'output_audio_buffer.started') {
+      isPlaybackPending = true;
+      clearPlaybackFallback();
+      callbacks.onStatus?.('speaking');
+    }
+    if (type === 'output_audio_buffer.stopped' || type === 'output_audio_buffer.cleared') {
+      finishPlayback();
+    }
+
+    // Only persist the completed user turn; delta/committed events would duplicate messages.
     if (
       (type === 'conversation.item.input_audio_transcription.completed' || type.endsWith('.input_audio_transcription.completed')) &&
       typeof payload.transcript === 'string'
     ) {
       const transcript = collapseRepeatedTranscript(payload.transcript);
       if (isLikelyNoiseTranscript(transcript)) {
-        // Server VAD can occasionally commit a fan/echo syllable. Cancel the
-        // automatically-created turn instead of sending a meaningless reply.
+        // VAD occasionally commits a fan/echo syllable. Cancel that auto-created turn.
         sendChannelEvent({ type: 'response.cancel' });
         return;
       }
       const now = Date.now();
-      if (transcript && transcript === lastInputTranscript && now - lastInputTranscriptAt < 3500) {
-        return;
-      }
+      if (transcript && transcript === lastInputTranscript && now - lastInputTranscriptAt < 3500) return;
       lastInputTranscript = transcript;
       lastInputTranscriptAt = now;
-      userTurnSequence += 1;
-      toolFollowUpExpected = false;
       callbacks.onInputTranscript?.(transcript);
       if (transcript && EMERGENCY_PATTERN.test(transcript)) {
-        // Stop any response already speaking and force an immediate safety
-        // turn. The deterministic text prevents the model from continuing a
-        // routine triage flow after a red flag is detected.
+        // Stop any routine reply and force an immediate safety turn.
         sendChannelEvent({ type: 'response.cancel' });
         sendChannelEvent({
           type: 'conversation.item.create',
@@ -278,124 +453,91 @@ export async function connectRealtimeVoice(
               type: 'input_text',
               text: context?.mode === 'hospital'
                 ? 'URGENT HOSPITAL SAFETY OVERRIDE: The patient reported a possible emergency red flag while already under hospital care. Respond immediately and calmly: tell the patient or staff to alert the assigned doctor or hospital clinical team now and request urgent bedside assessment. Do not redirect them to another hospital, local emergency services, or outside care. Do not diagnose or give medication doses. After the team acknowledges the alert, continue the minimum relevant history one question at a time.'
-                : 'URGENT SAFETY OVERRIDE: The patient reported a possible emergency red flag. Respond immediately and calmly: advise them to call local emergency services now or go to the nearest emergency department, not drive themselves if faint, and not wait for this chat. Ask no routine history questions. Do not diagnose or give medication doses.',
+                : 'URGENT SAFETY OVERRIDE: The patient reported a possible emergency red flag. Respond immediately and calmly: advise them to call local emergency services (112 in India) now or go to the nearest emergency department, not drive themselves if faint, and not wait for this chat. Ask no routine history questions. Do not diagnose or give medication doses.',
             }],
           },
         });
         sendChannelEvent({ type: 'response.create' });
       }
     }
+
     const isAudioTranscriptDelta = type === 'response.output_audio_transcript.delta' || type === 'response.audio_transcript.delta';
-    // This session is configured for direct audio output. Realtime can also
-    // emit response.output_text.* bookkeeping events; treating those as a
-    // second transcript causes a short "Okay..." bubble before the complete
-    // audio transcript arrives. Use the audio transcript as the single source
-    // of truth for the voice UI.
+    // The session outputs audio; the audio transcript is the single source of truth for the UI.
+    // (Treating response.output_text.* as a second transcript caused a short duplicate bubble.)
     if (isAudioTranscriptDelta) {
       const responseId = typeof payload.response_id === 'string' ? payload.response_id : null;
       if (responseId && responseId === lastCompletedAssistantResponseId) {
-        // Only cancel an actually repeated response ID. Transcript timing is
-        // asynchronous, so a user-turn counter is not a safe dedupe key.
         sendChannelEvent({ type: 'response.cancel' });
         return;
       }
       // A new response must never inherit the previous response's transcript.
-      // If the provider omitted response.done for the previous turn, flush it
-      // before starting the next one.
       if (responseId && assistantResponseId && responseId !== assistantResponseId && assistantTranscriptBuffer.trim()) {
         flushAssistantTranscript();
       }
       assistantResponseId = responseId || assistantResponseId;
-      assistantTranscriptMode = 'audio';
       assistantAudioActive = true;
-      const delta = String(payload.delta || '');
-      assistantTranscriptBuffer += delta;
-      // Mute locally as soon as the assistant starts speaking. This avoids
-      // background sound being captured during the response even before the
-      // UI status callback has rendered.
-      localStream.getAudioTracks().forEach((track: any) => {
-        track.enabled = false;
-      });
+      isPlaybackPending = true;
+      assistantTranscriptBuffer += String(payload.delta || '');
+      setMicEnabled(false);
       callbacks.onAssistantTranscript?.(assistantTranscriptBuffer);
       callbacks.onStatus?.('speaking');
     }
-    // Transcript-done can be emitted once per output item. It is not always
-    // the end of the whole assistant turn, so do not create a chat bubble here.
-    // response.done is the turn boundary and flushes the complete transcript.
+
+    // response.done is the turn boundary. Audio may still be playing for several seconds after it,
+    // so re-opening the mic waits for output_audio_buffer.stopped (or the estimated fallback).
     if (type === 'response.done') {
-      assistantAudioActive = false;
-      flushAssistantTranscript();
+      const spoken = flushAssistantTranscript();
+      const hadAudio = isPlaybackPending || Boolean(spoken);
+      const hasPendingToolCall = Array.isArray(payload.response?.output)
+        && payload.response.output.some((item: any) => item?.type === 'function_call');
+      if (hasPendingToolCall) {
+        callbacks.onStatus?.('thinking');
+      } else if (hadAudio) {
+        isPlaybackPending = true;
+        schedulePlaybackFallback(spoken);
+      } else {
+        isPlaybackPending = true;
+        finishPlayback();
+      }
     }
+
     if (type === 'response.function_call_arguments.done' && callbacks.onToolCall) {
-      toolFollowUpExpected = true;
-      const result = await callbacks.onToolCall(String(payload.name || ''), String(payload.call_id || ''), String(payload.arguments || '{}'));
+      callbacks.onStatus?.('thinking');
+      let result: unknown;
+      try {
+        result = await callbacks.onToolCall(String(payload.name || ''), String(payload.call_id || ''), String(payload.arguments || '{}'));
+      } catch (toolError) {
+        result = { error: 'The request could not be completed right now. Apologise briefly and offer to try again.' };
+        if (__DEV__) console.warn('[RealtimeVoice] tool call failed:', toolError);
+      }
       callbacks.onToolResult?.(String(payload.name || ''), result);
-      // onToolResult may intentionally close the voice session while handing
-      // off to payment. Never send the function output to a closed channel.
+      // onToolResult may close the session for the payment handoff; never write to a closed channel.
       if (sendChannelEvent({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: payload.call_id, output: JSON.stringify(result || {}) } })) {
         sendChannelEvent({ type: 'response.create' });
       }
     }
+
     if (type === 'input_audio_buffer.speech_started') {
-      // Barge-in: stop the old assistant output, discard its unfinished
-      // transcript, and let the new user turn become the only active turn.
-      // This avoids leaving a partial answer in the chat when the user
-      // interrupts the assistant.
-      if (assistantAudioActive) {
-        sendChannelEvent({ type: 'response.cancel' });
-        assistantAudioActive = false;
-        assistantTranscriptBuffer = '';
-        assistantTranscriptMode = null;
-        assistantResponseId = null;
-        callbacks.onAssistantInterrupted?.();
-      }
-      // The user arms the microphone explicitly via setInputEnabled(true).
-      // Do not re-enable it from a late VAD event after speech has ended.
       callbacks.onStatus?.('listening');
     }
-    if (type === 'input_audio_buffer.speech_stopped') {
-      // Server VAD has detected the end of the user's turn. Mute the local
-      // track immediately so the following AI response cannot be interrupted
-      // by background speech or room noise.
-      localStream.getAudioTracks().forEach((track: any) => {
-        track.enabled = false;
-      });
-      callbacks.onStatus?.('speaking');
+    if (type === 'input_audio_buffer.speech_stopped' || type === 'input_audio_buffer.committed') {
+      // End of the patient's turn: close the mic and show that the assistant is preparing a reply.
+      setMicEnabled(false);
+      if (!assistantAudioActive) callbacks.onStatus?.('thinking');
     }
-    if (type === 'input_audio_buffer.committed') {
-      // Treat commit as a second reliable turn boundary. Some WebRTC
-      // sessions deliver committed without a separately observable
-      // speech_stopped event.
-      localStream.getAudioTracks().forEach((track: any) => {
-        track.enabled = false;
-      });
-      callbacks.onStatus?.('speaking');
+    if (type === 'error') {
+      const message = String(payload.error?.message || 'Realtime voice error');
+      // Cancelling when nothing is active is harmless; don't surface it to the patient.
+      if (!/no active response|cancellation failed/i.test(message)) callbacks.onError?.(new Error(message));
     }
-    if (type === 'error') callbacks.onError?.(new Error(payload.error?.message || 'Realtime voice error'));
+  };
+  channel.onmessage = (event: any) => {
+    handleChannelMessage(event).catch((cause) => reportVoiceError('voice message', cause, rawCallbacks.onError));
   };
 
-  try {
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    const answerResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${clientSecret}`, 'Content-Type': 'application/sdp' },
-      body: offer.sdp,
-    });
-    const answerSdp = await answerResponse.text();
-    if (!answerResponse.ok) throw new Error(`OpenAI returned ${answerResponse.status}: ${answerSdp.slice(0, 240)}`);
-    await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-  } catch (cause) {
-    localStream.getTracks().forEach((track: any) => track.stop());
-    peer.close?.();
-    throw new Error(`Realtime connection failed: ${toErrorMessage(cause)}`);
-  }
-
-  return {
+  const handle: RealtimeVoiceHandle = {
     sendText: (text: string) => {
       if (channel.readyState !== 'open') return;
-      userTurnSequence += 1;
-      toolFollowUpExpected = false;
       if (sendChannelEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } })) {
         sendChannelEvent({ type: 'response.create' });
       }
@@ -404,21 +546,59 @@ export async function connectRealtimeVoice(
       requestAssistantResponse();
     },
     interrupt: () => {
+      // Cancel generation and drop the audio already queued on the device so the voice stops at once.
       sendChannelEvent({ type: 'response.cancel' });
+      sendChannelEvent({ type: 'output_audio_buffer.clear' });
+      assistantTranscriptBuffer = '';
+      assistantResponseId = null;
+      isPlaybackPending = true;
+      finishPlayback();
     },
     close: async () => {
+      if (isClosed) return;
+      isClosed = true;
+      if (channelOpenTimer) clearTimeout(channelOpenTimer);
+      clearPlaybackFallback();
       localStream.getTracks().forEach((track: any) => track.stop());
       channel.close?.();
       peer.close?.();
       if (Platform.OS === 'web') document.querySelectorAll('[data-cd4-realtime-audio="true"]').forEach((node) => node.remove());
+      // Give the phone its normal audio routing back (music, videos) once voice chat ends.
+      resetSpeaker();
       callbacks.onStatus?.('closed');
     },
     setInputEnabled: (enabled: boolean) => {
-      localStream.getAudioTracks().forEach((track: any) => {
-        track.enabled = enabled;
-      });
+      if (isClosed) return;
+      setMicEnabled(enabled);
     },
   };
+
+  try {
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    const answerResponse = await withTimeout(
+      fetch('https://api.openai.com/v1/realtime/calls', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${clientSecret}`, 'Content-Type': 'application/sdp' },
+        body: offer.sdp,
+      }),
+      SDP_EXCHANGE_TIMEOUT_MS,
+      'Connecting to the voice assistant'
+    );
+    const answerSdp = await answerResponse.text();
+    if (!answerResponse.ok) throw new Error(`OpenAI returned ${answerResponse.status}: ${answerSdp.slice(0, 240)}`);
+    await peer.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    channelOpenTimer = setTimeout(guard('connect timeout', () => {
+      if (channel.readyState !== 'open') failConnection('Could not connect the voice call. Check your internet connection and try again.');
+    }), CHANNEL_OPEN_TIMEOUT_MS);
+  } catch (cause) {
+    isClosed = true;
+    localStream.getTracks().forEach((track: any) => track.stop());
+    peer.close?.();
+    throw new Error(`Realtime connection failed: ${toErrorMessage(cause)}`);
+  }
+
+  return handle;
 }
 
 function toErrorMessage(cause: unknown): string {

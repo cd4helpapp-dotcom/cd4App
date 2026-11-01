@@ -94,7 +94,7 @@ export default function HospitalPatientsScreen() {
         <ScrollView
             style={[styles.container, { backgroundColor: theme.background }]}
             contentContainerStyle={[styles.content, { paddingTop: insets.top + 20 }]}
-            refreshControl={<RefreshControl refreshing={patientsQuery.isRefetching} onRefresh={patientsQuery.refetch} tintColor={theme.tint} />}
+            refreshControl={<RefreshControl refreshing={patientsQuery.isRefetching} onRefresh={() => { void patientsQuery.refetch(); }} tintColor={theme.tint} />}
             keyboardShouldPersistTaps="handled"
         >
             <View style={styles.headerRow}>
@@ -204,7 +204,7 @@ export default function HospitalPatientsScreen() {
                                         key={doctor.id}
                                         style={[
                                             styles.chip,
-                                            { borderColor: theme.borderColor, backgroundColor: selected ? theme.successLight : theme.background },
+                                            { borderColor: theme.borderColor, backgroundColor: selected ? theme.primarySoft : theme.background },
                                         ]}
                                         onPress={() => setSelectedDoctorId(doctor.doctorId)}
                                     >
@@ -241,7 +241,7 @@ export default function HospitalPatientsScreen() {
                         onPress={() => router.push({ pathname: '/hospital/patient-profile', params: { patientId: patient.patientId } })}
                         activeOpacity={0.82}
                     >
-                        <View style={[styles.avatar, { backgroundColor: theme.successLight }]}>
+                        <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
                             <Users size={18} color={theme.tint} />
                         </View>
                         <View style={{ flex: 1 }}>

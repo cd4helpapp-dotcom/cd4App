@@ -21,7 +21,7 @@ function ModernTabIcon({
     activeName: React.ComponentProps<typeof Ionicons>['name'];
     inactiveName: React.ComponentProps<typeof Ionicons>['name'];
 }) {
-    return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color} />;
+    return <Ionicons name={focused ? activeName : inactiveName} size={22} color={color as string} />;
 }
 
 const ADMIN_VISIBLE_TABS = ['dashboard', 'doctors', 'medicines', 'revenue', 'app-settings'] as const;
@@ -110,7 +110,7 @@ export default function AdminLayout() {
                 tabBarLabelStyle: {
                     fontSize: 11,
                     lineHeight: 13,
-                    fontFamily: 'Outfit-Medium',
+                    fontWeight: '500',
                     includeFontPadding: false,
                     marginTop: 0,
                 },
@@ -126,7 +126,7 @@ export default function AdminLayout() {
                     title: 'Dashboard',
                     tabBarLabel: 'Dashboard',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="grid" inactiveName="grid-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="grid" inactiveName="grid-outline" />
                     ),
                 }}
             />
@@ -136,7 +136,7 @@ export default function AdminLayout() {
                     title: 'Doctors',
                     tabBarLabel: 'Doctors',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="medkit" inactiveName="medkit-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="medkit" inactiveName="medkit-outline" />
                     ),
                 }}
             />
@@ -146,7 +146,7 @@ export default function AdminLayout() {
                     title: 'Medicines',
                     tabBarLabel: 'Medicines',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="flask" inactiveName="flask-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="flask" inactiveName="flask-outline" />
                     ),
                 }}
             />
@@ -157,7 +157,7 @@ export default function AdminLayout() {
                     title: 'Settings',
                     tabBarLabel: 'Settings',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="settings" inactiveName="settings-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="settings" inactiveName="settings-outline" />
                     ),
                 }}
             />
@@ -174,7 +174,7 @@ export default function AdminLayout() {
                     title: 'App Settings',
                     tabBarLabel: 'App Settings',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="build" inactiveName="build-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="build" inactiveName="build-outline" />
                     ),
                 }}
             />
@@ -184,7 +184,7 @@ export default function AdminLayout() {
                     title: 'Revenue',
                     tabBarLabel: 'Revenue',
                     tabBarIcon: ({ color, focused }) => (
-                        <ModernTabIcon focused={focused} color={color} activeName="analytics" inactiveName="analytics-outline" />
+                        <ModernTabIcon focused={focused} color={color as string} activeName="analytics" inactiveName="analytics-outline" />
                     ),
                 }}
             />

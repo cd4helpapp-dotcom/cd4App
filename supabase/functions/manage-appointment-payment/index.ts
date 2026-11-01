@@ -96,6 +96,40 @@ Deno.serve(async (req: Request) => {
         ? "second_opinion"
         : "consultation";
 
+      // Guards before any money moves. These return HTTP 200 + success:false so the app can show the message.
+      const { data: slotRow } = await serviceClient
+        .from("slots")
+        .select("id, doctor_id, date, start_time, is_booked")
+        .eq("id", slotId)
+        .maybeSingle();
+      if (!slotRow || String(slotRow.doctor_id) !== doctorId) {
+        return jsonResponse({ success: false, message: "This slot does not belong to the selected doctor. Please choose a slot again." });
+      }
+      if (slotRow.is_booked) {
+        return jsonResponse({ success: false, message: "Sorry, this slot was just booked by someone else. Please choose another slot." });
+      }
+      const slotStart = new Date(`${slotRow.date}T${String(slotRow.start_time || "00:00:00").slice(0, 8)}+05:30`);
+      if (Number.isFinite(slotStart.getTime()) && slotStart.getTime() < Date.now()) {
+        return jsonResponse({ success: false, message: "This slot has already passed. Please choose a later slot." });
+      }
+      // One booking per doctor per rolling 30 days (same rule as the appointments RLS policy and the Appointments tab).
+      const cooldownSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const { data: recent } = await serviceClient
+        .from("appointments")
+        .select("created_at")
+        .eq("patient_id", patientId)
+        .eq("doctor_id", doctorId)
+        .in("status", ["pending", "confirmed", "completed"])
+        .gte("created_at", cooldownSince)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (recent?.created_at) {
+        const nextDate = new Date(new Date(recent.created_at).getTime() + 30 * 24 * 60 * 60 * 1000)
+          .toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+        return jsonResponse({ success: false, code: "booking_cooldown", message: `You already booked this doctor in the last 30 days. You can book again on ${nextDate}.` });
+      }
+
       // Fetch the doctor's fee from the doctors_public table
       const { data: doctorRow, error: doctorError } = await serviceClient
         .from("doctors_public")

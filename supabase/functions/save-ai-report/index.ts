@@ -1031,6 +1031,10 @@ Deno.serve(async (req) => {
         ? await fetchHistoryFromConversation({ supabase, userId: user.id, conversationId: conversationId.trim() })
         : []
     const compactHistory = choosePreferredHistory(payloadHistory, conversationHistory)
+    // Without a conversation there is nothing to summarise; an empty call used to store a blank report + PDF.
+    if (!compactHistory.some((item: any) => item?.role === "user" && String(item?.content || "").trim())) {
+      return jsonResponse({ success: false, error: "empty_conversation", message: "Chat with the AI first, then save the report." }, 400)
+    }
     const triageSnapshot = extractTriageSnapshot({ concern: safeConcern, history: compactHistory })
     const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 20)
     const aiChatTimelineLines = buildAiChatTimelineLines(compactHistory, 4)

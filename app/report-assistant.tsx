@@ -1,25 +1,11 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  TextInput,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Keyboard,
-  Linking,
-  Alert,
-} from 'react-native';
-import { useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, Linking, Pressable } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
 import Toast from 'react-native-toast-message';
-import { ArrowLeft, Send, Trash2, AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react-native';
-import Colors, { Theme } from '../constants/Colors';
+import { AlertTriangle, ArrowLeft, ExternalLink, FileText, FlaskConical, Pill, RefreshCw, Send, ShieldAlert, Sparkles, Trash2 } from 'lucide-react-native';
 import {
   MedicalReport,
   getMedicalReportAnalysisErrorMessage,
@@ -30,30 +16,28 @@ import {
   useReanalyzeMedicalReport,
   useSoftDeleteMedicalReport,
 } from '../hooks/useMedicalReports';
-import { supabase } from '../src/lib/supabase';
+import { useAppTheme } from '../hooks/useAppTheme';
+import { elevation, Layout, Radius, Spacing, Typography } from '../constants/Design';
+import { confirmAction } from '../src/utils/confirm';
+import ThinkingIndicator from '../ui/common/ThinkingIndicator';
+import AnalysisProgress from '../ui/reports/AnalysisProgress';
+import {
+  formatShortDate,
+  getAttentionItems,
+  getFollowUps,
+  getHighlights,
+  getPlainSummary,
+  getReportDate,
+  getReportKind,
+  getReportState,
+  getReportTitle,
+} from '../src/utils/reportInsights';
 
 const formatDate = (value?: string | null): string => {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' });
-};
-
-const getStatusLabel = (status: MedicalReport['analysisStatus']): string => {
-  if (status === 'completed') return 'Analyzed';
-  if (status === 'processing') return 'Scanning';
-  if (status === 'failed') return 'Failed';
-  return 'Pending';
-};
-
-const getStatusColor = (status: MedicalReport['analysisStatus'], theme: Theme): { bg: string; text: string } => {
-  if (status === 'completed') {
-    return { bg: theme.successLight, text: theme.success };
-  }
-  if (status === 'processing' || status === 'pending') {
-    return { bg: theme.cardBackground, text: theme.textSecondary };
-  }
-  return { bg: '#FFE9E9', text: '#D9534F' };
 };
 
 const toTextArray = (value: unknown, maxItems: number = 8): string[] => {
@@ -235,13 +219,6 @@ interface PrescriptionData {
   diagnosis: string;
 }
 
-interface NonPrescriptionCarePlan {
-  highlights: string[];
-  nextSteps: string[];
-  supplements: string[];
-  cautions: string[];
-}
-
 const toTextList = (value: unknown, maxItems: number = 8): string[] => {
   if (Array.isArray(value)) {
     return value
@@ -348,9 +325,6 @@ const pickFirstNonEmpty = (...values: unknown[]): string => {
   }
   return '';
 };
-
-const displayOrFallback = (value: string, fallback: string = 'Not clearly visible'): string =>
-  value && value.trim() ? value.trim() : fallback;
 
 const extractVitalsFromText = (items: string[]): { bloodPressure: string; pulseRate: string; weight: string } => {
   const joined = (items || []).join(' | ');
@@ -623,93 +597,6 @@ const extractPrescriptionData = (report: MedicalReport): PrescriptionData => {
   return result;
 };
 
-const extractSupplementHints = (items: string[], maxItems: number = 4): string[] => {
-  if (!Array.isArray(items) || items.length === 0) return [];
-
-  const supplementRegex =
-    /\b(vit(?:amin)?\s?[a-z0-9-]*|omega[\s-]?3|iron|zinc|calcium|magnesium|folic acid|folate|b12|d3|probiotic|electrolyte|protein)\b/i;
-  const dedupe = new Set<string>();
-  const rows: string[] = [];
-
-  for (const raw of items) {
-    if (rows.length >= maxItems) break;
-    const line = (raw || '').trim();
-    if (!line || !supplementRegex.test(line)) continue;
-    const key = line.toLowerCase();
-    if (dedupe.has(key)) continue;
-    dedupe.add(key);
-    rows.push(line);
-  }
-  return rows;
-};
-
-const extractNonPrescriptionCarePlan = (report: MedicalReport): NonPrescriptionCarePlan => {
-  const structured = typeof report.aiStructured === 'object' && report.aiStructured ? report.aiStructured : {};
-  const parsed = parseLooseJsonObject(report.aiSummary || '') || {};
-
-  const keyPoints = [
-    ...toTextArray(report.aiKeyPoints, 12),
-    ...toTextList((parsed as any).key_points || (parsed as any).keyPoints, 12),
-  ];
-  const highlights = Array.from(new Set(keyPoints.map((item) => item.trim()).filter(Boolean))).slice(0, 5);
-
-  const nextStepsPrimary = toTextList(
-    (structured as any).next_24h_actions ||
-      (structured as any).suggested_followups ||
-      (structured as any).suggestedFollowups ||
-      (parsed as any).next_24h_actions ||
-      (parsed as any).suggested_followups ||
-      (parsed as any).suggestedFollowups,
-    6
-  );
-
-  const nextSteps = nextStepsPrimary.length > 0 ? nextStepsPrimary : highlights.slice(0, 4);
-
-  const cautions = toTextList(
-    (structured as any).caution_flags ||
-      (structured as any).cautionFlags ||
-      (parsed as any).caution_flags ||
-      (parsed as any).cautionFlags,
-    5
-  );
-
-  const supplements = extractSupplementHints([...highlights, ...nextSteps, ...cautions], 4);
-
-  return {
-    highlights,
-    nextSteps,
-    supplements,
-    cautions,
-  };
-};
-
-const getNormalizedReportInsights = (report: MedicalReport): { summary: string; keyPoints: string[] } => {
-  const rawSummary = (report.aiSummary || '').trim();
-  let summary = rawSummary;
-  let keyPoints = toTextArray(report.aiKeyPoints);
-
-  if (rawSummary) {
-    const parsed = parseLooseJsonObject(rawSummary);
-    if (parsed) {
-      const parsedSummary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
-      const parsedExplanation =
-        typeof parsed.patient_friendly_explanation === 'string'
-          ? parsed.patient_friendly_explanation.trim()
-          : '';
-      const parsedKeyPoints = toTextArray(parsed.key_points ?? parsed.keyPoints);
-
-      if (parsedExplanation || parsedSummary) {
-        summary = parsedExplanation || parsedSummary;
-      }
-      if (keyPoints.length === 0 && parsedKeyPoints.length > 0) {
-        keyPoints = parsedKeyPoints;
-      }
-    }
-  }
-
-  return { summary, keyPoints };
-};
-
 const formatAssistantMessageForMarkdown = (rawContent: string): string => {
   const stripVisualMarkers = (value: string): string =>
     (value || '')
@@ -891,171 +778,31 @@ const normalizeReportIdentityForView = (value: unknown): Record<string, string> 
   return mapped;
 };
 
-const buildReportSummaryMarkdown = (
-  report: MedicalReport,
-  normalizedSummary: string,
-  keyPoints: string[],
-  expanded: boolean
-): string => {
-  if (report.analysisStatus === 'failed') {
-    return [
-      `⚠️ ${getMedicalReportAnalysisErrorMessage(report.analysisError)}`,
-    ].join('\n');
-  }
-  if (report.analysisStatus === 'processing') {
-    return [
-      '- 🔄 AI is scanning this report. This may take a few moments.',
-      '- 💬 You can ask questions right after scan completes.',
-    ].join('\n');
-  }
-  if (report.analysisStatus === 'pending') {
-    return [
-      '- ✅ Upload successful. AI scan is queued.',
-      '- 🕒 Summary will appear here once processing finishes.',
-    ].join('\n');
-  }
-
-  const summary = (normalizedSummary || '').trim();
-  const points = expanded ? keyPoints : keyPoints.slice(0, 3);
-  const cautions = toTextArray(report.aiStructured?.caution_flags ?? report.aiStructured?.cautionFlags, expanded ? 8 : 3);
-  const followUps = toTextArray(report.aiStructured?.suggested_followups ?? report.aiStructured?.suggestedFollowups, expanded ? 8 : 3);
-  const identity = normalizeReportIdentityForView(
-    report.aiStructured?.report_identity ?? report.aiStructured?.reportIdentity ?? {}
-  );
-  const parameterHighlights = toTextArray(
-    report.aiStructured?.parameter_highlights ?? report.aiStructured?.parameterHighlights,
-    expanded ? 12 : 4
-  );
-  const abnormalFindings = toTextArray(
-    report.aiStructured?.abnormal_findings ?? report.aiStructured?.abnormalFindings,
-    expanded ? 8 : 3
-  );
-  const normalFindings = toTextArray(
-    report.aiStructured?.normal_findings ?? report.aiStructured?.normalFindings,
-    expanded ? 6 : 2
-  );
-  const missingSections = toTextArray(
-    report.aiStructured?.missing_sections ?? report.aiStructured?.missingSections,
-    expanded ? 8 : 2
-  );
-  const confidenceNote =
-    typeof report.aiStructured?.confidence_note === 'string'
-      ? report.aiStructured.confidence_note.trim()
-      : typeof report.aiStructured?.confidenceNote === 'string'
-        ? report.aiStructured.confidenceNote.trim()
-        : '';
-  const summaryLine = summary ? (expanded ? summary : summary.slice(0, 360).trim()) : '';
-
-  const lines: string[] = [];
-
-  const identityLines = [
-    identity.patient_name ? `Patient: ${identity.patient_name}` : '',
-    identity.age ? `Age: ${identity.age}` : '',
-    identity.gender ? `Gender: ${identity.gender}` : '',
-    identity.lab_name ? `Lab: ${identity.lab_name}` : '',
-    identity.report_date ? `Report date: ${identity.report_date}` : '',
-    identity.sample_collected_at ? `Sample collected: ${identity.sample_collected_at}` : '',
-    identity.report_id ? `Report/Lab ID: ${identity.report_id}` : '',
-    identity.referred_by ? `Referred by: ${identity.referred_by}` : '',
-  ].filter(Boolean);
-
-  if (identityLines.length > 0) {
-    lines.push('### Report Snapshot');
-    lines.push(...identityLines.map((line) => `- 🧾 ${line}`));
-    lines.push('');
-  }
-
-  if (summaryLine) {
-    lines.push('### Quick Summary');
-    lines.push(`${containsEmoji(summaryLine) ? summaryLine : `🙂 ${summaryLine}`}`);
-  } else {
-    lines.push('- ℹ️ AI summary will appear here after scan.');
-  }
-
-  if (parameterHighlights.length > 0) {
-    lines.push('', '### Exact Values Seen', ...parameterHighlights.map((item) => `- 📈 ${item}`));
-  }
-
-  if (points.length > 0) {
-    lines.push('', '### Key Findings', ...points.map((point) => `- 🔎 ${point}`));
-  }
-
-  if (abnormalFindings.length > 0) {
-    lines.push('', '### Needs Attention', ...abnormalFindings.map((item) => `- 🚩 ${item}`));
-  }
-
-  if (normalFindings.length > 0) {
-    lines.push('', '### Reassuring Findings', ...normalFindings.map((item) => `- ✅ ${item}`));
-  }
-
-  if (cautions.length > 0) {
-    lines.push('', '### Watchouts', ...cautions.map((item) => `- ⚠️ ${item}`));
-  }
-
-  if (followUps.length > 0) {
-    lines.push('', '### Next Steps', ...followUps.map((item) => `- ✅ ${item}`));
-  }
-
-  if (missingSections.length > 0) {
-    lines.push('', '### Not Clearly Visible', ...missingSections.map((item) => `- 👀 ${item}`));
-  }
-
-  if (confidenceNote) {
-    lines.push('', '### Reading Confidence', `- ℹ️ ${confidenceNote}`);
-  }
-
-  return lines.join('\n').trim();
-};
-
 const normalizeRouteParam = (value: string | string[] | undefined): string => {
   if (Array.isArray(value)) return value[0] || '';
   return value || '';
 };
 
-const toMedicalReportStatus = (value: unknown): MedicalReport['analysisStatus'] | null => {
-  if (value === 'pending' || value === 'processing' || value === 'completed' || value === 'failed') {
-    return value;
-  }
-  return null;
-};
+const SUGGESTIONS_REPORT = ['Explain this report in simple words', 'Which values are not normal?', 'What should I ask my doctor?'];
+const SUGGESTIONS_RX = ['How do I take these medicines?', 'What is each medicine for?', 'What should I avoid?'];
 
-const ANALYSIS_STATUS_FAST_POLL_MS = 4000;
-const ANALYSIS_STATUS_MEDIUM_POLL_MS = 8000;
-const ANALYSIS_STATUS_SLOW_POLL_MS = 12000;
-const ANALYSIS_STATUS_MAX_POLL_MS = 2 * 60 * 1000;
+function SectionTitle({ children, color }: { children: string; color: string }) {
+  return <Text style={[Typography.overline, { color, marginBottom: 2 }]}>{children}</Text>;
+}
 
 export default function ReportAssistantScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
-  const warningSurface = React.useMemo(
-    () => ({
-      bg: `${theme.tint}14`,
-      border: `${theme.tint}4A`,
-      text: theme.tint,
-      mutedText: theme.textSecondary,
-    }),
-    [theme]
-  );
-  const dangerSurface = React.useMemo(
-    () => ({
-      bg: `${theme.error}16`,
-      border: `${theme.error}55`,
-      text: theme.error,
-      mutedText: theme.textSecondary,
-    }),
-    [theme]
-  );
+  const { theme } = useAppTheme();
   const params = useLocalSearchParams<{ reportId?: string | string[]; mode?: string | string[] }>();
   const reportId = normalizeRouteParam(params.reportId);
-  const requestedMode = normalizeRouteParam(params.mode).toLowerCase();
-  const isPrescriptionIntent = requestedMode === 'prescription';
 
   const [questionInput, setQuestionInput] = React.useState('');
-  const [isSummaryExpanded, setIsSummaryExpanded] = React.useState(false);
+  const [pendingQuestion, setPendingQuestion] = React.useState<string | null>(null);
+  const [expanded, setExpanded] = React.useState(false);
   const [keyboardHeight, setKeyboardHeight] = React.useState(0);
-  const contentScrollRef = React.useRef<ScrollView | null>(null);
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  const scrollRef = React.useRef<ScrollViewInstance | null>(null);
 
   const reportsQuery = useMedicalReports();
   const askMutation = useAskMedicalReportQuestion();
@@ -1063,1386 +810,499 @@ export default function ReportAssistantScreen() {
   const reanalyzeMutation = useReanalyzeMedicalReport();
   const signedUrlMutation = useGetMedicalReportFileUrl();
 
-  const selectedReport = React.useMemo(
-    () => (reportsQuery.data || []).find((report) => report.id === reportId) || null,
-    [reportsQuery.data, reportId]
-  );
-  const isSelectedPrescription = Boolean(selectedReport && isPrescriptionReport(selectedReport));
-  const isPrescriptionMismatch =
-    Boolean(selectedReport) &&
-    isPrescriptionIntent &&
-    selectedReport?.analysisStatus === 'completed' &&
-    !isPrescriptionReport(selectedReport);
-  const nonPrescriptionCarePlan = React.useMemo(
-    () => (selectedReport && isPrescriptionMismatch ? extractNonPrescriptionCarePlan(selectedReport) : null),
-    [selectedReport, isPrescriptionMismatch]
-  );
-  const isReportAnalyzing =
-    selectedReport?.analysisStatus === 'processing' || selectedReport?.analysisStatus === 'pending';
-  const shouldEnableReportChat =
-    Boolean(selectedReport) &&
-    selectedReport?.analysisStatus === 'completed';
-  const shouldEnableMessagesQuery = Boolean(reportId) && shouldEnableReportChat && !isReportAnalyzing;
-  const messagesQuery = useMedicalReportMessages(reportId || null, { enabled: shouldEnableMessagesQuery });
-  const reportMessages = messagesQuery.data || [];
-  const visibleReportMessages = React.useMemo(
-    () => (isReportAnalyzing ? [] : reportMessages),
-    [isReportAnalyzing, reportMessages]
-  );
-  const chatMessagesForRender = React.useMemo(
-    () => (visibleReportMessages.length > 16 ? visibleReportMessages.slice(-16) : visibleReportMessages),
-    [visibleReportMessages]
-  );
-  const hasUserInitiatedChat = React.useMemo(
-    () => visibleReportMessages.some((message) => message.role === 'user' && String(message.content || '').trim().length > 0),
-    [visibleReportMessages]
-  );
-  const displayedChatMessages = React.useMemo(() => {
-    if (hasUserInitiatedChat) return chatMessagesForRender;
-    return [];
-  }, [chatMessagesForRender, hasUserInitiatedChat]);
-  const prescriptionViewData = React.useMemo(() => {
-    if (!selectedReport || !isSelectedPrescription || selectedReport.analysisStatus !== 'completed') {
-      return null;
-    }
-    const rxData = extractPrescriptionData(selectedReport);
-    const classicMedicineRows = Array.from({ length: 7 }, (_, index) => rxData.medicines[index] || null);
-    return { rxData, classicMedicineRows };
-  }, [selectedReport, isSelectedPrescription]);
-  const selectedReportInsights = React.useMemo(
-    () => (selectedReport ? getNormalizedReportInsights(selectedReport) : { summary: '', keyPoints: [] }),
-    [selectedReport]
-  );
-  const summaryMarkdownCollapsed = React.useMemo(
-    () =>
-      selectedReport
-        ? buildReportSummaryMarkdown(selectedReport, selectedReportInsights.summary, selectedReportInsights.keyPoints, false)
-        : '',
-    [selectedReport, selectedReportInsights]
-  );
-  const summaryMarkdownExpanded = React.useMemo(
-    () =>
-      selectedReport
-        ? buildReportSummaryMarkdown(selectedReport, selectedReportInsights.summary, selectedReportInsights.keyPoints, true)
-        : '',
-    [selectedReport, selectedReportInsights]
-  );
-  const renderedSummaryMarkdown = isSummaryExpanded ? summaryMarkdownExpanded : summaryMarkdownCollapsed;
-  const canExpandSummary = summaryMarkdownExpanded.length > summaryMarkdownCollapsed.length + 40;
-  const previousAnalysisStatusRef = React.useRef<MedicalReport['analysisStatus'] | null>(null);
+  const report = React.useMemo(() => (reportsQuery.data || []).find((row) => row.id === reportId) || null, [reportsQuery.data, reportId]);
+  const state = report ? getReportState(report, nowMs) : null;
+  const isReady = state === 'ready';
+  const isRx = Boolean(report && isPrescriptionReport(report));
+  const messagesQuery = useMedicalReportMessages(reportId || null, { enabled: Boolean(reportId) && isReady });
+  // The server stores an auto-generated overview as the first assistant message; the cards above already show it, so the chat starts at the user's first question.
+  const messages = React.useMemo(() => {
+    const all = messagesQuery.data || [];
+    const firstUser = all.findIndex((message) => message.role === 'user');
+    return firstUser < 0 ? [] : all.slice(firstUser).slice(-30);
+  }, [messagesQuery.data]);
+  const lastCountRef = React.useRef(-1);
+  const rx = React.useMemo(() => (report && isRx && isReady ? extractPrescriptionData(report) : null), [report, isRx, isReady]);
+
+  React.useEffect(() => setExpanded(false), [reportId]);
 
   React.useEffect(() => {
-    setIsSummaryExpanded(false);
-  }, [reportId]);
-
-  React.useEffect(() => {
-    if (Platform.OS !== 'android') {
-      setKeyboardHeight(0);
-      return;
-    }
-
-    const showSub = Keyboard.addListener('keyboardDidShow', (event) => {
-      const height = event?.endCoordinates?.height;
-      if (typeof height === 'number' && height >= 0) {
-        setKeyboardHeight(height);
-      }
-    });
-
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardHeight(0);
-    });
-
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
+    const id = setInterval(() => setNowMs(Date.now()), 15000);
+    return () => clearInterval(id);
   }, []);
 
   React.useEffect(() => {
-    const timer = setTimeout(() => {
-      contentScrollRef.current?.scrollToEnd({ animated: true });
-    }, 60);
-    return () => clearTimeout(timer);
-  }, [reportMessages.length, askMutation.isPending]);
+    if (Platform.OS !== 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', (event) => setKeyboardHeight(event?.endCoordinates?.height ?? 0));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
+  // Stay at the top when the page opens; only follow the conversation once the user is chatting.
   React.useEffect(() => {
-    if (!reportId || !isReportAnalyzing) {
+    if (!messagesQuery.isSuccess) return;
+    if (lastCountRef.current === -1) {
+      lastCountRef.current = messages.length;
       return;
     }
-
-    let cancelled = false;
-    let inFlight = false;
-    let pollTimer: ReturnType<typeof setTimeout> | null = null;
-    const pollStartedAt = Date.now();
-    let attempts = 0;
-
-    const clearPollTimer = () => {
-      if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
-      }
-    };
-
-    const getNextDelay = (attemptCount: number): number => {
-      if (attemptCount <= 3) return ANALYSIS_STATUS_FAST_POLL_MS;
-      if (attemptCount <= 8) return ANALYSIS_STATUS_MEDIUM_POLL_MS;
-      return ANALYSIS_STATUS_SLOW_POLL_MS;
-    };
-
-    const scheduleNextPoll = (attemptCount: number) => {
-      if (cancelled) return;
-      const elapsed = Date.now() - pollStartedAt;
-      if (elapsed >= ANALYSIS_STATUS_MAX_POLL_MS) {
-        // Stop endless polling loops if backend status is stuck.
-        void reportsQuery.refetch();
-        return;
-      }
-      clearPollTimer();
-      pollTimer = setTimeout(() => {
-        void poll();
-      }, getNextDelay(attemptCount));
-    };
-
-    const poll = async () => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      attempts += 1;
-      try {
-        const { data, error } = await supabase
-          .from('medical_reports')
-          .select('analysis_status, updated_at')
-          .eq('id', reportId)
-          .is('deleted_at', null)
-          .maybeSingle();
-
-        if (error) {
-          // Keep one safe full refresh fallback if lightweight status fetch fails.
-          if (attempts <= 2) {
-            await reportsQuery.refetch();
-          }
-          scheduleNextPoll(attempts);
-          return;
-        }
-
-        const remoteStatus = toMedicalReportStatus(data?.analysis_status);
-        if (remoteStatus === 'completed' || remoteStatus === 'failed') {
-          await reportsQuery.refetch();
-          return;
-        }
-
-        scheduleNextPoll(attempts);
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      clearPollTimer();
-    };
-  }, [isReportAnalyzing, reportId, reportsQuery.refetch]);
-
-  React.useEffect(() => {
-    const currentStatus = selectedReport?.analysisStatus || null;
-    const previousStatus = previousAnalysisStatusRef.current;
-
-    if (reportId && previousStatus && currentStatus && previousStatus !== currentStatus) {
-      const finishedFromProcessing =
-        (previousStatus === 'processing' || previousStatus === 'pending') &&
-        (currentStatus === 'completed' || currentStatus === 'failed');
-
-      if (finishedFromProcessing && shouldEnableMessagesQuery) {
-        void messagesQuery.refetch();
-      }
-    }
-
-    previousAnalysisStatusRef.current = currentStatus;
-  }, [reportId, selectedReport?.analysisStatus, shouldEnableMessagesQuery]);
-
-  const Wrapper = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
-  const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: 0 } : {};
-
-  const markdownStyles = React.useMemo(
-    () => ({
-      body: { color: theme.text, fontSize: 13, lineHeight: 20 },
-      paragraph: { marginTop: 0, marginBottom: 8 },
-      heading1: { color: theme.text, fontSize: 18, lineHeight: 24, fontWeight: '800' as const, marginTop: 2, marginBottom: 8 },
-      heading2: { color: theme.text, fontSize: 16, lineHeight: 22, fontWeight: '800' as const, marginTop: 2, marginBottom: 7 },
-      heading3: { color: theme.text, fontSize: 14, fontWeight: '700' as const, marginTop: 2, marginBottom: 6 },
-      strong: { color: theme.text, fontWeight: '800' as const },
-      em: { color: theme.text, fontStyle: 'italic' as const },
-      bullet_list: { marginTop: 2, marginBottom: 8 },
-      bullet_list_icon: { color: theme.tint },
-      bullet_list_content: { color: theme.text },
-      ordered_list: { marginTop: 2, marginBottom: 8 },
-      ordered_list_icon: { color: theme.tint },
-      ordered_list_content: { color: theme.text },
-      list_item: { marginTop: 2, marginBottom: 2 },
-      blockquote: {
-        borderLeftWidth: 3,
-        borderLeftColor: theme.tint,
-        backgroundColor: theme.tint + '10',
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        marginTop: 4,
-        marginBottom: 8,
-      },
-      code_inline: {
-        color: theme.text,
-        backgroundColor: theme.background,
-        borderRadius: 6,
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-      },
-      code_block: {
-        color: theme.text,
-        backgroundColor: theme.background,
-        borderWidth: 1,
-        borderColor: theme.borderColor,
-        borderRadius: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        marginTop: 4,
-        marginBottom: 8,
-      },
-      fence: {
-        color: theme.text,
-        backgroundColor: theme.background,
-        borderWidth: 1,
-        borderColor: theme.borderColor,
-        borderRadius: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
-        marginTop: 4,
-        marginBottom: 8,
-      },
-      link: {
-        color: theme.tint,
-        textDecorationLine: 'underline' as const,
-      },
-    }),
-    [theme]
-  );
-  const reportSummaryMarkdownStyles = React.useMemo(
-    () => ({
-      body: { color: theme.textSecondary, fontSize: 12, lineHeight: 19 },
-      paragraph: { marginTop: 0, marginBottom: 8 },
-      heading1: { color: theme.text, fontSize: 16, lineHeight: 22, fontWeight: '800' as const, marginTop: 2, marginBottom: 8 },
-      heading2: { color: theme.text, fontSize: 14, lineHeight: 20, fontWeight: '800' as const, marginTop: 2, marginBottom: 6 },
-      heading3: { color: theme.text, fontSize: 13, fontWeight: '700' as const, marginTop: 2, marginBottom: 6 },
-      strong: { color: theme.text, fontWeight: '800' as const },
-      em: { color: theme.textSecondary, fontStyle: 'italic' as const },
-      bullet_list: { marginTop: 2, marginBottom: 7 },
-      bullet_list_icon: { color: theme.success },
-      bullet_list_content: { color: theme.textSecondary },
-      ordered_list_icon: { color: theme.success },
-      ordered_list_content: { color: theme.textSecondary },
-      list_item: { marginTop: 1, marginBottom: 2 },
-      link: { color: theme.tint, textDecorationLine: 'underline' as const },
-    }),
-    [theme]
-  );
+    const grew = messages.length > lastCountRef.current;
+    lastCountRef.current = messages.length;
+    if (!grew && !askMutation.isPending) return;
+    const timer = setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
+    return () => clearTimeout(timer);
+  }, [messages.length, askMutation.isPending, messagesQuery.isSuccess]);
 
   const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-    router.replace('/(tabs)/records');
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)/records');
   };
 
-  const handleOpenOriginalFile = async () => {
-    if (!selectedReport) return;
+  const handleOpenOriginal = async () => {
+    if (!report) return;
     try {
-      const signedUrl = await signedUrlMutation.mutateAsync({ filePath: selectedReport.filePath });
-      await Linking.openURL(signedUrl);
-    } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Open failed',
-        text2: 'Could not open this report file. Please try again.',
-      });
+      const url = await signedUrlMutation.mutateAsync({ filePath: report.filePath });
+      await Linking.openURL(url);
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not open the file', text2: 'Please try again.' });
     }
   };
 
-  const handleDeleteSelectedReport = () => {
-    if (!selectedReport || deleteMutation.isPending) return;
-
-    Alert.alert(
-      'Delete this report?',
-      'This will softly remove the report from your list and keep audit history.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            void (async () => {
-              try {
-                await deleteMutation.mutateAsync({ reportId: selectedReport.id });
-                Toast.show({
-                  type: 'success',
-                  text1: 'Report deleted',
-                  text2: 'Report was removed from your list.',
-                });
-                handleBack();
-              } catch (error: any) {
-                Toast.show({
-                  type: 'error',
-                  text1: 'Delete failed',
-                  text2: 'Could not delete this report right now. Please try again.',
-                });
-              }
-            })();
-          },
+  const handleRetry = () => {
+    if (!report || reanalyzeMutation.isPending) return;
+    reanalyzeMutation.mutate(
+      { reportId: report.id },
+      {
+        onSuccess: () => {
+          setNowMs(Date.now());
+          Toast.show({ type: 'success', text1: 'Reading it again', text2: 'Updated results will appear here.' });
         },
-      ]
+        onError: (err: any) => Toast.show({ type: 'error', text1: 'Could not retry', text2: getMedicalReportAnalysisErrorMessage(err?.message) }),
+      }
     );
   };
 
-  const handleAskQuestion = async () => {
-    const question = questionInput.trim();
-    if (!question || !selectedReport?.id || askMutation.isPending) return;
-
-    setQuestionInput('');
+  const handleDelete = async () => {
+    if (!report || deleteMutation.isPending) return;
+    const ok = await confirmAction({ title: 'Delete this report?', message: 'It will be removed from your reports. This cannot be undone.', confirmText: 'Delete', destructive: true });
+    if (!ok) return;
     try {
-      await askMutation.mutateAsync({ reportId: selectedReport.id, question });
-    } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Could not ask AI',
-        text2: getMedicalReportAnalysisErrorMessage(error?.message),
-      });
-      setQuestionInput(question);
+      await deleteMutation.mutateAsync({ reportId: report.id });
+      Toast.show({ type: 'success', text1: 'Report deleted' });
+      handleBack();
+    } catch {
+      Toast.show({ type: 'error', text1: 'Could not delete', text2: 'Please try again.' });
     }
   };
 
+  const ask = async (text: string) => {
+    const question = text.trim();
+    if (!question || !report?.id || askMutation.isPending) return;
+    setQuestionInput('');
+    // Show the patient's question at once, like any chat app, instead of waiting for the server to store it.
+    setPendingQuestion(question);
+    try {
+      await askMutation.mutateAsync({ reportId: report.id, question });
+    } catch (error: any) {
+      // The hook already turns server failures into a readable sentence.
+      Toast.show({ type: 'error', text1: 'Could not ask AI', text2: error?.message || 'Please try again in a moment.' });
+      setQuestionInput(question);
+    } finally {
+      setPendingQuestion(null);
+    }
+  };
+
+  const markdownStyles = React.useMemo(
+    () => ({
+      body: { color: theme.text, fontSize: 15, lineHeight: 22 },
+      paragraph: { marginTop: 0, marginBottom: 8 },
+      heading1: { color: theme.text, fontSize: 17, fontWeight: '700' as const, marginBottom: 6 },
+      heading2: { color: theme.text, fontSize: 16, fontWeight: '700' as const, marginBottom: 6 },
+      heading3: { color: theme.text, fontSize: 15, fontWeight: '700' as const, marginBottom: 4 },
+      strong: { color: theme.text, fontWeight: '700' as const },
+      bullet_list_icon: { color: theme.primary },
+      list_item: { marginTop: 1, marginBottom: 2 },
+      link: { color: theme.primary },
+    }),
+    [theme]
+  );
+
+  const kind = report ? getReportKind(report) : 'other';
+  const KindIcon = isRx ? Pill : kind === 'lab' ? FlaskConical : FileText;
+  const title = report ? getReportTitle(report) : '';
+  const { date, isUploadDate } = report ? getReportDate(report) : { date: null, isUploadDate: true };
+  const identity: any = (report?.aiStructured as any)?.report_identity || {};
+  const labName = String(identity.lab_name || '').trim();
+  const fullSummary = report ? getPlainSummary(report, 4000) : '';
+  const shortSummary = report ? getPlainSummary(report, 320) : '';
+  const canExpand = fullSummary.length > shortSummary.length + 20;
+  const values = report && isReady && !isRx ? getHighlights(report, 40) : [];
+  const attention = report && isReady && !isRx ? getAttentionItems(report, 8) : [];
+  const followUps = report && isReady ? getFollowUps(report, 5) : [];
+  const canChat = isReady;
+  const suggestions = isRx ? SUGGESTIONS_RX : SUGGESTIONS_REPORT;
+  const busy = signedUrlMutation.isPending || deleteMutation.isPending;
+
+  const flagStyle = (flag: string) =>
+    flag === 'high' || flag === 'low'
+      ? { bg: theme.dangerSoft, fg: theme.danger, label: flag === 'high' ? 'High' : 'Low' }
+      : flag === 'normal'
+        ? { bg: theme.successLight, fg: theme.success, label: 'Normal' }
+        : { bg: theme.surfaceMuted, fg: theme.textSecondary, label: '' };
+
+  const Wrapper: any = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
+  const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const } : {};
+
   return (
-    <Wrapper
-      style={[
-        styles.screen,
-        {
-          backgroundColor: theme.background,
-          paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0,
-        },
-      ]}
-      {...wrapperProps}
-    >
-      <View
-        style={[
-          styles.container,
-          {
-            paddingTop: insets.top + 6,
-          },
-        ]}
-      >
-        <View style={[styles.header, { borderBottomColor: theme.borderColor }]}>
-          <TouchableOpacity style={styles.backBtn} onPress={handleBack} activeOpacity={0.85}>
-            <ArrowLeft size={20} color={theme.text} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, { color: theme.text }]}>
-              {selectedReport && isPrescriptionReport(selectedReport)
-                ? 'Prescription Details'
-                : isPrescriptionIntent
-                ? 'Prescription Check'
-                : 'Report Assistant'}
-            </Text>
-            <Text style={[styles.headerSubtitle, { color: theme.textSecondary }]}>
-              {selectedReport && isPrescriptionReport(selectedReport)
-                ? 'Medicines and instructions from uploaded prescription'
-                : isPrescriptionIntent
-                ? 'Prescription-only mode: upload doctor prescription for best output'
-                : 'Understand your report better'}
-            </Text>
-          </View>
+    <Wrapper style={[styles.screen, { backgroundColor: theme.background, paddingBottom: Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight + 2 : 0 }]} {...wrapperProps}>
+      <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.divider, backgroundColor: theme.background }]}>
+        <Pressable onPress={handleBack} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={8} style={[styles.backBtn, { backgroundColor: theme.surfaceMuted }]}>
+          <ArrowLeft size={20} color={theme.text} />
+        </Pressable>
+        <View style={styles.flex}>
+          <Text style={[Typography.heading, { color: theme.text }]} numberOfLines={1}>{report ? (isRx ? 'Prescription' : 'Report explained') : 'Report'}</Text>
         </View>
+      </View>
 
-        {reportsQuery.isLoading && !selectedReport ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator size="small" color={theme.success} />
-            <Text style={[styles.centerStateText, { color: theme.textSecondary }]}>Loading report...</Text>
+      {reportsQuery.isLoading && !report ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.primary} />
+        </View>
+      ) : !report ? (
+        <View style={styles.center}>
+          <View style={[styles.emptyIcon, { backgroundColor: theme.surfaceMuted }]}>
+            <AlertTriangle size={26} color={theme.textSecondary} />
           </View>
-        ) : null}
-
-        {!reportsQuery.isLoading && !selectedReport ? (
-          <View style={[styles.notFoundCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-            <AlertTriangle size={18} color={theme.textSecondary} />
-            <Text style={[styles.notFoundTitle, { color: theme.text }]}>Report not found</Text>
-            <Text style={[styles.notFoundSubtitle, { color: theme.textSecondary }]}>
-              This report may have been deleted or is no longer available.
-            </Text>
-            <TouchableOpacity style={[styles.goBackBtn, { backgroundColor: theme.tint }]} onPress={handleBack} activeOpacity={0.85}>
-              <Text style={styles.goBackBtnText}>Back to Reports</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {isPrescriptionMismatch ? (
-          <View style={[styles.rxMismatchCard, { backgroundColor: warningSurface.bg, borderColor: warningSurface.border }]}>
-            <AlertTriangle size={16} color={warningSurface.text} />
-            <Text style={[styles.rxMismatchText, { color: warningSurface.text }]}>
-              This file looks like a lab report, not a doctor prescription. Prescription view works best with Rx files/images.
-            </Text>
-          </View>
-        ) : null}
-
-        {isPrescriptionMismatch && nonPrescriptionCarePlan ? (
-          <View style={[styles.nonRxPlanCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-            <Text style={[styles.nonRxPlanTitle, { color: theme.text }]}>AI Care Plan (Not a Prescription)</Text>
-
-            {nonPrescriptionCarePlan.highlights.length > 0 ? (
-              <>
-                <Text style={[styles.nonRxPlanSectionTitle, { color: theme.text }]}>Report Highlights</Text>
-                {nonPrescriptionCarePlan.highlights.slice(0, 4).map((item, idx) => (
-                  <Text key={`highlight-${idx}`} style={[styles.nonRxPlanItem, { color: theme.textSecondary }]}>
-                    • {item}
-                  </Text>
-                ))}
-              </>
-            ) : null}
-
-            {nonPrescriptionCarePlan.nextSteps.length > 0 ? (
-              <>
-                <Text style={[styles.nonRxPlanSectionTitle, { color: theme.text }]}>Suggested Next Steps</Text>
-                {nonPrescriptionCarePlan.nextSteps.slice(0, 4).map((item, idx) => (
-                  <Text key={`step-${idx}`} style={[styles.nonRxPlanItem, { color: theme.textSecondary }]}>
-                    • {item}
-                  </Text>
-                ))}
-              </>
-            ) : null}
-
-            {nonPrescriptionCarePlan.supplements.length > 0 ? (
-              <>
-                <Text style={[styles.nonRxPlanSectionTitle, { color: theme.text }]}>
-                  Ask Your Doctor About These Supplements
-                </Text>
-                {nonPrescriptionCarePlan.supplements.map((item, idx) => (
-                  <Text key={`supp-${idx}`} style={[styles.nonRxPlanItem, { color: theme.textSecondary }]}>
-                    • {item}
-                  </Text>
-                ))}
-              </>
-            ) : null}
-
-            {nonPrescriptionCarePlan.cautions.length > 0 ? (
-              <>
-                <Text style={[styles.nonRxPlanSectionTitle, { color: dangerSurface.text }]}>Cautions</Text>
-                {nonPrescriptionCarePlan.cautions.slice(0, 3).map((item, idx) => (
-                  <Text key={`caution-${idx}`} style={[styles.nonRxPlanItem, { color: dangerSurface.text }]}>
-                    • {item}
-                  </Text>
-                ))}
-              </>
-            ) : null}
-
-            <Text style={[styles.nonRxPlanDisclaimer, { color: warningSurface.text }]}>
-              This is guidance only. Medicine start/stop or supplement dose should be decided by a licensed doctor.
-            </Text>
-          </View>
-        ) : null}
-
-        {selectedReport ? (
-          <>
-            <ScrollView
-              ref={contentScrollRef}
-              style={styles.content}
-              contentContainerStyle={styles.contentContainer}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              {/* Dynamic Summary Card (Hidden for completed prescriptions to avoid redundancy) */}
-              {selectedReport &&
-                !isPrescriptionMismatch &&
-                (
-                <View style={[styles.reportHeaderCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                  <Text style={[styles.reportFileName, { color: theme.text }]} numberOfLines={2}>
-                    {selectedReport.fileName}
-                  </Text>
-                  <View style={styles.reportHeaderMetaRow}>
-                    <View style={[styles.typeBadge, { backgroundColor: getStatusColor(selectedReport.analysisStatus, theme).bg }]}>
-                      <Text style={[styles.typeBadgeText, { color: getStatusColor(selectedReport.analysisStatus, theme).text }]}>
-                        {getStatusLabel(selectedReport.analysisStatus)}
-                      </Text>
-                    </View>
-                    <Text style={[styles.dateText, { color: theme.textSecondary }]}>
-                      {formatDate(selectedReport.analyzedAt || selectedReport.createdAt)}
-                    </Text>
+          <Text style={[Typography.heading, { color: theme.text }]}>Report not found</Text>
+          <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>It may have been deleted.</Text>
+          <Pressable onPress={handleBack} accessibilityRole="button" style={[styles.cta, { backgroundColor: theme.buttonPrimary }]}>
+            <Text style={styles.ctaText}>Back to Reports</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <>
+          <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+            <View style={styles.inner}>
+              <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
+                <View style={styles.titleRow}>
+                  <View style={[styles.kindTile, { backgroundColor: theme.primarySoft }]}>
+                    <KindIcon size={22} color={theme.primary} />
                   </View>
-
-                  {!isSelectedPrescription ? (
-                    <>
-                      <View style={styles.reportSummaryMarkdownWrap}>
-                        {selectedReport.analysisStatus === 'processing' || selectedReport.analysisStatus === 'pending' ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                            <ActivityIndicator size="small" color={theme.success} style={{ marginRight: 8 }} />
-                            <Text style={{ color: theme.success, fontWeight: '600', fontSize: 13, flex: 1 }}>
-                              Analyzing report...
-                            </Text>
-                          </View>
-                        ) : null}
-                        <Markdown style={reportSummaryMarkdownStyles}>{renderedSummaryMarkdown}</Markdown>
-                      </View>
-
-                      {canExpandSummary ? (
-                        <TouchableOpacity
-                          onPress={() => setIsSummaryExpanded((prev) => !prev)}
-                          activeOpacity={0.85}
-                          style={styles.summaryToggle}
-                        >
-                          <Text style={[styles.summaryToggleText, { color: theme.success }]}>
-                            {isSummaryExpanded ? 'Show less' : 'Show full summary'}
-                          </Text>
-                        </TouchableOpacity>
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  <View style={styles.reportActionsRow}>
-                    <TouchableOpacity
-                      style={[styles.reportActionBtn, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
-                      onPress={handleOpenOriginalFile}
-                      disabled={signedUrlMutation.isPending || deleteMutation.isPending}
-                      activeOpacity={0.85}
-                    >
-                      {signedUrlMutation.isPending ? (
-                        <ActivityIndicator size="small" color={theme.success} />
-                      ) : (
-                        <Text style={[styles.reportActionText, { color: theme.text }]}>Open Original</Text>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.reportActionBtn, 
-                        { 
-                          borderColor: theme.tint, 
-                          backgroundColor: theme.cardBackground, 
-                          opacity: (reanalyzeMutation.isPending || selectedReport?.analysisStatus === 'processing' || selectedReport?.analysisStatus === 'pending') ? 0.7 : 1 
-                        }
-                      ]}
-                      onPress={() => {
-                        if (!selectedReport || reanalyzeMutation.isPending) return;
-                        reanalyzeMutation.mutate({ reportId: selectedReport.id }, {
-                          onSuccess: () => {
-                            Toast.show({ type: 'success', text1: 'Re-analysis started', text2: 'Updated results will appear shortly.' });
-                          },
-                          onError: (err: any) => {
-                            Toast.show({ type: 'error', text1: 'Re-analyze failed', text2: getMedicalReportAnalysisErrorMessage(err?.message) });
-                          },
-                        });
-                      }}
-                      disabled={reanalyzeMutation.isPending || selectedReport?.analysisStatus === 'processing' || selectedReport?.analysisStatus === 'pending'}
-                      activeOpacity={0.85}
-                    >
-                      {(reanalyzeMutation.isPending || selectedReport?.analysisStatus === 'processing' || selectedReport?.analysisStatus === 'pending') ? (
-                        <>
-                          <ActivityIndicator size="small" color={theme.tint} />
-                          <Text style={[styles.reportActionText, { color: theme.tint, marginLeft: 6 }]}>Analyzing...</Text>
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw size={14} color={theme.tint} />
-                          <Text style={[styles.reportActionText, { color: theme.tint, marginLeft: 6 }]}>Re-analyze</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[
-                        styles.reportActionBtn,
-                        styles.deleteActionBtn,
-                        { borderColor: '#E04646', backgroundColor: theme.cardBackground, opacity: deleteMutation.isPending ? 0.7 : 1 },
-                      ]}
-                      onPress={handleDeleteSelectedReport}
-                      disabled={deleteMutation.isPending}
-                      activeOpacity={0.85}
-                    >
-                      {deleteMutation.isPending ? (
-                        <ActivityIndicator size="small" color="#E04646" />
-                      ) : (
-                        <>
-                          <Trash2 size={14} color="#E04646" />
-                          <Text style={styles.deleteActionText}>Delete</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                  <View style={styles.flex}>
+                    <Text style={[Typography.subheading, { color: theme.text }]} numberOfLines={2}>{title}</Text>
+                    <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={2}>
+                      {[formatShortDate(date) ? `${isUploadDate ? 'Added ' : ''}${formatShortDate(date)}` : '', labName].filter(Boolean).join(' · ')}
+                    </Text>
                   </View>
                 </View>
-              )}
 
-              {/* Premium Prescription View for prescription reports */}
-              {selectedReport && isSelectedPrescription && selectedReport.analysisStatus !== 'completed' ? (
-                <View style={styles.rxSection}>
-                  <View style={[styles.rxNotesCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    <Text style={[styles.rxNotesTitle, { color: theme.text }]}>
-                      {selectedReport.analysisStatus === 'failed' ? 'Prescription Scan Failed' : 'Preparing Prescription Details'}
+                {state === 'scanning' ? (
+                  <AnalysisProgress
+                    since={report.updatedAt || report.createdAt}
+                    isPdf={/pdf/i.test(report.mimeType || '') || /\.pdf$/i.test(report.fileName || '')}
+                    isPrescription={isRx}
+                  />
+                ) : null}
+
+                {state === 'stuck' || state === 'failed' ? (
+                  <View style={[styles.notice, styles.noticeCol, { backgroundColor: theme.warningSoft }]}>
+                    <View style={styles.noticeRow}>
+                      <AlertTriangle size={18} color={theme.warning} />
+                      <Text style={[Typography.bodyStrong, { color: theme.warning }]}>{state === 'stuck' ? 'This is taking longer than usual' : 'We could not read this report'}</Text>
+                    </View>
+                    <Text style={[Typography.body, { color: theme.textSecondary }]}>
+                      {state === 'stuck' ? 'The scan did not finish. Try again; your file is safe.' : getMedicalReportAnalysisErrorMessage(report.analysisError)}
                     </Text>
-                    <Text style={[styles.rxNotesText, { color: theme.textSecondary }]}>
-                      {selectedReport.analysisStatus === 'failed'
-                        ? getMedicalReportAnalysisErrorMessage(selectedReport.analysisError) || 'Could not parse this prescription. Please re-upload a clearer image/PDF and re-analyze.'
-                        : 'Prescription is uploaded. AI is extracting medicines and details. This may take a few moments.'}
-                    </Text>
+                    <Pressable onPress={handleRetry} disabled={reanalyzeMutation.isPending} accessibilityRole="button" style={[styles.retry, { backgroundColor: theme.buttonPrimary, opacity: reanalyzeMutation.isPending ? 0.6 : 1 }]}>
+                      <RefreshCw size={15} color="#FFFFFF" />
+                      <Text style={styles.ctaText}>{reanalyzeMutation.isPending ? 'Trying…' : 'Try again'}</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                {isReady && fullSummary ? (
+                  <View style={styles.summaryBlock}>
+                    <SectionTitle color={theme.textTertiary}>IN SIMPLE WORDS</SectionTitle>
+                    <Text style={[Typography.body, { color: theme.text }]}>{expanded ? fullSummary : shortSummary}</Text>
+                    {canExpand ? (
+                      <Pressable onPress={() => setExpanded((prev) => !prev)} accessibilityRole="button" hitSlop={8}>
+                        <Text style={[Typography.label, { color: theme.primary }]}>{expanded ? 'Show less' : 'Read more'}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+
+              {attention.length > 0 && values.length === 0 ? (
+                <View style={[styles.card, { backgroundColor: theme.dangerSoft, borderColor: theme.borderColor }]}>
+                  <View style={styles.noticeRow}>
+                    <AlertTriangle size={18} color={theme.danger} />
+                    <Text style={[Typography.subheading, { color: theme.danger }]}>Needs your attention</Text>
+                  </View>
+                  {attention.map((line) => (
+                    <View key={line} style={styles.bulletRow}>
+                      <View style={[styles.dot, { backgroundColor: theme.danger }]} />
+                      <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{line}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {values.length > 0 ? (
+                <View style={styles.section}>
+                  <SectionTitle color={theme.textTertiary}>YOUR VALUES</SectionTitle>
+                  <View style={[styles.card, styles.tableCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                    {values.map((item, index) => {
+                      const flag = flagStyle(item.flag);
+                      return (
+                        <View key={`${item.name}-${index}`} style={[styles.valueRow, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth * 2, borderTopColor: theme.divider }]}>
+                          <View style={styles.flex}>
+                            <Text style={[Typography.bodyStrong, { color: theme.text }]}>{item.name}</Text>
+                            {item.reference ? <Text style={[Typography.caption, { color: theme.textSecondary }]}>Normal: {item.reference} {item.unit}</Text> : null}
+                          </View>
+                          <View style={styles.valueRight}>
+                            <Text style={[Typography.bodyStrong, { color: item.flag === 'high' || item.flag === 'low' ? theme.danger : theme.text }]}>
+                              {item.value} <Text style={[Typography.caption, { color: theme.textSecondary }]}>{item.unit}</Text>
+                            </Text>
+                            {flag.label ? (
+                              <View style={[styles.flagChip, { backgroundColor: flag.bg }]}>
+                                <Text style={[styles.flagText, { color: flag.fg }]}>{flag.label}</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                        </View>
+                      );
+                    })}
                   </View>
                 </View>
               ) : null}
 
-              {prescriptionViewData ? (() => {
-                const { rxData, classicMedicineRows } = prescriptionViewData;
-                return (
-                  <View style={styles.rxSection}>
-                    <View style={[styles.rxClassicCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                      <Text style={[styles.rxClassicTitle, { color: theme.text }]}>Medical Prescription Form</Text>
-
-                      <View style={styles.rxClassicRow}>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Patient Name</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.patientName)}</Text>
+              {rx && rx.medicines.length > 0 ? (
+                <View style={styles.section}>
+                  <SectionTitle color={theme.textTertiary}>{`MEDICINES (${rx.medicines.length})`}</SectionTitle>
+                  {rx.medicines.map((med, index) => (
+                    <View key={`${med.name}-${index}`} style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
+                      <View style={styles.titleRow}>
+                        <View style={[styles.kindTile, { backgroundColor: theme.primarySoft }]}>
+                          <Pill size={20} color={theme.primary} />
                         </View>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Date</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.prescribedOn || rxData.date)}</Text>
+                        <View style={styles.flex}>
+                          <Text style={[Typography.subheading, { color: theme.text }]}>{med.name}</Text>
+                          {med.purpose ? <Text style={[Typography.caption, { color: theme.textSecondary }]}>{med.purpose}</Text> : null}
                         </View>
                       </View>
-
-                      <View style={styles.rxClassicRow}>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>S/O | D/O | W/O</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.relationTag)}</Text>
-                        </View>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Age / Sex</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>
-                            {displayOrFallback([rxData.age, rxData.sex].filter(Boolean).join(' / '))}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.rxClassicRow}>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Occupation</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.occupation)}</Text>
-                        </View>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Patient ID</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.patientIdNo)}</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.rxClassicRow}>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Health Insurance No</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.insuranceNo)}</Text>
-                        </View>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Health Provider</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.healthProvider)}</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.rxClassicRow}>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Health Card No</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.healthCardNo)}</Text>
-                        </View>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Cell No</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.cellNo)}</Text>
-                        </View>
-                      </View>
-
-                      <View style={[styles.rxClassicSingleRow, { borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Patient Address</Text>
-                        <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.address)}</Text>
-                      </View>
-
-                      <View style={[styles.rxClassicSingleRow, { borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Diagnosed With</Text>
-                        <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.diagnosis)}</Text>
-                      </View>
-
-                      <View style={styles.rxClassicTripleRow}>
-                        <View style={styles.rxClassicTripleCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Blood Pressure</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.bloodPressure)}</Text>
-                        </View>
-                        <View style={styles.rxClassicTripleCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Pulse Rate</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.pulseRate)}</Text>
-                        </View>
-                        <View style={styles.rxClassicTripleCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Weight</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.weight)}</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.rxClassicRow}>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Allergies</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.allergies)}</Text>
-                        </View>
-                        <View style={styles.rxClassicCol}>
-                          <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Disabilities</Text>
-                          <Text style={[styles.rxClassicValue, { color: theme.text }]}>{displayOrFallback(rxData.disabilities)}</Text>
-                        </View>
-                      </View>
-
-                      <View style={[styles.rxClassicTableWrap, { borderColor: theme.borderColor, backgroundColor: theme.background }]}>
-                        <View style={[styles.rxClassicTableHeader, { borderColor: theme.borderColor }]}>
-                          <Text style={[styles.rxClassicTableHeaderCell, styles.rxClassicNumCol, { color: theme.text }]}>#</Text>
-                          <Text style={[styles.rxClassicTableHeaderCell, styles.rxClassicDrugCol, { color: theme.text }]}>Drugs</Text>
-                          <Text style={[styles.rxClassicTableHeaderCell, styles.rxClassicUnitCol, { color: theme.text }]}>Unit</Text>
-                          <Text style={[styles.rxClassicTableHeaderCell, styles.rxClassicDoseCol, { color: theme.text }]}>Dosage / Day</Text>
-                        </View>
-
-                        {classicMedicineRows.map((row, index) => (
-                          <View
-                            key={`classic-row-${index}`}
-                            style={[styles.rxClassicTableRow, { borderColor: theme.borderColor }]}
-                          >
-                            <Text style={[styles.rxClassicTableCell, styles.rxClassicNumCol, { color: theme.textSecondary }]}>
-                              {index + 1}.
-                            </Text>
-                            <Text style={[styles.rxClassicTableCell, styles.rxClassicDrugCol, { color: theme.text }]}>
-                              {row?.name || '-'}
-                            </Text>
-                            <Text style={[styles.rxClassicTableCell, styles.rxClassicUnitCol, { color: theme.textSecondary }]}>
-                              {row?.timing || '-'}
-                            </Text>
-                            <Text style={[styles.rxClassicTableCell, styles.rxClassicDoseCol, { color: theme.textSecondary }]}>
-                              {row ? [row.dosage, row.frequency, row.duration].filter(Boolean).join(' | ') || '-' : '-'}
-                            </Text>
+                      <View style={styles.chips}>
+                        {[med.dosage, med.frequency, med.timing, med.duration].filter(Boolean).map((chip) => (
+                          <View key={chip} style={[styles.chip, { backgroundColor: theme.surfaceMuted }]}>
+                            <Text style={[styles.chipText, { color: theme.text }]}>{chip}</Text>
                           </View>
                         ))}
                       </View>
-
-                      <View style={[styles.rxClassicSingleRow, { borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Diet To Follow</Text>
-                        <Text style={[styles.rxClassicValue, { color: theme.text }]}>
-                          {displayOrFallback(rxData.dietToFollow || rxData.generalInstructions[0] || '')}
-                        </Text>
-                      </View>
-
-                      <View style={[styles.rxClassicSingleRow, { borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Brief History of Patient</Text>
-                        <Text style={[styles.rxClassicValue, { color: theme.text }]}>
-                          {displayOrFallback(rxData.briefHistory || rxData.doctorNotes || '')}
-                        </Text>
-                      </View>
-
-                      <View style={[styles.rxClassicSingleRow, { borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxClassicLabel, { color: theme.textSecondary }]}>Follow-up Physician</Text>
-                        <Text style={[styles.rxClassicValue, { color: theme.text }]}>
-                          {displayOrFallback(rxData.followupPhysician || rxData.doctorName)}
-                        </Text>
-                      </View>
+                      {med.instructions ? <Text style={[Typography.body, { color: theme.textSecondary }]}>{med.instructions}</Text> : null}
                     </View>
+                  ))}
+                </View>
+              ) : null}
 
-                    <View style={[styles.rxNotesCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                      <Text style={[styles.rxNotesTitle, { color: theme.text }]}>Prescription Extraction Status</Text>
-                      <Text style={[styles.rxNotesText, { color: theme.textSecondary }]}>
-                        Structured in standard prescription form. Always verify medicine name, dose, and duration before use.
-                      </Text>
-                    </View>
-
-                    {rxData.generalInstructions.length > 0 ? (
-                      <View style={[styles.rxNotesCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxNotesTitle, { color: theme.text }]}>How To Follow This Prescription</Text>
-                        {rxData.generalInstructions.map((instruction, index) => (
-                          <Text key={index} style={[styles.rxNotesText, { color: theme.textSecondary }]}>• {instruction}</Text>
-                        ))}
-                      </View>
-                    ) : null}
-
-                    {rxData.precautions.length > 0 ? (
-                      <View style={[styles.rxPrecautionCard, { backgroundColor: warningSurface.bg, borderColor: warningSurface.border }]}>
-                        <Text style={[styles.rxPrecautionTitle, { color: warningSurface.text }]}>Precautions</Text>
-                        {rxData.precautions.map((p, i) => (
-                          <Text key={i} style={[styles.rxPrecautionItem, { color: warningSurface.text }]}>• {p}</Text>
-                        ))}
-                      </View>
-                    ) : null}
-
-                    {rxData.redFlags.length > 0 ? (
-                      <View style={[styles.rxPrecautionCard, { backgroundColor: dangerSurface.bg, borderColor: dangerSurface.border }]}>
-                        <Text style={[styles.rxPrecautionTitle, { color: dangerSurface.text }]}>Urgent Warning Signs</Text>
-                        {rxData.redFlags.map((flag, i) => (
-                          <Text key={i} style={[styles.rxPrecautionItem, { color: dangerSurface.text }]}>• {flag}</Text>
-                        ))}
-                      </View>
-                    ) : null}
-
-                    {rxData.doctorNotes ? (
-                      <View style={[styles.rxNotesCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                        <Text style={[styles.rxNotesTitle, { color: theme.text }]}>Doctor Notes</Text>
-                        <Text style={[styles.rxNotesText, { color: theme.textSecondary }]}>{rxData.doctorNotes}</Text>
-                      </View>
-                    ) : null}
-
-                    <View style={[styles.rxDisclaimer, { backgroundColor: warningSurface.bg, borderColor: warningSurface.border }]}>
-                      <ShieldAlert size={16} color={warningSurface.text} />
-                      <Text style={[styles.rxDisclaimerText, { color: warningSurface.text }]}>
-                        This prescription view is AI-extracted and can contain OCR errors. Always confirm medicine name, dose, timing, and duration with your doctor or pharmacist before use. Do not change or stop medicines based only on AI output.
-                      </Text>
-                    </View>
-                  </View>
-                );
-              })() : null}
-
-              {shouldEnableReportChat && (displayedChatMessages.length > 0 || askMutation.isPending || isReportAnalyzing) ? (
-                <View style={styles.chatSection}>
-                  <Text style={[styles.chatTitle, { color: theme.text }]}>
-                    {displayedChatMessages.length > 0 || askMutation.isPending
-                      ? 'Chat'
-                      : 'You can chat about this file below'}
-                  </Text>
-
-                  <View style={styles.chatScrollContent}>
-                    {displayedChatMessages.map((message) => (
-                      <View
-                        key={message.id}
-                        style={[
-                          styles.chatRow,
-                          message.role === 'user' ? styles.userRow : styles.aiRow,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.chatBubble,
-                            message.role === 'user'
-                              ? [styles.userBubble, { backgroundColor: theme.tint }]
-                              : [styles.aiBubble, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }],
-                          ]}
-                        >
-                        {message.role === 'assistant' ? (
-                          message.content.length > 1800 ? (
-                            <Text style={[styles.chatText, { color: theme.text }]}>
-                              {message.content.slice(0, 1800)}...
-                            </Text>
-                          ) : (
-                            <Markdown style={markdownStyles}>{formatAssistantMessageForMarkdown(message.content)}</Markdown>
-                          )
-                        ) : (
-                          <Text style={[styles.chatText, { color: '#fff' }]}>{message.content}</Text>
-                        )}
-                        </View>
+              {rx ? (
+                <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                  <SectionTitle color={theme.textTertiary}>PRESCRIPTION DETAILS</SectionTitle>
+                  {[
+                    ['Doctor', rx.doctorName || rx.followupPhysician],
+                    ['Patient', [rx.patientName, [rx.age, rx.sex].filter(Boolean).join(' / ')].filter(Boolean).join(' · ')],
+                    ['Date', rx.prescribedOn || rx.date],
+                    ['Diagnosis', rx.diagnosis],
+                    ['Allergies', rx.allergies],
+                    ['Diet', rx.dietToFollow],
+                    ['Follow-up', rx.followupDate],
+                  ]
+                    .filter(([, value]) => value && value.trim())
+                    .map(([label, value]) => (
+                      <View key={label} style={styles.detailRow}>
+                        <Text style={[Typography.caption, { color: theme.textSecondary, width: 78 }]}>{label}</Text>
+                        <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{value}</Text>
                       </View>
                     ))}
+                  {rx.doctorNotes ? <Text style={[Typography.body, { color: theme.textSecondary }]}>{rx.doctorNotes}</Text> : null}
+                </View>
+              ) : null}
 
-                    {isReportAnalyzing ? (
-                      <View style={[styles.chatRow, styles.aiRow]}>
-                        <View style={[styles.chatBubble, styles.aiBubble, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                          <ActivityIndicator size="small" color={theme.success} />
-                          <Text style={[styles.typingText, { color: theme.textSecondary }]}>AI scan in progress. Fresh report chat will appear after analysis.</Text>
-                        </View>
-                      </View>
-                    ) : null}
+              {rx && rx.redFlags.length > 0 ? (
+                <View style={[styles.card, { backgroundColor: theme.dangerSoft, borderColor: theme.borderColor }]}>
+                  <View style={styles.noticeRow}>
+                    <ShieldAlert size={18} color={theme.danger} />
+                    <Text style={[Typography.subheading, { color: theme.danger }]}>Get urgent help if</Text>
+                  </View>
+                  {rx.redFlags.map((line) => (
+                    <View key={line} style={styles.bulletRow}>
+                      <View style={[styles.dot, { backgroundColor: theme.danger }]} />
+                      <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{line}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
 
-                    {askMutation.isPending ? (
-                      <View style={[styles.chatRow, styles.aiRow]}>
-                        <View style={[styles.chatBubble, styles.aiBubble, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                          <ActivityIndicator size="small" color={theme.success} />
-                          <Text style={[styles.typingText, { color: theme.textSecondary }]}>AI is preparing report answer...</Text>
-                        </View>
+              {(rx ? [...rx.generalInstructions, ...rx.precautions] : followUps).length > 0 ? (
+                <View style={styles.section}>
+                  <SectionTitle color={theme.textTertiary}>{rx ? 'HOW TO FOLLOW THIS' : 'SUGGESTED NEXT STEPS'}</SectionTitle>
+                  <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                    {(rx ? [...rx.generalInstructions, ...rx.precautions] : followUps).map((line) => (
+                      <View key={line} style={styles.bulletRow}>
+                        <View style={[styles.dot, { backgroundColor: theme.primary }]} />
+                        <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{line}</Text>
                       </View>
-                    ) : null}
+                    ))}
                   </View>
                 </View>
               ) : null}
-            </ScrollView>
 
-            {selectedReport && shouldEnableReportChat && (
-              <View
-                style={[
-                  styles.chatInputRow,
-                  {
-                    borderTopColor: theme.borderColor,
-                    backgroundColor: theme.background,
-                    paddingBottom: Math.max(insets.bottom, 12),
-                  },
-                ]}
-              >
+              {isReady ? (
+                <View style={[styles.disclaimer, { backgroundColor: theme.primarySoft }]}>
+                  <ShieldAlert size={16} color={theme.primary} />
+                  <Text style={[Typography.caption, { color: theme.textSecondary, flex: 1 }]}>
+                    AI can make mistakes reading a photo. Check names, doses and values against your original, and talk to your doctor before changing any medicine.
+                  </Text>
+                </View>
+              ) : null}
+
+              <View style={styles.actionsRow}>
+                <Pressable onPress={handleOpenOriginal} disabled={busy} accessibilityRole="button" style={[styles.action, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}>
+                  {signedUrlMutation.isPending ? <ActivityIndicator size="small" color={theme.primary} /> : <ExternalLink size={15} color={theme.text} />}
+                  <Text style={[styles.actionText, { color: theme.text }]}>Open original</Text>
+                </Pressable>
+                <Pressable onPress={handleDelete} disabled={busy} accessibilityRole="button" accessibilityLabel="Delete report" style={[styles.action, { borderColor: theme.dangerSoft, backgroundColor: theme.dangerSoft }]}>
+                  <Trash2 size={15} color={theme.danger} />
+                  <Text style={[styles.actionText, { color: theme.danger }]}>Delete</Text>
+                </Pressable>
+              </View>
+
+              {canChat ? (
+                <View style={styles.section}>
+                  <SectionTitle color={theme.textTertiary}>{`ASK AI ABOUT THIS ${isRx ? 'PRESCRIPTION' : 'REPORT'}`}</SectionTitle>
+                  {messages.length === 0 && !askMutation.isPending ? (
+                    <View style={styles.chips}>
+                      {suggestions.map((text) => (
+                        <Pressable key={text} onPress={() => ask(text)} accessibilityRole="button" style={[styles.suggestion, { borderColor: theme.primary, backgroundColor: theme.primarySoft }]}>
+                          <Sparkles size={13} color={theme.primary} />
+                          <Text style={[styles.suggestionText, { color: theme.primary }]}>{text}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                  {messages.map((message) => (
+                    <View key={message.id} style={[styles.bubbleRow, message.role === 'user' ? styles.rowEnd : styles.rowStart]}>
+                      <View
+                        style={[
+                          styles.bubble,
+                          message.role === 'user'
+                            ? { backgroundColor: theme.buttonPrimary }
+                            : { backgroundColor: theme.cardBackground, borderColor: theme.borderColor, borderWidth: 1 },
+                        ]}
+                      >
+                        {message.role === 'assistant' ? (
+                          <Markdown style={markdownStyles}>{formatAssistantMessageForMarkdown(message.content)}</Markdown>
+                        ) : (
+                          <Text style={[Typography.body, { color: '#FFFFFF' }]}>{message.content}</Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                  {pendingQuestion ? (
+                    <View style={[styles.bubbleRow, styles.rowEnd]}>
+                      <View style={[styles.bubble, { backgroundColor: theme.buttonPrimary }]}>
+                        <Text style={[Typography.body, { color: '#FFFFFF' }]}>{pendingQuestion}</Text>
+                      </View>
+                    </View>
+                  ) : null}
+                  {askMutation.isPending ? (
+                    <View style={[styles.bubbleRow, styles.rowStart]}>
+                      <View style={[styles.bubble, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor, borderWidth: 1 }]}>
+                        <ThinkingIndicator />
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          </ScrollView>
+
+          {canChat ? (
+            <View style={[styles.inputBar, { borderTopColor: theme.divider, backgroundColor: theme.background, paddingBottom: Math.max(insets.bottom, 12) }]}>
+              <View style={styles.inputInner}>
                 <TextInput
-                  style={[styles.chatInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
+                  style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
                   value={questionInput}
                   onChangeText={setQuestionInput}
-                  placeholder={"Type your question..."}
-                  placeholderTextColor={theme.textSecondary}
-                  editable={!askMutation.isPending && selectedReport.analysisStatus !== 'processing'}
-                  onSubmitEditing={handleAskQuestion}
+                  placeholder="Ask a question about this report"
+                  placeholderTextColor={theme.textTertiary}
+                  editable={!askMutation.isPending}
+                  onSubmitEditing={() => ask(questionInput)}
                   returnKeyType="send"
                   multiline
                 />
-                <TouchableOpacity
-                  style={[styles.sendBtn, { backgroundColor: questionInput.trim() ? theme.success : theme.borderColor }]}
-                  onPress={handleAskQuestion}
-                  disabled={!questionInput.trim() || askMutation.isPending || selectedReport.analysisStatus === 'processing'}
-                  activeOpacity={0.85}
+                <Pressable
+                  onPress={() => ask(questionInput)}
+                  disabled={!questionInput.trim() || askMutation.isPending}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send question"
+                  style={[styles.send, { backgroundColor: questionInput.trim() && !askMutation.isPending ? theme.buttonPrimary : theme.surfaceMuted }]}
                 >
-                  <Send size={15} color="#fff" />
-                </TouchableOpacity>
+                  <Send size={17} color={questionInput.trim() && !askMutation.isPending ? '#FFFFFF' : theme.textTertiary} />
+                </Pressable>
               </View>
-            )}
-          </>
-        ) : null}
-      </View>
+            </View>
+          ) : null}
+        </>
+      )}
     </Wrapper>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  container: { flex: 1 },
-  header: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  backBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  headerTitle: { fontSize: 18, fontWeight: '800' },
-  headerSubtitle: { marginTop: 1, fontSize: 12, fontWeight: '500' },
-  centerState: { marginTop: 30, alignItems: 'center', justifyContent: 'center' },
-  centerStateText: { marginTop: 8, fontSize: 12 },
-  notFoundCard: {
-    margin: 16,
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 16,
-    alignItems: 'center',
-  },
-  notFoundTitle: { marginTop: 8, fontSize: 15, fontWeight: '700' },
-  notFoundSubtitle: { marginTop: 6, fontSize: 12, textAlign: 'center', lineHeight: 18 },
-  goBackBtn: { marginTop: 12, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9 },
-  goBackBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  rxMismatchCard: {
-    marginHorizontal: 16,
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  rxMismatchText: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 17,
-    color: '#BF360C',
-    fontWeight: '600',
-  },
-  nonRxPlanCard: {
-    marginHorizontal: 16,
-    marginTop: 10,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  nonRxPlanTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  nonRxPlanSectionTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  nonRxPlanItem: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: '500',
-    marginBottom: 3,
-  },
-  nonRxPlanDisclaimer: {
-    marginTop: 10,
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#B45F00',
-    fontWeight: '700',
-  },
-  content: { flex: 1 },
-  contentContainer: { paddingBottom: 16 },
-  reportHeaderCard: {
-    marginHorizontal: 16,
-    marginTop: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    padding: 12,
-  },
-  reportFileName: { fontSize: 14, fontWeight: '700' },
-  reportHeaderMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-  typeBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  typeBadgeText: { fontSize: 10, fontWeight: '700' },
-  dateText: { fontSize: 12 },
-  reportSummaryMarkdownWrap: { marginTop: 10 },
-  summaryToggle: { marginTop: 8, alignSelf: 'flex-start' },
-  summaryToggleText: { fontSize: 12, fontWeight: '700' },
-  reportActionsRow: { flexDirection: 'row', marginTop: 10 },
-  reportActionBtn: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 34,
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  reportActionText: { fontSize: 12, fontWeight: '600' },
-  deleteActionBtn: {
-    minWidth: 96,
-    marginLeft: 8,
-  },
-  deleteActionText: { fontSize: 12, fontWeight: '700', color: '#E04646', marginLeft: 5 },
-  chatSection: { flex: 1, minHeight: 170 },
-  chatTitle: { marginTop: 14, marginHorizontal: 16, fontSize: 14, fontWeight: '700' },
-  chatScrollContent: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 24, flexGrow: 1 },
-  chatRow: { marginBottom: 10, flexDirection: 'row' },
-  userRow: { justifyContent: 'flex-end' },
-  aiRow: { justifyContent: 'flex-start' },
-  chatBubble: {
-    maxWidth: '90%',
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  userBubble: { borderTopRightRadius: 6 },
-  aiBubble: { borderTopLeftRadius: 6, borderWidth: 1 },
-  chatText: { fontSize: 13, lineHeight: 18, fontWeight: '500' },
-  typingText: { marginTop: 6, fontSize: 12, fontWeight: '600' },
-  chatInputRow: {
-    borderTopWidth: 1,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  chatInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 22,
-    minHeight: 42,
-    maxHeight: 92,
-    paddingHorizontal: 14,
-    fontSize: 13,
-  },
-  sendBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    marginLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  /* ───── Premium Prescription Styles ───── */
-  rxSection: {
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 20,
-  },
-  rxSheetCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-  },
-  rxSheetTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  rxSheetBadge: {
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  rxSheetBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-  },
-  rxSheetDate: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  rxSheetTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: 10,
-    letterSpacing: -0.2,
-  },
-  rxMetaGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 8,
-  },
-  rxMetaItem: {
-    width: '48%',
-  },
-  rxMetaLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  rxMetaValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 17,
-  },
-  rxClassicCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 12,
-  },
-  rxClassicTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  rxClassicRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 8,
-  },
-  rxClassicCol: {
-    flex: 1,
-  },
-  rxClassicTripleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-    marginBottom: 8,
-  },
-  rxClassicTripleCol: {
-    flex: 1,
-  },
-  rxClassicSingleRow: {
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 8,
-  },
-  rxClassicLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  rxClassicValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 17,
-  },
-  rxClassicTableWrap: {
-    borderWidth: 1,
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  rxClassicTableHeader: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    paddingVertical: 7,
-    paddingHorizontal: 6,
-  },
-  rxClassicTableRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    minHeight: 32,
-    paddingVertical: 6,
-    paddingHorizontal: 6,
-  },
-  rxClassicTableHeaderCell: {
-    fontSize: 10,
-    fontWeight: '800',
-    lineHeight: 14,
-  },
-  rxClassicTableCell: {
-    fontSize: 11,
-    fontWeight: '600',
-    lineHeight: 15,
-    paddingRight: 6,
-  },
-  rxClassicNumCol: {
-    width: 26,
-  },
-  rxClassicDrugCol: {
-    flex: 1.4,
-  },
-  rxClassicUnitCol: {
-    flex: 1.1,
-  },
-  rxClassicDoseCol: {
-    flex: 1.3,
-  },
-  rxHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 12,
-  },
-  rxHeaderTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    letterSpacing: -0.2,
-  },
-  rxHeaderDoctor: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  rxHeaderCount: {
-    marginLeft: 8,
-    marginTop: 2,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  rxMedCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-  },
-  rxMedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  rxMedIndex: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  rxMedIndexText: {
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  rxMedName: {
-    fontSize: 15,
-    fontWeight: '800',
-    flex: 1,
-    letterSpacing: -0.2,
-  },
-  rxMedGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: 8,
-    marginBottom: 8,
-  },
-  rxMedGridItem: {
-    width: '48%',
-    borderRadius: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 8,
-  },
-  rxGridLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 2,
-  },
-  rxGridValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 16,
-  },
-  rxMedInstruction: {
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 17,
-    marginTop: 6,
-  },
-  rxMedPurpose: {
-    fontSize: 12,
-    fontWeight: '700',
-    lineHeight: 17,
-    marginTop: 4,
-  },
-  rxEmptyMeds: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  rxEmptyText: {
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  rxPrecautionCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  rxPrecautionTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#E65100',
-    marginBottom: 8,
-  },
-  rxPrecautionItem: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#BF360C',
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  rxNotesCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 4,
-    marginBottom: 10,
-  },
-  rxNotesTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  rxNotesText: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: '500',
-  },
-  rxDisclaimer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 8,
-    gap: 10,
-  },
-  rxDisclaimerText: {
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#F57F17',
-    fontWeight: '600',
-    flex: 1,
-  },
+  flex: { flex: 1, minWidth: 0 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingHorizontal: Spacing.lg, paddingBottom: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth * 2 },
+  backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md, padding: Spacing.xxl },
+  emptyIcon: { width: 60, height: 60, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  cta: { height: 46, borderRadius: Radius.md, paddingHorizontal: Spacing.xxl, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  ctaText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  scrollContent: { alignItems: 'center', paddingBottom: Spacing.xxl },
+  inner: { width: '100%', maxWidth: Layout.contentMaxWidth + 160, paddingHorizontal: Layout.screenGutter, paddingTop: Spacing.lg, gap: Spacing.lg },
+  card: { borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.md },
+  tableCard: { paddingVertical: Spacing.xs, gap: 0 },
+  section: { gap: Spacing.sm },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  kindTile: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  notice: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.md, padding: Spacing.md },
+  noticeCol: { flexDirection: 'column', alignItems: 'stretch' },
+  noticeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  retry: { height: 42, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  summaryBlock: { gap: Spacing.sm },
+  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
+  dot: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
+  valueRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md },
+  valueRight: { alignItems: 'flex-end', gap: 4, maxWidth: '48%', flexShrink: 1 },
+  flagChip: { borderRadius: Radius.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  flagText: { fontSize: 11, fontWeight: '700' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { borderRadius: Radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
+  chipText: { fontSize: 12, fontWeight: '600' },
+  detailRow: { flexDirection: 'row', gap: Spacing.sm },
+  disclaimer: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, borderRadius: Radius.md, padding: Spacing.md },
+  actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  action: { height: 42, borderWidth: 1, borderRadius: Radius.md, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  actionText: { fontSize: 13, fontWeight: '700' },
+  suggestion: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: Radius.pill, paddingHorizontal: 12, paddingVertical: 8 },
+  suggestionText: { fontSize: 13, fontWeight: '600' },
+  bubbleRow: { flexDirection: 'row' },
+  rowEnd: { justifyContent: 'flex-end' },
+  rowStart: { justifyContent: 'flex-start' },
+  bubble: { maxWidth: '88%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  inputBar: { borderTopWidth: StyleSheet.hairlineWidth * 2, alignItems: 'center', paddingTop: Spacing.sm, paddingHorizontal: Layout.screenGutter },
+  inputInner: { width: '100%', maxWidth: Layout.contentMaxWidth + 120, flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.sm },
+  input: { flex: 1, minHeight: 46, maxHeight: 120, borderWidth: 1, borderRadius: 23, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, fontSize: 15 },
+  send: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center' },
 });

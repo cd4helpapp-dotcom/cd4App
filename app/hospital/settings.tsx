@@ -176,7 +176,7 @@ export default function HospitalSettingsScreen() {
         <ScrollView
             style={[styles.container, { backgroundColor: theme.background }]}
             contentContainerStyle={[styles.content, { paddingTop: insets.top + 20 }]}
-            refreshControl={<RefreshControl refreshing={profileQuery.isRefetching} onRefresh={profileQuery.refetch} tintColor={theme.tint} />}
+            refreshControl={<RefreshControl refreshing={profileQuery.isRefetching} onRefresh={() => { void profileQuery.refetch(); }} tintColor={theme.tint} />}
             keyboardShouldPersistTaps="handled"
         >
             <Text style={[styles.kicker, { color: theme.tint }]}>Hospital Profile</Text>
@@ -258,7 +258,7 @@ export default function HospitalSettingsScreen() {
 function InfoRow({ icon: Icon, label, value, theme }: { icon: any; label: string; value: string; theme: any }) {
     return (
         <View style={styles.infoRow}>
-            <View style={[styles.infoIcon, { backgroundColor: theme.successLight }]}>
+            <View style={[styles.infoIcon, { backgroundColor: theme.primarySoft }]}>
                 <Icon size={17} color={theme.tint} />
             </View>
             <View style={{ flex: 1 }}>

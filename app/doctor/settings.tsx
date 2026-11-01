@@ -1,273 +1,168 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, ScrollView, ActivityIndicator, Image } from 'react-native';
-import Colors from '../../constants/Colors';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { useAuthContext } from '../../context/AuthContext';
-import { LogOut, UserCheck, Banknote, Building, Bell, Database, Globe, HelpCircle, SunMoon, Receipt } from 'lucide-react-native';
-import { useLogout } from '../../hooks/useAuth';
+import Constants from 'expo-constants';
 import Toast from 'react-native-toast-message';
-import { getImageUrl } from '../../constants/Config';
+import { Banknote, Bell, Building, ChevronRight, Database, Globe, HelpCircle, LogOut, Receipt, SunMoon, UserCheck } from 'lucide-react-native';
+import { useAuthContext } from '../../context/AuthContext';
+import { useLogout } from '../../hooks/useAuth';
 import { useThemePreference } from '../../context/ThemePreferenceContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { useStorageInsights } from '../../hooks/useStorageInsights';
+import { useAppTheme } from '../../hooks/useAppTheme';
+import { getImageUrl } from '../../constants/Config';
+import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
+import { SettingsGroup, SettingsRow } from '../../ui/common/SettingsGroup';
+import { confirmAction } from '../../src/utils/confirm';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
 
 export default function DoctorSettings() {
-    const colorScheme = useColorScheme();
-    const theme = Colors[colorScheme ?? 'light'];
+    const { theme } = useAppTheme();
     const { user } = useAuthContext();
     const logoutMutation = useLogout();
     const { themePreference, resolvedColorScheme } = useThemePreference();
     const { t, languageLabel } = useAppLanguage();
     const storageInsights = useStorageInsights();
     const unreadCount = Number(storageInsights.unreadNotifications || 0);
-    const notificationCountText = unreadCount > 99 ? '99+' : String(unreadCount);
     const storageLabel = storageInsights.totalFormatted || t('common.notAvailable');
-    const appearanceModeLabel =
+
+    const appearanceValue =
         themePreference === 'system'
-            ? `${t('appearance.mode.system')} (${resolvedColorScheme === 'dark' ? t('appearance.mode.dark') : t('appearance.mode.light')})`
+            ? `${t('appearance.mode.system')} · ${resolvedColorScheme === 'dark' ? t('appearance.mode.dark') : t('appearance.mode.light')}`
             : themePreference === 'dark'
                 ? t('appearance.mode.dark')
                 : t('appearance.mode.light');
-    const appearanceLabel =
-        themePreference === 'system'
-            ? appearanceModeLabel
-            : appearanceModeLabel;
 
     const handleLogout = async () => {
+        const confirmed = await confirmAction({
+            title: 'Log out of CD4?',
+            message: 'You will stop receiving consultation alerts until you sign in again.',
+            confirmText: t('settings.logout'),
+            destructive: true,
+        });
+        if (!confirmed) return;
+
         try {
             await logoutMutation.mutateAsync();
-
-            Toast.show({
-                type: 'success',
-                text1: t('settings.loggedOutTitle'),
-                text2: t('settings.loggedOutBody'),
-            });
-
+            Toast.show({ type: 'success', text1: t('settings.loggedOutTitle'), text2: t('settings.loggedOutBody') });
             router.replace('/auth/login');
-        } catch (error) {
-            Toast.show({
-                type: 'error',
-                text1: t('settings.logoutFailed'),
-                text2: t('settings.logoutFailedBody'),
-            });
+        } catch {
+            Toast.show({ type: 'error', text1: t('settings.logoutFailed'), text2: t('settings.logoutFailedBody') });
         }
     };
 
-    const doctorSettings = [
-        { key: 'profileCredentials', label: t('settings.profileCredentials'), icon: UserCheck, action: () => router.push('/doctor/profile-details') },
-        { key: 'consultationFees', label: t('settings.consultationFees'), icon: Banknote, action: () => router.push('/doctor/profile/fees') },
-        { key: 'clinicDetails', label: t('settings.clinicDetails'), icon: Building, action: () => router.push('/doctor/profile/clinic') },
-        { key: 'transactions', label: 'Transactions', icon: Receipt, action: () => router.push('/doctor/transactions') },
-    ];
-
-    const appSettings = [
-        {
-            key: 'appearance',
-            label: t('settings.appearanceWithMode', { mode: appearanceLabel }),
-            icon: SunMoon,
-            action: () => router.push('/doctor/appearance')
-        },
-        {
-            key: 'notifications',
-            label: t('settings.notificationsWithCount', { count: notificationCountText }),
-            icon: Bell,
-            action: () => router.push('/doctor/notifications')
-        },
-        {
-            key: 'storageData',
-            label: t('settings.storageWithSize', { size: storageLabel }),
-            icon: Database,
-            action: () => router.push('/doctor/storage')
-        },
-        {
-            key: 'appLanguage',
-            label: t('settings.languageWithLabel', { language: languageLabel }),
-            icon: Globe,
-            action: () => router.push('/doctor/language')
-        },
-        { key: 'helpSupport', label: t('settings.helpSupport'), icon: HelpCircle, action: () => router.push('/doctor/help') }
-    ];
-
+    const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
+    const initials = `${user?.firstName?.[0] || ''}${user?.lastName?.[0] || ''}`.toUpperCase() || 'DR';
     const profileImageUrl = getImageUrl(user?.profilePicture);
+    const appVersion = Constants.expoConfig?.version || '1.0.0';
 
     return (
         <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']}>
-        <View style={[styles.container, { backgroundColor: theme.background }]}>
-            {/* Profile Header Block */}
-            <TouchableOpacity
-                style={[styles.profileHeader, { backgroundColor: theme.cardBackground, borderBottomColor: theme.borderColor }]}
-                onPress={() => router.push('/doctor/profile-details')}
-            >
-                <View style={[styles.avatarContainer, { backgroundColor: theme.tint + '20' }]}>
-                    {profileImageUrl ? (
-                        <Image source={{ uri: profileImageUrl }} style={styles.avatarImage} />
-                    ) : (
-                        <Text style={[styles.avatarText, { color: theme.tint }]}>{user?.firstName?.[0] || '?'}{user?.lastName?.[0] || '?'}</Text>
-                    )}
-                </View>
-                <View>
-                    <Text style={[styles.profileName, { color: theme.text }]}>Dr. {user?.firstName} {user?.lastName}</Text>
-                    <Text style={[styles.profileSubtitle, { color: theme.textSecondary }]}>{t('settings.doctorGreeting')}</Text>
-                </View>
-            </TouchableOpacity>
-
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                <View
-                    style={[
-                        styles.section,
-                        { backgroundColor: theme.cardBackground, borderColor: theme.borderColor, borderTopColor: theme.borderColor },
-                    ]}
-                >
-                    {doctorSettings.map((option, index) => {
-                        const Icon = option.icon;
-                        return (
-                        <View key={option.key}>
-                            <TouchableOpacity style={styles.optionRow} onPress={option.action}>
-                                <View style={styles.optionLeft}>
-                                  <View style={[styles.iconWrap, { backgroundColor: theme.tint + '10' }]}>
-                                    <Icon size={18} color={theme.tint} />
-                                  </View>
-                                  <Text style={[styles.optionText, { color: theme.text }]}>{option.label}</Text>
-                                </View>
-                                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>›</Text>
-                            </TouchableOpacity>
-                            {index < doctorSettings.length - 1 && <View style={[styles.separator, { backgroundColor: theme.borderColor }]} />}
+            <ScrollView style={{ backgroundColor: theme.background }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+                <View style={styles.inner}>
+                    <Pressable
+                        onPress={() => router.push('/doctor/profile-details')}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${fullName || 'Your profile'}, view profile`}
+                        style={({ pressed }) => [
+                            styles.profileCard,
+                            { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
+                            elevation(1),
+                            pressed && { opacity: 0.9 },
+                        ]}
+                    >
+                        <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
+                            {profileImageUrl ? (
+                                <Image source={{ uri: profileImageUrl }} style={styles.avatarImage} />
+                            ) : (
+                                <Text style={[Typography.title, { color: theme.primary }]}>{initials}</Text>
+                            )}
                         </View>
-                    )})}
-
-                    <View style={[styles.groupDivider, { backgroundColor: theme.borderColor }]} />
-
-                    {appSettings.map((option, index) => {
-                        const Icon = option.icon;
-                        return (
-                        <View key={option.key}>
-                            <TouchableOpacity style={styles.optionRow} onPress={option.action}>
-                                <View style={styles.optionLeft}>
-                                  <View style={[styles.iconWrap, { backgroundColor: theme.tint + '10' }]}>
-                                    <Icon size={18} color={theme.tint} />
-                                  </View>
-                                  <Text style={[styles.optionText, { color: theme.text }]}>{option.label}</Text>
-                                </View>
-                                <Text style={{ color: theme.textSecondary, fontSize: 16 }}>›</Text>
-                            </TouchableOpacity>
-                            {index < appSettings.length - 1 && <View style={[styles.separator, { backgroundColor: theme.borderColor }]} />}
+                        <View style={styles.profileText}>
+                            <Text style={[Typography.heading, { color: theme.text }]} numberOfLines={1}>
+                                Dr. {fullName || 'Doctor'}
+                            </Text>
+                            {user?.email ? (
+                                <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>
+                                    {user.email}
+                                </Text>
+                            ) : null}
+                            <View style={[styles.rolePill, { backgroundColor: theme.primarySoft }]}>
+                                <Text style={[Typography.caption, { color: theme.primary, fontWeight: '600' }]}>CD4 Doctor</Text>
+                            </View>
                         </View>
-                    )})}
+                        <ChevronRight size={20} color={theme.textTertiary} />
+                    </Pressable>
+
+                    <SettingsGroup title="Practice">
+                        <SettingsRow icon={UserCheck} label={t('settings.profileCredentials')} onPress={() => router.push('/doctor/profile-details')} />
+                        <SettingsRow icon={Banknote} label={t('settings.consultationFees')} onPress={() => router.push('/doctor/profile/fees')} />
+                        <SettingsRow icon={Building} label={t('settings.clinicDetails')} onPress={() => router.push('/doctor/profile/clinic')} />
+                        <SettingsRow icon={Receipt} label="Transactions" onPress={() => router.push('/doctor/transactions')} />
+                    </SettingsGroup>
+
+                    <SettingsGroup title="Preferences">
+                        <SettingsRow icon={SunMoon} tone="accent" label={t('appearance.title')} value={appearanceValue} onPress={() => router.push('/doctor/appearance')} />
+                        <SettingsRow icon={Bell} tone="accent" label={t('notifications.title')} badge={unreadCount} onPress={() => router.push('/doctor/notifications')} />
+                        <SettingsRow icon={Globe} tone="accent" label={t('language.title')} value={languageLabel} onPress={() => router.push('/doctor/language')} />
+                        <SettingsRow icon={Database} tone="accent" label={t('settings.storageData')} value={storageLabel} onPress={() => router.push('/doctor/storage')} />
+                    </SettingsGroup>
+
+                    <SettingsGroup title="Support">
+                        <SettingsRow icon={HelpCircle} tone="success" label={t('settings.helpSupport')} onPress={() => router.push('/doctor/help')} />
+                    </SettingsGroup>
+
+                    <Pressable
+                        onPress={handleLogout}
+                        disabled={logoutMutation.isPending}
+                        accessibilityRole="button"
+                        style={({ pressed }) => [
+                            styles.logoutButton,
+                            { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
+                            pressed && { backgroundColor: theme.surfaceMuted },
+                        ]}
+                    >
+                        {logoutMutation.isPending ? (
+                            <ActivityIndicator color={theme.danger} />
+                        ) : (
+                            <>
+                                <LogOut size={18} color={theme.danger} />
+                                <Text style={[Typography.bodyStrong, { color: theme.danger }]}>{t('settings.logout')}</Text>
+                            </>
+                        )}
+                    </Pressable>
+
+                    <Text style={[Typography.caption, styles.version, { color: theme.textTertiary }]}>CD4 Health · Version {appVersion}</Text>
                 </View>
-
-                <TouchableOpacity
-                    style={[styles.logoutButton, { backgroundColor: theme.cardBackground, flexDirection: 'row', justifyContent: 'center' }]}
-                    onPress={handleLogout}
-                    disabled={logoutMutation.isPending}
-                >
-                    {logoutMutation.isPending ? (
-                        <ActivityIndicator color="#e74c3c" />
-                    ) : (
-                        <>
-                            <LogOut size={20} color="#e74c3c" style={{ marginRight: 8 }} />
-                            <Text style={styles.logoutText}>{t('settings.logout')}</Text>
-                        </>
-                    )}
-                </TouchableOpacity>
-
-                <Text style={styles.versionText}>{t('settings.versionDoctor')}</Text>
             </ScrollView>
-        </View>
         </DoctorSafeScreen>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    scrollContent: {
-        paddingBottom: 28,
-        paddingTop: 12,
-    },
-    profileHeader: {
+    content: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.lg, paddingBottom: Spacing.huge },
+    inner: { width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center' },
+    profileCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 20,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        marginBottom: 0,
+        gap: Spacing.md + 2,
+        borderWidth: 1,
+        borderRadius: Radius.xl,
+        padding: Spacing.lg,
+        marginBottom: Spacing.xxl,
     },
-    avatarContainer: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 15,
-        overflow: 'hidden',
-    },
-    avatarImage: {
-        width: '100%',
-        height: '100%',
-    },
-    avatarText: {
-        fontSize: 24,
-        fontWeight: 'bold',
-    },
-    profileName: {
-        fontSize: 20,
-        fontWeight: '700',
-        marginBottom: 4,
-    },
-    profileSubtitle: {
-        fontSize: 14,
-    },
-    section: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        marginBottom: 14,
-    },
-    groupDivider: {
-        height: StyleSheet.hairlineWidth,
-        marginLeft: 20,
-        marginRight: 20,
-    },
-    optionRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: 12,
-        paddingHorizontal: 20,
-    },
-    optionLeft: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-    },
-    iconWrap: {
-        width: 32,
-        height: 32,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    optionText: {
-        fontSize: 16,
-        fontWeight: '500',
-    },
-    separator: {
-        height: StyleSheet.hairlineWidth,
-        marginLeft: 20,
-    },
+    avatar: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+    avatarImage: { width: '100%', height: '100%' },
+    profileText: { flex: 1, gap: 2 },
+    rolePill: { alignSelf: 'flex-start', borderRadius: Radius.pill, paddingHorizontal: 10, paddingVertical: 3, marginTop: 6 },
     logoutButton: {
-        marginHorizontal: 20,
-        paddingVertical: 15,
-        borderRadius: 12,
+        height: 52,
+        borderRadius: Radius.lg,
+        borderWidth: 1,
+        flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
+        gap: Spacing.sm,
     },
-    logoutText: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#FF3B30',
-    },
-    versionText: {
-        textAlign: 'center',
-        marginTop: 20,
-        fontSize: 12,
-        color: '#999',
-    },
+    version: { textAlign: 'center', marginTop: Spacing.xl },
 });

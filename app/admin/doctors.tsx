@@ -244,12 +244,12 @@ export default function DoctorsListScreen() {
                                 <View style={styles.footerLoader}>
                                     <ActivityIndicator size="small" color={theme.tint} />
                                 </View>
-                            ) : null
+                            ) : undefined
                         ) : page < totalPages ? (
                             <View style={styles.footerLoader}>
                                 <ActivityIndicator size="small" color={theme.tint} />
                             </View>
-                        ) : null
+                        ) : undefined
                     }
                     ListEmptyComponent={
                         <Text style={[styles.emptyText, { color: theme.textSecondary }]}>

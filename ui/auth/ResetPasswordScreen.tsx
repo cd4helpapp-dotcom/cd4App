@@ -1,283 +1,171 @@
-import React, { useState, useEffect } from 'react';
-import {
-    View,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    StyleSheet,
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    useColorScheme,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
+import type { TextInputInstance } from 'react-native';
+import { router } from 'expo-router';
+import { CheckCircle2, Lock, ShieldAlert, ShieldCheck } from 'lucide-react-native';
 import { supabase } from '../../src/lib/supabase';
-import Colors from '../../constants/Colors';
-import { Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react-native';
-import Toast from 'react-native-toast-message';
+import { routeAfterSuccessfulAuth } from '../../src/utils/authRouting';
+import { validateNewPassword } from '../../src/utils/validation';
+import { Spacing, Typography } from '../../constants/Design';
+import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAuthContext } from '../../context/AuthContext';
+import AppButton from '../common/AppButton';
+import FormField from '../common/FormField';
+import AuthLayout from './AuthLayout';
+import { FormErrorBanner, PasswordStrengthMeter } from './AuthParts';
 
 const ResetPasswordScreen: React.FC = () => {
-    const [password, setPassword] = useState('');
-    const [confirmPassword, setConfirmPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isSuccess, setIsSuccess] = useState(false);
+  const { theme } = useAppTheme();
+  const { session, isLoading: isAuthLoading } = useAuthContext();
+  const confirmRef = useRef<TextInputInstance | null>(null);
 
-    const colorScheme = useColorScheme();
-    const theme = Colors[colorScheme ?? 'light'] as typeof Colors.light;
-    const router = useRouter();
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [errors, setErrors] = useState<{ password?: string; confirm?: string; form?: string }>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDone, setIsDone] = useState(false);
+  const [isContinuing, setIsContinuing] = useState(false);
 
-    const { session, isLoading: isAuthLoading } = useAuthContext();
-    const [isSessionValid, setIsSessionValid] = useState<boolean | null>(null);
+  // The reset link signs the user in with a short-lived recovery session (parsed by AuthContext).
+  const hasRecoverySession = Boolean(session);
 
-    useEffect(() => {
-        if (isAuthLoading) return; // Wait for AuthContext to finish processing (including deep link parsing)
+  useEffect(() => {
+    if (__DEV__ && !isAuthLoading && !session) console.warn('ResetPassword: no recovery session');
+  }, [isAuthLoading, session]);
 
-        if (!session) {
-            console.warn('ResetPassword: No active session found');
-            setIsSessionValid(false);
-            Toast.show({
-                type: 'error',
-                text1: 'Session Missing',
-                text2: 'Please use the link from your email to reset your password.',
-            });
+  const handleSave = async () => {
+    if (isSaving) return;
+    const next: typeof errors = {};
+    const passwordError = validateNewPassword(password);
+    if (passwordError) next.password = passwordError;
+    if (!confirmPassword) next.confirm = 'Re-enter your new password.';
+    else if (password !== confirmPassword) next.confirm = 'Passwords do not match.';
+    setErrors(next);
+    if (Object.keys(next).length) return;
 
-            setTimeout(() => {
-                router.replace('/auth/login');
-            }, 2500);
-        } else {
-            console.log('ResetPassword: Active session confirmed');
-            setIsSessionValid(true);
-        }
-    }, [session, isAuthLoading]);
-
-    const handleUpdatePassword = async () => {
-        if (password.length < 6) {
-            Toast.show({
-                type: 'error',
-                text1: 'Weak Password',
-                text2: 'Password must be at least 6 characters long.',
-            });
-            return;
-        }
-
-        if (password !== confirmPassword) {
-            Toast.show({
-                type: 'error',
-                text1: 'Password Mismatch',
-                text2: 'Passwords do not match.',
-            });
-            return;
-        }
-
-        setIsLoading(true);
-        try {
-            const { error } = await supabase.auth.updateUser({
-                password: password,
-            });
-
-            if (error) throw error;
-
-            setIsSuccess(true);
-            Toast.show({
-                type: 'success',
-                text1: 'Password Updated',
-                text2: 'Your password has been reset successfully.',
-            });
-
-            // Navigate to login after success
-            setTimeout(() => {
-                router.replace('/auth/login');
-            }, 3000);
-        } catch (error: any) {
-            Toast.show({
-                type: 'error',
-                text1: 'Update Failed',
-                text2: error.message || 'Could not update password.',
-            });
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    if (isSuccess) {
-        return (
-            <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
-                <View style={styles.successContainer}>
-                    <CheckCircle2 size={80} color={theme.tint} />
-                    <Text style={[styles.title, { color: theme.text, marginTop: 24 }]}>All Set!</Text>
-                    <Text style={[styles.subtitle, { color: theme.textSecondary, textAlign: 'center' }]}>
-                        Your password has been successfully updated. Redirecting you to login...
-                    </Text>
-                    <TouchableOpacity
-                        style={[styles.button, { backgroundColor: theme.tint, width: '100%', marginTop: 32 }]}
-                        onPress={() => router.replace('/auth/login')}
-                    >
-                        <Text style={styles.buttonText}>Go to Login</Text>
-                    </TouchableOpacity>
-                </View>
-            </SafeAreaView>
-        );
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      setIsDone(true);
+    } catch (err: any) {
+      const message = String(err?.message || '');
+      setErrors({
+        form: message.toLowerCase().includes('different from the old')
+          ? 'Your new password must be different from your current one.'
+          : message || 'Could not update your password. Please try again.',
+      });
+    } finally {
+      setIsSaving(false);
     }
+  };
 
-    if (isAuthLoading || isSessionValid === null) {
-        return (
-            <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background, justifyContent: 'center', alignItems: 'center' }]}>
-                <ActivityIndicator size="large" color={theme.tint} />
-                <Text style={{ marginTop: 16, color: theme.textSecondary }}>Checking secure connection...</Text>
-            </SafeAreaView>
-        );
+  const handleContinue = async () => {
+    const userId = session?.user?.id;
+    if (!userId) return router.replace('/auth/login');
+    setIsContinuing(true);
+    try {
+      await routeAfterSuccessfulAuth(userId);
+    } finally {
+      setIsContinuing(false);
     }
+  };
 
-    if (isSessionValid === false) {
-        return (
-            <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background, justifyContent: 'center', alignItems: 'center' }]}>
-                <Text style={{ color: theme.textSecondary }}>Redirecting to login...</Text>
-            </SafeAreaView>
-        );
-    }
-
+  if (isAuthLoading) {
     return (
-        <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={styles.container}
-            >
-                <ScrollView contentContainerStyle={styles.scrollContent}>
-                    <View style={styles.header}>
-                        <Text style={[styles.title, { color: theme.text }]}>Reset Password</Text>
-                        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
-                            Create a new password that is at least 6 characters long.
-                        </Text>
-                    </View>
-
-                    <View style={styles.form}>
-                        <Text style={[styles.label, { color: theme.textSecondary }]}>New Password</Text>
-                        <View style={[styles.inputWrapper, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                            <Lock size={20} color={theme.textSecondary} style={styles.inputIcon} />
-                            <TextInput
-                                style={[styles.input, { color: theme.text }]}
-                                placeholder="Enter new password"
-                                placeholderTextColor={theme.textSecondary}
-                                value={password}
-                                onChangeText={setPassword}
-                                secureTextEntry={!showPassword}
-                            />
-                            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
-                                {showPassword ? (
-                                    <EyeOff size={20} color={theme.tint} />
-                                ) : (
-                                    <Eye size={20} color={theme.tint} />
-                                )}
-                            </TouchableOpacity>
-                        </View>
-
-                        <Text style={[styles.label, { color: theme.textSecondary }]}>Confirm Password</Text>
-                        <View style={[styles.inputWrapper, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                            <Lock size={20} color={theme.textSecondary} style={styles.inputIcon} />
-                            <TextInput
-                                style={[styles.input, { color: theme.text }]}
-                                placeholder="Confirm new password"
-                                placeholderTextColor={theme.textSecondary}
-                                value={confirmPassword}
-                                onChangeText={setConfirmPassword}
-                                secureTextEntry={!showPassword}
-                            />
-                        </View>
-
-                        <TouchableOpacity
-                            style={[styles.button, { backgroundColor: theme.tint }]}
-                            onPress={handleUpdatePassword}
-                            disabled={isLoading}
-                        >
-                            {isLoading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <Text style={styles.buttonText}>Update Password</Text>
-                            )}
-                        </TouchableOpacity>
-                    </View>
-                </ScrollView>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+      <View style={[styles.centered, { backgroundColor: theme.background }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
+        <Text style={[Typography.body, { color: theme.textSecondary, marginTop: Spacing.lg }]}>Verifying your reset link…</Text>
+      </View>
     );
+  }
+
+  if (isDone) {
+    return (
+      <AuthLayout
+        title="Password updated"
+        subtitle="Your password has been changed. Use it the next time you sign in."
+        icon={<CheckCircle2 size={26} color={theme.success} />}
+      >
+        <AppButton title="Continue to CD4" onPress={handleContinue} loading={isContinuing} />
+      </AuthLayout>
+    );
+  }
+
+  if (!hasRecoverySession) {
+    return (
+      <AuthLayout
+        title="Link expired"
+        subtitle="This password reset link is invalid or has expired. Request a new one to continue."
+        icon={<ShieldAlert size={26} color={theme.danger} />}
+      >
+        <AppButton title="Request a new link" onPress={() => router.replace('/auth/forgot-password')} />
+        <AppButton title="Back to sign in" variant="outline" onPress={() => router.replace('/auth/login')} />
+      </AuthLayout>
+    );
+  }
+
+  return (
+    <AuthLayout
+      title="Create a new password"
+      subtitle="Choose a strong password you haven't used before."
+      icon={<ShieldCheck size={26} color={theme.primary} />}
+    >
+      <FormErrorBanner message={errors.form} />
+      <View style={styles.passwordBlock}>
+        <FormField
+          label="New password"
+          placeholder="At least 8 characters"
+          value={password}
+          onChangeText={(value) => {
+            setPassword(value);
+            setErrors({});
+          }}
+          error={errors.password}
+          leftIcon={<Lock size={18} color={theme.textSecondary} />}
+          isPassword
+          autoCapitalize="none"
+          autoComplete="new-password"
+          textContentType="newPassword"
+          returnKeyType="next"
+          onSubmitEditing={() => confirmRef.current?.focus()}
+          blurOnSubmit={false}
+          autoFocus
+        />
+        <PasswordStrengthMeter password={password} />
+      </View>
+      <FormField
+        ref={confirmRef}
+        label="Confirm new password"
+        placeholder="Re-enter password"
+        value={confirmPassword}
+        onChangeText={(value) => {
+          setConfirmPassword(value);
+          setErrors({});
+        }}
+        error={errors.confirm}
+        leftIcon={<Lock size={18} color={theme.textSecondary} />}
+        isPassword
+        autoCapitalize="none"
+        autoComplete="new-password"
+        textContentType="newPassword"
+        returnKeyType="done"
+        onSubmitEditing={handleSave}
+      />
+      <AppButton title="Update password" onPress={handleSave} loading={isSaving} />
+    </AuthLayout>
+  );
 };
 
 const styles = StyleSheet.create({
-    safeArea: {
-        flex: 1,
-    },
-    container: {
-        flex: 1,
-    },
-    scrollContent: {
-        padding: 24,
-        flexGrow: 1,
-    },
-    successContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 24,
-    },
-    header: {
-        marginBottom: 40,
-        marginTop: 20,
-    },
-    title: {
-        fontSize: 28,
-        fontFamily: 'Outfit-Bold',
-        marginBottom: 12,
-    },
-    subtitle: {
-        fontSize: 16,
-        fontFamily: 'Outfit-Regular',
-        lineHeight: 24,
-    },
-    form: {
-        gap: 20,
-    },
-    label: {
-        fontSize: 14,
-        fontFamily: 'Outfit-Medium',
-        marginBottom: -12,
-        marginLeft: 4,
-    },
-    inputWrapper: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        height: 56,
-        borderRadius: 14,
-        borderWidth: 1,
-        paddingHorizontal: 16,
-    },
-    inputIcon: {
-        marginRight: 12,
-    },
-    input: {
-        flex: 1,
-        fontSize: 16,
-        fontFamily: 'Outfit-Regular',
-    },
-    button: {
-        height: 56,
-        borderRadius: 14,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 12,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        elevation: 4,
-    },
-    buttonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontFamily: 'Outfit-Bold',
-    },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  passwordBlock: {
+    gap: Spacing.sm,
+  },
 });
 
 export default ResetPasswordScreen;

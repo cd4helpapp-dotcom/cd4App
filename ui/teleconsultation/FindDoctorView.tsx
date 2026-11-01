@@ -1,5 +1,7 @@
+import { avatarSource } from '../../src/utils/avatar';
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity, Image, ActivityIndicator, Modal, RefreshControl, Animated, Easing, useWindowDimensions, KeyboardAvoidingView, Platform, Keyboard, StatusBar as NativeStatusBar } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { Theme } from '../../constants/Colors';
 import { Star, MapPin, Mic, Send, Activity, Leaf, Pill, Scale, Stethoscope, SlidersHorizontal, Check, Search, ArrowLeft, X, Menu, CheckCircle, Bell, UserRound, FileText, Sparkles, Users, Video, ChevronRight, Siren } from 'lucide-react-native';
@@ -8,7 +10,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import Toast from 'react-native-toast-message';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, requestRecordingPermissionsAsync, type AudioPlayer } from 'expo-audio';
 import * as Speech from 'expo-speech';
 import { LinearGradient } from 'expo-linear-gradient';
 import Markdown from 'react-native-markdown-display';
@@ -17,6 +19,8 @@ import { useAuthContext } from '../../context/AuthContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
 import { connectRealtimeVoice, type RealtimeVoiceHandle } from '../../src/services/realtimeVoice';
+import VoiceAssistantStage, { type VoiceStageState } from './VoiceAssistantStage';
+import ClayIcon, { ArtBadge, iconForConcern, useClayTones } from '../common/ClayIcon';
 import { PatientHomeHeader, PatientHomeShowcase } from '../home/PatientHomeShowcase';
 
 type SpeechRecognitionEventName = 'start' | 'end' | 'result' | 'error';
@@ -274,6 +278,8 @@ import ShimmerBlock from '../common/ShimmerSkeleton';
 import { HomeTabSkeleton } from '../common/TabLoadingSkeletons';
 import { getStoredLocationCity, syncLocationCityIfPermitted } from '../../services/locationPermission';
 import { DOCTOR_SPECIALIZATION_OPTIONS } from '../../constants/DoctorOptions';
+import { formatCityName, isCityMatch } from '../../src/utils/city';
+import Colors from '../../constants/Colors';
 
 type IconComponent = React.ComponentType<{
     size?: number;
@@ -282,43 +288,43 @@ type IconComponent = React.ComponentType<{
 }>;
 
 const CONCERN_IMAGE_ASSETS = {
-    diabetes: require('../../assets/concerns/diabetes_care_1777377906586.jpg'),
-    pcos: require('../../assets/concerns/pcos_health_1777377967772.jpg'),
-    heart: require('../../assets/concerns/heart_health_1777378053936.jpg'),
-    skin: require('../../assets/concerns/skin_care_1777378482702.jpg'),
-    assistant: require('../../assets/concerns/general_assistant_1777377591600.jpg'),
+    diabetes: require('../../assets/thumbs/concerns/diabetes_care_1777377906586.jpg'),
+    pcos: require('../../assets/thumbs/concerns/pcos_health_1777377967772.jpg'),
+    heart: require('../../assets/thumbs/concerns/heart_health_1777378053936.jpg'),
+    skin: require('../../assets/thumbs/concerns/skin_care_1777378482702.jpg'),
+    assistant: require('../../assets/thumbs/concerns/general_assistant_1777377591600.jpg'),
 } as const;
 
 const DEPARTMENT_IMAGE_ASSETS = {
-    shalya: require('../../assets/departments/department_image_001.jpeg'),
-    shalak: require('../../assets/departments/department_image_002.jpeg'),
-    ayurveda: require('../../assets/departments/department_image_003.jpeg'),
-    kayachikitsa: require('../../assets/departments/department_image_004.jpeg'),
-    sexualReproductive: require('../../assets/departments/department_image_005.jpeg'),
-    panchakarma: require('../../assets/departments/department_image_006.jpeg'),
-    pediatricsAyurveda: require('../../assets/departments/department_image_007.jpeg'),
-    twakRoga: require('../../assets/departments/department_image_008.jpeg'),
-    prasutiStri: require('../../assets/departments/department_image_009.jpeg'),
-    hematology: require('../../assets/departments/department_image_010.jpeg'),
-    rheumatology: require('../../assets/departments/department_image_011.jpeg'),
-    nutrition: require('../../assets/departments/department_image_012.jpeg'),
-    oncology: require('../../assets/departments/department_image_014.jpeg'),
-    surgery: require('../../assets/departments/department_image_015.jpeg'),
-    kidneyUrology: require('../../assets/departments/department_image_016.jpeg'),
-    gastroenterology: require('../../assets/departments/department_image_017.jpeg'),
-    diabetes: require('../../assets/departments/department_image_018.jpeg'),
-    neurology: require('../../assets/departments/department_image_019.jpeg'),
-    pulmonary: require('../../assets/departments/department_image_020.jpeg'),
-    fertility: require('../../assets/departments/department_image_021.jpeg'),
-    cardiology: require('../../assets/departments/department_image_022.jpeg'),
-    ophthalmology: require('../../assets/departments/department_image_023.jpeg'),
-    orthopedics: require('../../assets/departments/department_image_024.jpeg'),
-    ent: require('../../assets/departments/department_image_025.jpeg'),
-    psychiatry: require('../../assets/departments/department_image_026.jpeg'),
-    dermatology: require('../../assets/departments/department_image_027.jpeg'),
-    gynecology: require('../../assets/departments/department_image_028.jpeg'),
-    general: require('../../assets/departments/department_image_029.jpeg'),
-    pediatrics: require('../../assets/departments/department_image_030.jpeg'),
+    shalya: require('../../assets/thumbs/departments/department_image_001.jpg'),
+    shalak: require('../../assets/thumbs/departments/department_image_002.jpg'),
+    ayurveda: require('../../assets/thumbs/departments/department_image_003.jpg'),
+    kayachikitsa: require('../../assets/thumbs/departments/department_image_004.jpg'),
+    sexualReproductive: require('../../assets/thumbs/departments/department_image_005.jpg'),
+    panchakarma: require('../../assets/thumbs/departments/department_image_006.jpg'),
+    pediatricsAyurveda: require('../../assets/thumbs/departments/department_image_007.jpg'),
+    twakRoga: require('../../assets/thumbs/departments/department_image_008.jpg'),
+    prasutiStri: require('../../assets/thumbs/departments/department_image_009.jpg'),
+    hematology: require('../../assets/thumbs/departments/department_image_010.jpg'),
+    rheumatology: require('../../assets/thumbs/departments/department_image_011.jpg'),
+    nutrition: require('../../assets/thumbs/departments/department_image_012.jpg'),
+    oncology: require('../../assets/thumbs/departments/department_image_014.jpg'),
+    surgery: require('../../assets/thumbs/departments/department_image_015.jpg'),
+    kidneyUrology: require('../../assets/thumbs/departments/department_image_016.jpg'),
+    gastroenterology: require('../../assets/thumbs/departments/department_image_017.jpg'),
+    diabetes: require('../../assets/thumbs/departments/department_image_018.jpg'),
+    neurology: require('../../assets/thumbs/departments/department_image_019.jpg'),
+    pulmonary: require('../../assets/thumbs/departments/department_image_020.jpg'),
+    fertility: require('../../assets/thumbs/departments/department_image_021.jpg'),
+    cardiology: require('../../assets/thumbs/departments/department_image_022.jpg'),
+    ophthalmology: require('../../assets/thumbs/departments/department_image_023.jpg'),
+    orthopedics: require('../../assets/thumbs/departments/department_image_024.jpg'),
+    ent: require('../../assets/thumbs/departments/department_image_025.jpg'),
+    psychiatry: require('../../assets/thumbs/departments/department_image_026.jpg'),
+    dermatology: require('../../assets/thumbs/departments/department_image_027.jpg'),
+    gynecology: require('../../assets/thumbs/departments/department_image_028.jpg'),
+    general: require('../../assets/thumbs/departments/department_image_029.jpg'),
+    pediatrics: require('../../assets/thumbs/departments/department_image_030.jpg'),
 } as const;
 
 const resolveConcernImageSource = (label: string, id?: string): ImageSourcePropType | undefined => {
@@ -345,6 +351,11 @@ const resolveConcernImageSource = (label: string, id?: string): ImageSourcePropT
     if (merged.includes('assistant')) return CONCERN_IMAGE_ASSETS.assistant;
     return resolveDepartmentImageSource(label, id);
 };
+
+// Many concerns (fever, cough, flu…) fall back to the generic General Medicine art. Showing the same
+// picture on several rows looks broken, so those rows use their own icon instead.
+const specificConcernArt = (label: string, source?: ImageSourcePropType): ImageSourcePropType | undefined =>
+    source === DEPARTMENT_IMAGE_ASSETS.general && !/general|assistant|consult/i.test(label) ? undefined : source;
 
 const resolveDepartmentImageSource = (label: string, id?: string): ImageSourcePropType | undefined => {
     const merged = `${normalizeText(label)} ${normalizeText(id)}`.replace(/[_-]+/g, ' ');
@@ -692,20 +703,6 @@ const doesDoctorMatchDepartment = (specialization: string | null | undefined, de
     return normalizeText(specialization) === normalizeText(departmentId);
 };
 
-const isCityMatch = (doctorCity: string | null | undefined, selectedCity: string): boolean => {
-    const doctorValue = normalizeText(doctorCity);
-    const selectedValue = normalizeText(selectedCity);
-    if (!doctorValue || !selectedValue) {
-        return false;
-    }
-
-    if (doctorValue === selectedValue) {
-        return true;
-    }
-
-    return doctorValue.includes(selectedValue) || selectedValue.includes(doctorValue);
-};
-
 const getEditDistance = (source: string, target: string): number => {
     if (source === target) return 0;
     if (!source.length) return target.length;
@@ -768,7 +765,7 @@ const parseNumericValue = (value: unknown): number | null => {
 const formatDoctorRatingLabel = (value: unknown): string => {
     const numeric = parseNumericValue(value);
     if (numeric === null || numeric <= 0 || numeric > 5) {
-        return '4.5';
+        return 'New';
     }
 
     const rounded = Math.round(numeric * 10) / 10;
@@ -1008,6 +1005,9 @@ const VOICE_END_RESTART_COOLDOWN_MS = 450;
 const VOICE_FINAL_FALLBACK_DELAY_MS = VOICE_END_MIN_SILENCE_MS + 260;
 const VOICE_COUNTDOWN_TICK_MS = 100;
 const DOCTOR_MOUTH_IDLE_SCALE = 0.55;
+// Realtime voice turn-taking: guard after playback before re-opening the mic, and silence before auto-pausing it.
+const REALTIME_REARM_DELAY_MS = 300;
+const REALTIME_IDLE_PAUSE_MS = 30000;
 const DOCTOR_MOUTH_MIN_SCALE = 0.35;
 const DOCTOR_MOUTH_MAX_SCALE = 1.95;
 const AGENT_HISTORY_MAX_MESSAGES = 8;
@@ -1704,10 +1704,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     }, [user?.firstName]);
     const aiTitleNameSuffix = userFirstName ? `, ${userFirstName}` : '';
     const queryClient = useQueryClient();
+    const clayToneAt = useClayTones();
     const {
         data: doctorsData = [] as Doctor[],
         isLoading: loading,
         isFetching: isDoctorsFetching,
+        isError: isDoctorsError,
         refetch,
     } = useDoctors();
     const [isPullRefreshing, setIsPullRefreshing] = React.useState(false);
@@ -1728,7 +1730,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const [isVoiceSessionActive, setIsVoiceSessionActive] = React.useState(false);
     const [isVoiceReplyPlaying, setIsVoiceReplyPlaying] = React.useState(false);
     const [voiceStatusText, setVoiceStatusText] = React.useState('Tap mic to start continuous voice');
-    const [, setVoiceLiveTranscript] = React.useState('');
+    const [voiceLiveTranscript, setVoiceLiveTranscript] = React.useState('');
     const [isAgentConversationVisible, setIsAgentConversationVisible] = React.useState(false);
     const [isAgentSending, setIsAgentSending] = React.useState(false);
     const [showProPlanModal, setShowProPlanModal] = React.useState(false);
@@ -1751,14 +1753,14 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const [agentMessages, setAgentMessages] = React.useState<AgentMessage[]>(() => createInitialAgentMessages());
     const agentMessagesRef = React.useRef<AgentMessage[]>(agentMessages);
     const agentMessageCounterRef = React.useRef(0);
-    const agentScrollRef = React.useRef<ScrollView | null>(null);
-    const promoCarouselRef = React.useRef<ScrollView | null>(null);
+    const agentScrollRef = React.useRef<ScrollViewInstance | null>(null);
+    const promoCarouselRef = React.useRef<ScrollViewInstance | null>(null);
     const promoAutoScrollTimerRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
     const promoAutoScrollIndexRef = React.useRef(0);
     const autoSubmitTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const autoSubmitCountdownRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
     const finalSubmitFallbackTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const activeVoiceSoundRef = React.useRef<Audio.Sound | null>(null);
+    const activeVoiceSoundRef = React.useRef<AudioPlayer | null>(null);
     const activeWebAudioRef = React.useRef<any | null>(null);
     const hasReceivedServerAudioChunksRef = React.useRef<boolean>(false);
     const serverAudioChunksMapRef = React.useRef<Map<number, { audio: string; text: string }>>(new Map());
@@ -1850,7 +1852,45 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         }
     }, [user?.id]);
 
+    const realtimeIdleTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const realtimeArmTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const clearRealtimeTurnTimers = React.useCallback(() => {
+        if (realtimeIdleTimerRef.current) clearTimeout(realtimeIdleTimerRef.current);
+        if (realtimeArmTimerRef.current) clearTimeout(realtimeArmTimerRef.current);
+        realtimeIdleTimerRef.current = null;
+        realtimeArmTimerRef.current = null;
+    }, []);
+
+    // Hands-free turn taking: re-open the mic only after the assistant's audio has finished playing
+    // (plus a short guard so the speaker tail is not captured). If the patient stays silent, pause
+    // the mic so room noise cannot start a new turn; one tap resumes.
+    const armRealtimeListening = React.useCallback((delayMs = REALTIME_REARM_DELAY_MS) => {
+        clearRealtimeTurnTimers();
+        realtimeArmTimerRef.current = setTimeout(() => {
+            const handle = realtimeVoiceRef.current;
+            if (!handle) return;
+            handle.setInputEnabled(true);
+            setIsVoiceReplyPlaying(false);
+            setIsListening(true);
+            setVoiceStatusText('Listening… speak naturally');
+            realtimeIdleTimerRef.current = setTimeout(() => {
+                realtimeVoiceRef.current?.setInputEnabled(false);
+                setIsListening(false);
+                setVoiceStatusText('Paused. Tap the mic to continue.');
+            }, REALTIME_IDLE_PAUSE_MS);
+        }, delayMs);
+    }, [clearRealtimeTurnTimers]);
+
+    const pauseRealtimeListening = React.useCallback(() => {
+        clearRealtimeTurnTimers();
+        realtimeVoiceRef.current?.setInputEnabled(false);
+        setIsListening(false);
+        setVoiceStatusText('Paused. Tap the mic to continue.');
+    }, [clearRealtimeTurnTimers]);
+
     const closeRealtimeVoice = React.useCallback(async () => {
+        clearRealtimeTurnTimers();
         const handle = realtimeVoiceRef.current;
         realtimeVoiceRef.current = null;
         realtimeVoiceAttemptRef.current = null;
@@ -1865,7 +1905,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         setIsVoiceSessionActive(false);
         setIsListening(false);
         setIsVoiceReplyPlaying(false);
-    }, []);
+    }, [clearRealtimeTurnTimers]);
 
     const startRealtimeVoice = React.useCallback(async () => {
         if (realtimeVoiceRef.current || realtimeVoiceAttemptRef.current) return true;
@@ -1888,7 +1928,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             locationCity,
             clinicalSummary: voiceClinicalSummary,
             history,
-            initialLanguage: 'hi',
+            initialLanguage: language === 'hi' ? 'hi' : 'en',
             voicePersona: 'female',
             autoStartResponse: realtimeGreetingPendingRef.current,
         }, {
@@ -1899,27 +1939,37 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     setIsVoiceReplyPlaying(false);
                     setVoiceStatusText('Connecting microphone...');
                 } else if (status === 'connected') {
-                    // Keep the microphone muted while the automatic welcome
-                    // message is being spoken. It becomes live after the
-                    // welcome response completes.
-                    realtimeVoiceRef.current?.setInputEnabled(!realtimeGreetingPendingRef.current);
                     setIsVoiceSessionActive(true);
-                    setIsListening(!realtimeGreetingPendingRef.current);
-                    setIsVoiceReplyPlaying(realtimeGreetingPendingRef.current);
-                    setVoiceStatusText(realtimeGreetingPendingRef.current ? 'CD4 Assistant is speaking...' : 'Listening...');
+                    if (realtimeGreetingPendingRef.current) {
+                        // Mic stays closed during the welcome; it opens when the welcome finishes playing.
+                        realtimeVoiceRef.current?.setInputEnabled(false);
+                        setIsListening(false);
+                        setIsVoiceReplyPlaying(true);
+                        setVoiceStatusText('CD4 Assistant is speaking…');
+                    } else {
+                        armRealtimeListening(0);
+                    }
                 } else if (status === 'listening') {
-                    realtimeVoiceRef.current?.setInputEnabled(true);
+                    // The patient started talking: they are mid-turn, so cancel the idle auto-pause.
+                    if (realtimeIdleTimerRef.current) clearTimeout(realtimeIdleTimerRef.current);
+                    realtimeIdleTimerRef.current = null;
                     setIsListening(true);
                     setIsVoiceReplyPlaying(false);
-                    setVoiceStatusText('Listening...');
+                    setVoiceStatusText('Listening…');
+                } else if (status === 'thinking') {
+                    clearRealtimeTurnTimers();
+                    setIsListening(false);
+                    setIsVoiceReplyPlaying(false);
+                    setVoiceStatusText('Thinking…');
                 } else if (status === 'speaking') {
-                    // Prevent microphone pickup and accidental interruption
-                    // while the AI is delivering its response.
-                    realtimeVoiceRef.current?.setInputEnabled(false);
+                    // Half-duplex: the mic is closed while the assistant talks (prevents self-interruption
+                    // on phones with weak echo cancellation). Tapping the mic interrupts instead.
+                    clearRealtimeTurnTimers();
                     setIsListening(false);
                     setIsVoiceReplyPlaying(true);
-                    setVoiceStatusText('Doctor is speaking...');
+                    setVoiceStatusText('CD4 Assistant is speaking… tap the mic to interrupt');
                 } else if (status === 'closed') {
+                    clearRealtimeTurnTimers();
                     setIsVoiceSessionActive(false);
                     setIsListening(false);
                     setIsVoiceReplyPlaying(false);
@@ -2031,21 +2081,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 if (!isAutomaticGreeting) {
                     void persistRealtimeMessage('ai', cleanText);
                 }
-                setIsVoiceReplyPlaying(false);
-                if (realtimeGreetingPendingRef.current) {
-                    realtimeGreetingPendingRef.current = false;
-                    // Greeting is not permission to keep the microphone open.
-                    // Use push-to-talk so room noise cannot create a new turn.
-                    realtimeVoiceRef.current?.setInputEnabled(false);
-                    setIsListening(false);
-                    setVoiceStatusText('Tap mic to speak');
-                    return;
-                }
-                // Use push-to-talk between turns: mute the input after the AI
-                // finishes so the next turn starts only after the user taps.
-                realtimeVoiceRef.current?.setInputEnabled(false);
-                setVoiceStatusText('Tap mic to speak');
-                setIsListening(false);
+                realtimeGreetingPendingRef.current = false;
+                // The mic is re-opened by onPlaybackFinished once the audio has actually stopped playing.
+            },
+            onPlaybackFinished: () => {
+                if (!realtimeVoiceRef.current) return;
+                armRealtimeListening();
             },
             onToolCall: async (name, _callId, argumentsJson) => {
                 const { data, error } = await supabase.functions.invoke('voice-realtime-tools', {
@@ -2127,7 +2168,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         // reports connected. Words spoken during the handshake must not look
         // like they were captured when they were not.
         return true;
-    }, [closeRealtimeVoice, locationCity, persistRealtimeMessage, router, voiceClinicalSummary]);
+    }, [armRealtimeListening, clearRealtimeTurnTimers, closeRealtimeVoice, language, locationCity, persistRealtimeMessage, router, voiceClinicalSummary]);
 
     const clearVoiceAutoSubmitTimers = React.useCallback(() => {
         if (autoSubmitTimerRef.current) {
@@ -2228,7 +2269,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         // start microphone capture.
         if (Platform.OS === 'web' || microphonePermissionRequestedRef.current) return;
         microphonePermissionRequestedRef.current = true;
-        void Audio.requestPermissionsAsync().catch((error) => {
+        void requestRecordingPermissionsAsync().catch((error) => {
             if (__DEV__) console.warn('[Voice] homepage microphone permission request failed', error);
             microphonePermissionRequestedRef.current = false;
         });
@@ -2444,8 +2485,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         }
         Animated.loop(
             Animated.sequence([
-                Animated.timing(premiumWaitPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-                Animated.timing(premiumWaitPulse, { toValue: 0, duration: 700, useNativeDriver: true }),
+                Animated.timing(premiumWaitPulse, { toValue: 1, duration: 700, useNativeDriver: Platform.OS !== 'web' }),
+                Animated.timing(premiumWaitPulse, { toValue: 0, duration: 700, useNativeDriver: Platform.OS !== 'web' }),
             ])
         ).start();
     }, [isAgentSending, premiumWaitPulse]);
@@ -2817,6 +2858,26 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
         return filtered;
     }, [doctorsData, selectedCity, selectedDepartmentId]);
+    // Home "Top specialists": never empty. Doctors in the patient's city come first (verified, then best rated,
+    // then most experienced); if that city has fewer than 6, the list is filled with top doctors from elsewhere
+    // so the section still shows when location is off or the city has no doctors yet.
+    const homeSpecialists = React.useMemo(() => {
+        const city = selectedCity || locationCity;
+        const score = (doctor: Doctor) =>
+            ((doctor as any).isVerified || (doctor as any).is_verified ? 1000 : 0) +
+            (Number(doctor.rating) || 0) * 10 +
+            Math.min(parseExperienceYears(doctor.experience), 40) / 10;
+        // The home showcase is the app's shop window: skip test/incomplete profiles ("aaaaaa sssdsfsaf", no speciality).
+        // They still appear in full search results.
+        const isPresentable = (doctor: Doctor) => {
+            const name = `${doctor.firstName || ''} ${doctor.lastName || ''}`.replace(/^\s*dr\.?\s*/i, '').trim();
+            return Boolean(doctor.specialization) && /\p{L}{2,}/u.test(name) && !/(\p{L})\1{3,}/u.test(name);
+        };
+        const ranked = [...(doctorsData as Doctor[])].filter(isPresentable).sort((a, b) => score(b) - score(a));
+        const local = city ? ranked.filter((doctor) => isCityMatch(doctor.city, city)) : [];
+        const others = ranked.filter((doctor) => !local.includes(doctor));
+        return { doctors: [...local, ...others].slice(0, 6), hasLocal: local.length > 0, allLocal: local.length >= 6, city };
+    }, [doctorsData, locationCity, selectedCity]);
     const visibleNearbyDoctors = React.useMemo(
         () => nearbyDoctors.slice(0, nearbyVisibleCount),
         [nearbyDoctors, nearbyVisibleCount]
@@ -2881,7 +2942,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const recommendedDoctor = recommendedDepartmentDoctors[0] || null;
     const secondaryRecommendedDoctors = recommendedDepartmentDoctors.slice(1);
     const recommendedDoctorMetrics = React.useMemo(
-        () => (recommendedDoctor ? resolveDoctorCardMetrics(recommendedDoctor) : { ratingLabel: '4.5', feeLabel: '' }),
+        () => (recommendedDoctor ? resolveDoctorCardMetrics(recommendedDoctor) : { ratingLabel: 'New', feeLabel: '' }),
         [recommendedDoctor]
     );
 
@@ -3081,11 +3142,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
 
     const AnimatedDepartmentCard = ({ item, theme, index, onPress, isSelected }: { item: DynamicCategory; theme: Theme; index: number; onPress: () => void; isSelected: boolean }) => {
         const scaleValue = React.useRef(new Animated.Value(1)).current;
-        const handlePressIn = () => Animated.spring(scaleValue, { toValue: 0.95, useNativeDriver: true }).start();
-        const handlePressOut = () => Animated.spring(scaleValue, { toValue: 1, useNativeDriver: true }).start();
-        const cardBackground = isSelected ? theme.successLight : theme.cardBackground;
-        const cardBorder = isSelected ? theme.successBorder : theme.borderColor;
-        const iconBackground = isSelected ? theme.cardBackground : theme.successLight;
+        const handlePressIn = () => Animated.spring(scaleValue, { toValue: 0.95, useNativeDriver: Platform.OS !== 'web' }).start();
+        const handlePressOut = () => Animated.spring(scaleValue, { toValue: 1, useNativeDriver: Platform.OS !== 'web' }).start();
+        const cardBackground = isSelected ? theme.primarySoft : theme.cardBackground;
+        const cardBorder = isSelected ? theme.primaryBorder : theme.borderColor;
+        const iconBackground = isSelected ? theme.cardBackground : theme.primarySoft;
         const labelColor = isSelected ? theme.text : theme.textSecondary;
 
         return (
@@ -3140,7 +3201,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     { label: 'MATCH', color: '#00D4FF', shimmer: '#00D4FF', float: -10, scale: 1.08, iconSize: 20 },
                     { label: 'RISING', color: '#8A2BE2', shimmer: '#8A2BE2', float: -8, scale: 1.05, iconSize: 18 },
                     { label: 'TRENDY', color: '#00FA9A', shimmer: '#00FA9A', float: -4, scale: 1.02, iconSize: 18 },
-                ][index] || { label: 'POPULAR', color: theme.success, shimmer: '#FFF', float: 0, scale: 1.0, iconSize: 16 }
+                ][index] || { label: 'POPULAR', color: theme.primary, shimmer: '#FFF', float: 0, scale: 1.0, iconSize: 16 }
             )
             : { label: '', color: theme.borderColor, shimmer: theme.borderColor, float: 0, scale: 1, iconSize: 18 };
 
@@ -3148,14 +3209,14 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             const floatDur = 2000 + (index * 200);
             Animated.loop(
                 Animated.sequence([
-                    Animated.timing(hoverValue, { toValue: 1, duration: floatDur, useNativeDriver: true, easing: Easing.inOut(Easing.quad) }),
-                    Animated.timing(hoverValue, { toValue: 0, duration: floatDur, useNativeDriver: true, easing: Easing.inOut(Easing.quad) }),
+                    Animated.timing(hoverValue, { toValue: 1, duration: floatDur, useNativeDriver: Platform.OS !== 'web', easing: Easing.inOut(Easing.quad) }),
+                    Animated.timing(hoverValue, { toValue: 0, duration: floatDur, useNativeDriver: Platform.OS !== 'web', easing: Easing.inOut(Easing.quad) }),
                 ])
             ).start();
 
             if (showTrendDecor && index < 4) {
                 Animated.loop(
-                    Animated.timing(shimmerValue, { toValue: 1, duration: 3000 + (index * 1000), useNativeDriver: true, easing: Easing.linear })
+                    Animated.timing(shimmerValue, { toValue: 1, duration: 3000 + (index * 1000), useNativeDriver: Platform.OS !== 'web', easing: Easing.linear })
                 ).start();
             }
         }, [index, showTrendDecor, shimmerValue, hoverValue]);
@@ -3166,11 +3227,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         const rotateY = animatedValue.x.interpolate({ inputRange: [-1, 1], outputRange: ['-12deg', '12deg'] });
 
         const handlePressIn = () => {
-            Animated.spring(animatedValue, { toValue: { x: 0, y: -0.5 }, useNativeDriver: true, bounciness: 12 }).start();
+            Animated.spring(animatedValue, { toValue: { x: 0, y: -0.5 }, useNativeDriver: Platform.OS !== 'web', bounciness: 12 }).start();
         };
 
         const handlePressOut = () => {
-            Animated.spring(animatedValue, { toValue: { x: 0, y: 0 }, useNativeDriver: true, bounciness: 10 }).start();
+            Animated.spring(animatedValue, { toValue: { x: 0, y: 0 }, useNativeDriver: Platform.OS !== 'web', bounciness: 10 }).start();
         };
 
         return (
@@ -3420,8 +3481,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             try {
                 const sound = activeVoiceSoundRef.current;
                 activeVoiceSoundRef.current = null;
-                await sound.stopAsync();
-                await sound.unloadAsync();
+                sound.pause();
+                sound.remove();
             } catch (err) {
                 console.warn('Error stopping voice sound:', err);
             }
@@ -3576,32 +3637,24 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 }
             }
 
-            const { sound } = await Audio.Sound.createAsync(
-                { uri: sourceUri },
-                { shouldPlay: true },
-                undefined,
-                false
-            );
-
+            const sound = createAudioPlayer({ uri: sourceUri }, { updateInterval: 65 });
             activeVoiceSoundRef.current = sound;
-            await sound.setProgressUpdateIntervalAsync(65);
+            sound.play();
 
+            // expo-audio reports isLoaded=false until the clip is ready, so only didJustFinish ends playback.
+            // The timeout covers a clip that fails to load or never reports finishing.
             await new Promise<void>((resolve) => {
                 let finished = false;
-                sound.setOnPlaybackStatusUpdate((status) => {
-                    if (!status.isLoaded) {
-                        if (!finished) {
-                            finished = true;
-                            resolve();
-                        }
-                        return;
-                    }
-                    if (status.didJustFinish) {
-                        if (!finished) {
-                            finished = true;
-                            resolve();
-                        }
-                    }
+                const done = () => {
+                    if (finished) return;
+                    finished = true;
+                    clearTimeout(safetyTimer);
+                    subscription.remove();
+                    resolve();
+                };
+                const safetyTimer = setTimeout(done, durationMs + 8000);
+                const subscription = sound.addListener('playbackStatusUpdate', (status) => {
+                    if (status.didJustFinish) done();
                 });
             });
 
@@ -3609,7 +3662,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 activeVoiceSoundRef.current = null;
             }
             try {
-                await sound.unloadAsync();
+                sound.remove();
             } catch {
                 // ignore
             }
@@ -3702,39 +3755,30 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     }
                 }
 
-                const { sound } = await Audio.Sound.createAsync(
-                    { uri: sourceUri },
-                    { shouldPlay: true },
-                    undefined,
-                    false
-                );
+                const sound = createAudioPlayer({ uri: sourceUri }, { updateInterval: 65 });
                 activeVoiceSoundRef.current = sound;
-                await sound.setProgressUpdateIntervalAsync(65);
+                sound.play();
 
+                // expo-audio reports isLoaded=false until the clip is ready and gives times in seconds.
                 await new Promise<void>((resolve) => {
                     let hasResolved = false;
                     const resolveOnce = () => {
                         if (hasResolved) return;
                         hasResolved = true;
+                        clearTimeout(safetyTimer);
+                        subscription.remove();
                         resolve();
                     };
-
-                    sound.setOnPlaybackStatusUpdate((status) => {
-                        if (!status.isLoaded) {
-                            resolveOnce();
-                            return;
-                        }
-                        const durationMillis = typeof status.durationMillis === 'number' ? status.durationMillis : 0;
-                        const positionMillis = typeof status.positionMillis === 'number' ? status.positionMillis : 0;
-                        if (durationMillis > 0) {
+                    const safetyTimer = setTimeout(resolveOnce, fallbackDurationMs + 8000);
+                    const subscription = sound.addListener('playbackStatusUpdate', (status) => {
+                        const durationMillis = Number.isFinite(status.duration) ? status.duration * 1000 : 0;
+                        const positionMillis = Number.isFinite(status.currentTime) ? status.currentTime * 1000 : 0;
+                        if (status.isLoaded && durationMillis > 0) {
                             clearLipSyncFallbackTimer();
                             clearLipSyncTicker();
                             driveLipSyncFromAudioProgress(positionMillis, durationMillis);
                         }
-
-                        if (status.didJustFinish) {
-                            resolveOnce();
-                        }
+                        if (status.didJustFinish) resolveOnce();
                     });
                 });
                 return true;
@@ -3756,7 +3800,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 }
                 if (activeVoiceSoundRef.current) {
                     try {
-                        await activeVoiceSoundRef.current.unloadAsync();
+                        activeVoiceSoundRef.current.remove();
                     } catch {
                         // best-effort unload
                     }
@@ -5069,19 +5113,13 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         // remains a safe fallback if WebRTC/session setup is unavailable.
         if (realtimeVoiceRef.current) {
             if (isVoiceReplyPlaying) {
+                // Interrupt: stops generation and the queued audio; onPlaybackFinished re-opens the mic.
                 realtimeVoiceRef.current.interrupt();
-                realtimeVoiceRef.current.setInputEnabled(true);
                 setIsVoiceReplyPlaying(false);
-                setIsListening(true);
-                setVoiceStatusText('Listening...');
             } else if (isListening) {
-                realtimeVoiceRef.current.setInputEnabled(false);
-                setIsListening(false);
-                setVoiceStatusText('Tap mic to speak');
+                pauseRealtimeListening();
             } else {
-                realtimeVoiceRef.current.setInputEnabled(true);
-                setIsListening(true);
-                setVoiceStatusText('Listening...');
+                armRealtimeListening(0);
             }
             return;
         }
@@ -5189,8 +5227,18 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         // Speak a short welcome every time the modal opens. If the patient has
         // already asked something, the existing history is still carried into
         // the new Realtime connection.
-        const hasExistingUserTurn = realtimeVoiceHasUserTurnRef.current || agentMessagesRef.current.some((item) => item.role === 'user' && item.text.trim());
-        realtimeVoiceHasUserTurnRef.current = hasExistingUserTurn;
+        // Every open starts a fresh conversation. Previous conversations stay saved in history, but they are
+        // not sent to the model: with old history the assistant answered the last stored question before
+        // the patient had said anything in this session.
+        if (!realtimeVoiceRef.current && !realtimeVoiceAttemptRef.current) {
+            const initialMessages = createInitialAgentMessages();
+            agentConversationIdRef.current = createClientConversationId();
+            agentMessagesRef.current = initialMessages;
+            realtimeVoiceHasUserTurnRef.current = false;
+            realtimeVoicePersistenceRef.current.clear();
+            setAgentMessages(initialMessages);
+            setVoiceClinicalSummary('');
+        }
         const shouldAutoGreet = true;
 
         // Request microphone permission before opening the Realtime session.
@@ -5210,7 +5258,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     stream.getTracks?.().forEach((track: any) => track.stop());
                 }
             } else {
-                const permission = await Audio.requestPermissionsAsync();
+                const permission = await requestRecordingPermissionsAsync();
                 if (!permission.granted) {
                     setVoiceStatusText('Microphone permission is required for voice chat');
                     Toast.show({
@@ -5230,11 +5278,18 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             // old message before the patient speaks again.
             realtimeGreetingPendingRef.current = shouldAutoGreet;
             setVoiceStatusText('Connecting microphone...');
+            voiceSessionActiveRef.current = true;
             setIsVoiceSessionActive(true);
             setIsListening(false);
             const started = await startRealtimeVoice();
             if (!started || !realtimeVoiceRef.current) {
+                // Never leave the sheet on "Connecting…" when the session did not come up.
                 realtimeGreetingPendingRef.current = false;
+                voiceSessionActiveRef.current = false;
+                setIsVoiceSessionActive(false);
+                setIsListening(false);
+                setIsVoiceReplyPlaying(false);
+                setVoiceStatusText('Could not start the voice assistant. Tap the mic to try again.');
                 return;
             }
             if (realtimeGreetingPendingRef.current) {
@@ -5247,14 +5302,31 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 setVoiceStatusText('CD4 Assistant is speaking...');
             } else {
                 // The welcome response completed during the handshake.
-                realtimeVoiceRef.current.setInputEnabled(true);
-                setIsListening(true);
-                setVoiceStatusText('Listening...');
+                armRealtimeListening(0);
             }
         } catch (error) {
             realtimeGreetingPendingRef.current = false;
-            if (__DEV__) console.warn('[Voice] microphone permission request failed', error);
-            setVoiceStatusText('Allow microphone access to start voice chat');
+            voiceSessionActiveRef.current = false;
+            setIsVoiceSessionActive(false);
+            setIsListening(false);
+            if (__DEV__) console.warn('[Voice] could not start voice session', error);
+            // Tell the patient what actually failed instead of always blaming the microphone.
+            const detail = error instanceof Error ? error.message : String(error || '');
+            if ((error as any)?.code === 'voice_quota') {
+                // Daily voice limit: show the server's explanation and offer Pro (free users) instead of a generic error.
+                setVoiceStatusText(detail || 'Daily voice limit reached. You can continue by text.');
+                if (!isProUser) setShowProPlanModal(true);
+                return;
+            }
+            const isPermission = /permission|notallowed|denied|microphone capture/i.test(detail);
+            const isNetwork = /timed out|network|fetch|connection|session request/i.test(detail);
+            setVoiceStatusText(
+                isPermission
+                    ? 'Allow microphone access to start voice chat'
+                    : isNetwork
+                        ? 'Could not connect. Check your internet and tap the mic to retry.'
+                        : 'Voice assistant is unavailable right now. You can type your question instead.'
+            );
         }
     };
 
@@ -5397,7 +5469,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const cityLabel = locationCity || 'your area';
     const selectedCityLabel = selectedCity || 'All cities';
     const showNearbyDoctorSkeleton = loading && doctorsData.length === 0 && !isPullRefreshing;
-    const isDarkTheme = theme.background.toLowerCase() === '#121212' || theme.cardBackground.toLowerCase() === '#1e1e1e';
+    const isDarkTheme = theme.background === Colors.dark.background;
     const skeletonBaseColor = isDarkTheme ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
     const skeletonGlowColor = isDarkTheme ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.72)';
 
@@ -5441,14 +5513,25 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
         : null;
     const isVoiceAutoSending = voiceSilenceCountdownMs !== null;
     const voicePanelStatusText = isVoiceAutoSending && voiceSilenceCountdownSeconds !== null
-        ? `Silence detected. Sending in ${voiceSilenceCountdownSeconds.toFixed(1)}s...`
-        : isListening
-            ? 'Listening...'
-        : isVoiceReplyPlaying
-            ? 'AI is speaking...'
-        : isVoiceSessionActive
-            ? 'Waiting for your voice...'
-            : voiceStatusText;
+        ? `Sending in ${voiceSilenceCountdownSeconds.toFixed(1)}s…`
+        : voiceStatusText || (isVoiceSessionActive ? 'Listening…' : 'Tap the mic and describe how you feel.');
+    const voiceStageState: VoiceStageState = (() => {
+        if (/connecting/i.test(voiceStatusText) && isVoiceSessionActive) return 'connecting';
+        if (isVoiceReplyPlaying) return 'speaking';
+        if (isListening) return 'listening';
+        if (isAgentSending || isVoiceAutoSending || /^thinking/i.test(voiceStatusText)) return 'thinking';
+        if (isVoiceSessionActive) return 'paused';
+        if (/unavailable|could not|allow microphone|lost|ended unexpectedly/i.test(voiceStatusText)) return 'error';
+        return 'off';
+    })();
+    // Caption shows what the assistant is saying (or the patient's live words while they speak).
+    const voiceStageCaption = (() => {
+        // Nothing to caption until the assistant has actually spoken in this session.
+        if (voiceStageState === 'off' || voiceStageState === 'connecting' || voiceStageState === 'error') return { text: '', speaker: 'assistant' as const };
+        if (voiceStageState === 'listening' && voiceLiveTranscript.trim()) return { text: voiceLiveTranscript.trim(), speaker: 'patient' as const };
+        const lastAi = [...agentMessages].reverse().find((message) => message.role === 'ai' && message.text.trim());
+        return { text: lastAi?.text.trim() || '', speaker: 'assistant' as const };
+    })();
     const bottomVoiceTitle = isListening
         ? 'Listening...'
         : isVoiceAutoSending
@@ -5977,6 +6060,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 showHeader={false}
                 selectedCityLabel={selectedCityLabel}
                 isProUser={isProUser}
+                doctorsStatus={isDoctorsError && doctorsData.length === 0 ? 'error' : 'ready'}
+                onRetryDoctors={() => { void refetch(); }}
                 aiTitle="How can I help you today?"
                 aiSubtitle="Talk to me about your symptoms or medical concerns."
                 symptomPlaceholder={t('home.symptomPlaceholder')}
@@ -5989,31 +6074,54 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 onSymptomSubmit={() => handleSymptomSubmit()}
                 onVoicePress={openVoiceAssistantPanel}
                 onUpgrade={handleOpenUpgradeToPro}
-                doctors={visibleNearbyDoctors.slice(0, 6).map((doctor, index) => {
+                doctorsCaption={
+                    homeSpecialists.hasLocal && homeSpecialists.city
+                        ? homeSpecialists.allLocal
+                            ? `Available near ${formatCityName(homeSpecialists.city)}`
+                            : `${formatCityName(homeSpecialists.city)} first, then top rated across CD4`
+                        : 'Top rated doctors on CD4'
+                }
+                doctors={homeSpecialists.doctors.map((doctor, index) => {
                     const { ratingLabel, feeLabel } = resolveDoctorCardMetrics(doctor);
                     return {
                         id: String(doctor._id || `home-doctor-${index}`),
-                        name: getDoctorDisplayName(doctor, { fallbackName: 'Specialist' }),
+                        name: getDoctorDisplayName(doctor, { includePrefix: true, fallbackName: 'Specialist' }),
                         specialization: doctor.specialization,
                         experience: parseExperienceYears(doctor.experience),
                         image: getImageUrl(doctor.image),
                         feeLabel,
                         ratingLabel,
+                        isVerified: Boolean((doctor as any).isVerified || (doctor as any).is_verified),
+                        city: doctor.city ? formatCityName(doctor.city) : null,
                     };
                 })}
                 departments={allDepartments.filter((department) => {
                     const key = `${department.label} ${department.id}`.toLowerCase();
                     return !key.includes('gyn') && !key.includes('obstet') && !key.includes('women');
-                }).slice(0, 4).map((department) => ({
+                }).slice(0, 8).map((department) => ({
                     ...department,
                     imageSource: resolveDepartmentImageSource(department.label, department.id),
                 }))}
                 concerns={concernCards.map((concern) => ({
                     id: concern.id,
                     label: getConcernDisplayLabel(concern.label),
-                    imageSource: concern.imageSource,
+                    imageSource: specificConcernArt(concern.label, concern.imageSource),
                 }))}
-                promos={promoLoopCards.map((promo) => ({ id: promo.id, tag: promo.tag, title: promo.title, description: promo.description }))}
+                promos={promoCards.map((promo) => ({
+                    id: promo.id,
+                    tag: promo.tag,
+                    title: promo.title,
+                    description: promo.description,
+                    cta: promo.cta,
+                    action: promo.action,
+                    doctors: (promoDoctorsByAction[promo.action] || []).slice(0, 2).map((doctor) => ({
+                        id: String(doctor._id || ''),
+                        name: getDoctorDisplayName(doctor, { includePrefix: true, fallbackName: 'Specialist' }),
+                        specialization: doctor.specialization || null,
+                        ratingLabel: formatDoctorRatingLabel(doctor.rating),
+                        image: getImageUrl(doctor.image) || null,
+                    })),
+                }))}
                 onViewAllDoctors={() => handleConsultDoctor()}
                 onDoctorProfile={(doctorId) => handleOpenDoctorProfile(doctorId)}
                 onConsultDoctor={(doctorId) => handleConsultDoctor(doctorId)}
@@ -6135,7 +6243,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     {t('home.aiAssistHint')}
                 </Text>
                 {shouldShowVoiceDoctorCard ? (
-                    <View style={[styles.voiceLiveCard, { borderColor: theme.successBorder, backgroundColor: theme.cardBackground }]}>
+                    <View style={[styles.voiceLiveCard, { borderColor: theme.primaryBorder, backgroundColor: theme.cardBackground }]}>
                         <View style={styles.voiceLiveHeader}>
                             <View style={styles.voiceLiveDoctorWrap}>
                                 <Animated.View
@@ -6211,7 +6319,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     { label: 'Video Call', Icon: Video, onPress: () => handleConsultDoctor() },
                 ].map(({ label, Icon, onPress }) => (
                     <TouchableOpacity key={label} style={[styles.homeQuickAction, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]} onPress={onPress} activeOpacity={0.82}>
-                        <View style={[styles.homeQuickActionIcon, { backgroundColor: theme.successLight }]}>
+                        <View style={[styles.homeQuickActionIcon, { backgroundColor: theme.primarySoft }]}>
                             <Icon size={18} color={theme.tint} />
                         </View>
                         <Text style={[styles.homeQuickActionLabel, { color: theme.text }]}>{label}</Text>
@@ -6268,7 +6376,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         </View>
 
                         {isAgentSending ? (
-                            <View style={[styles.premiumWaitCard, { backgroundColor: theme.background, borderColor: theme.successBorder }]}>
+                            <View style={[styles.premiumWaitCard, { backgroundColor: theme.background, borderColor: theme.primaryBorder }]}>
                                 <View style={styles.premiumWaitRow}>
                                     <Text style={[styles.premiumWaitTitle, { color: theme.text }]}>AI Doctor is preparing your response</Text>
                                     <View style={styles.premiumWaitDots}>
@@ -6321,190 +6429,21 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         >
                             {shouldShowVoiceOnlyPanel ? (
                                 <>
-                                <LinearGradient
-                                    colors={[theme.background, theme.cardBackground, theme.background]}
-                                    start={{ x: 0, y: 0 }}
-                                    end={{ x: 1, y: 1 }}
-                                    style={[styles.voiceListeningCard, { borderColor: theme.successBorder }]}
-                                >
-                                    <View style={[styles.voiceListeningBadge, { backgroundColor: doctorVoiceAura, borderColor: doctorVoiceAccent + '55' }]}>
-                                        <View style={[styles.voiceListeningBadgeDot, { backgroundColor: doctorVoiceAccent }]} />
-                                        <Text style={[styles.voiceListeningBadgeText, { color: doctorVoiceAccent }]}>
-                                            {isListening ? 'Listening' : isVoiceReplyPlaying ? 'Speaking' : 'Voice Assistant'}
-                                        </Text>
-                                    </View>
-                                    <View style={[styles.voiceListeningPromptCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                                        <Text style={[styles.voiceListeningPromptText, { color: theme.text }]}>
-                                            {isListening
-                                                ? "I'm listening. Tell me what's bothering you."
-                                                : isVoiceReplyPlaying
-                                                    ? 'AI doctor is replying now.'
-                                                    : 'Speak naturally. I will guide you like a doctor.'}
-                                        </Text>
-                                    </View>
-
-                                    <View style={styles.voiceListeningCenter}>
-                                        <View style={{ width: 104, height: 104, alignItems: 'center', justifyContent: 'center' }}>
-                                            <Animated.View
-                                                style={{
-                                                    position: 'absolute',
-                                                    width: 100,
-                                                    height: 100,
-                                                    borderRadius: 50,
-                                                    backgroundColor: isVoiceReplyPlaying ? '#7386FF' : '#9AA9FF',
-                                                    opacity: doctorHaloOpacity,
-                                                    transform: [{ scale: doctorCoreShadowScale }],
-                                                }}
-                                            />
-                                            <Animated.View
-                                                style={{
-                                                    width: 78,
-                                                    height: 78,
-                                                    borderRadius: 39,
-                                                    overflow: 'hidden',
-                                                    transform: [{ rotate: doctorOrbRotate }, { scale: doctorSparkleScale }],
-                                                    shadowColor: '#7183FF',
-                                                    shadowOpacity: 0.28,
-                                                    shadowRadius: 16,
-                                                    shadowOffset: { width: 0, height: 8 },
-                                                    elevation: 8,
-                                                }}
-                                            >
-                                                <LinearGradient
-                                                    colors={isVoiceReplyPlaying ? ['#6677F5', '#DCE3FF', '#778BFF'] : ['#7F8EFF', '#EAF0FF', '#A7B4FF']}
-                                                    start={{ x: 0.05, y: 0.05 }}
-                                                    end={{ x: 0.95, y: 0.95 }}
-                                                    style={{ flex: 1 }}
-                                                />
-                                                <Animated.View
-                                                    style={{
-                                                        position: 'absolute',
-                                                        left: 16,
-                                                        top: 12,
-                                                        width: 36,
-                                                        height: 16,
-                                                        borderRadius: 20,
-                                                        backgroundColor: '#FFFFFF',
-                                                        opacity: doctorSparkleOpacity,
-                                                        transform: [{ rotate: '-18deg' }, { scale: doctorSparkleScale }],
-                                                    }}
-                                                />
-                                            </Animated.View>
-                                            <Animated.View
-                                                style={{
-                                                    position: 'absolute',
-                                                    width: 6,
-                                                    height: 6,
-                                                    borderRadius: 3,
-                                                    backgroundColor: '#FFFFFF',
-                                                    opacity: doctorSparkleOpacity,
-                                                    transform: [{ rotate: doctorOrbReverseRotate }, { translateX: 46 }],
-                                                }}
-                                            />
-                                        </View>
-
-                                        <Text style={[styles.voiceRobotTitle, { color: theme.text, textAlign: 'center' }]}>CD4 Voice Assistant</Text>
-                                        <Text style={[styles.voiceRobotSubtitle, { color: theme.textSecondary, textAlign: 'center' }]}>
-                                            {voiceRobotWaveLabel}
-                                        </Text>
-
-                                        <View
-                                            style={[
-                                                styles.voiceRobotBarsRow,
-                                                {
-                                                    opacity: isDoctorVoiceEngaged ? 1 : 0.45,
-                                                    justifyContent: 'center',
-                                                },
-                                            ]}
-                                        >
-                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
-                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoiceSecondaryBar, transform: [{ scaleY: robotBarScaleB }] }]} />
-                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
-                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoiceSecondaryBar, transform: [{ scaleY: robotBarScaleB }] }]} />
-                                            <Animated.View style={[styles.voiceRobotBar, { backgroundColor: doctorVoicePrimaryBar, transform: [{ scaleY: robotBarScaleA }] }]} />
-                                        </View>
-
-                                        <View style={styles.voiceListeningStatusRow}>
-                                            <View style={[styles.voiceRobotWaveDot, { backgroundColor: doctorVoiceAccent, opacity: isDoctorVoiceEngaged ? 1 : 0.55 }]} />
-                                            <Text style={[styles.voiceRobotWaveStatusText, { color: doctorVoiceAccent }]}>
-                                                {shouldShowVoiceUpgradePrompt
-                                                    ? 'Voice limit reached'
-                                                    : isVoiceReplyPlaying
-                                                        ? 'Speaking now'
-                                                        : isListening
-                                                            ? 'Live listening'
-                                                            : isVoiceAwaitingResponse
-                                                                ? 'Generating response'
-                                                                : isVoiceAutoSending
-                                                                    ? 'Sending your message...'
-                                                                    : 'Standby'}
-                                            </Text>
-                                        </View>
-
-                                        {isVoiceAwaitingResponse ? (
-                                            <View style={[styles.voicePendingResponseRow, { borderColor: doctorVoiceAccent + '55', backgroundColor: doctorVoiceAura }]}>
-                                                <ActivityIndicator size="small" color={doctorVoiceAccent} />
-                                                <Text style={[styles.voicePendingResponseText, { color: doctorVoiceAccent }]}>
-                                                    Generating smart medical response...
-                                                </Text>
-                                            </View>
-                                        ) : null}
-
-                                        <Text style={[styles.voiceRobotHint, { color: theme.textSecondary, textAlign: 'center' }]}>
-                                            Tap Text to view full chat history.
-                                        </Text>
-                                    </View>
-
-                                    <View style={styles.voiceListeningActionRow}>
-                                        <TouchableOpacity
-                                            style={[styles.voiceListeningActionBtn, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
-                                            onPress={() => {
-                                                // Switch the presentation to text without destroying the
-                                                // Realtime session. The session remains available for the
-                                                // next mic tap, but the input track is muted while typing.
-                                                realtimeVoiceRef.current?.setInputEnabled(false);
-                                                setIsListening(false);
-                                                setIsChatInputActive(true);
-                                            }}
-                                            activeOpacity={0.8}
-                                        >
-                                            <Text style={[styles.voiceListeningActionBtnText, { color: theme.textSecondary }]}>Text</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.voiceListeningMicBtn,
-                                                { backgroundColor: isVoiceSessionActive ? theme.error : theme.tint },
-                                            ]}
-                                            onPress={() => {
-                                                void handleMicPress(true);
-                                            }}
-                                            activeOpacity={0.88}
-                                        >
-                                            <Mic size={22} color="#fff" />
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={[styles.voiceListeningActionBtn, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
-                                            onPress={handleCloseAgentPanel}
-                                            activeOpacity={0.8}
-                                        >
-                                            <X size={16} color={theme.textSecondary} />
-                                        </TouchableOpacity>
-                                    </View>
-
-                                    <TouchableOpacity
-                                        style={[
-                                            styles.voiceNewSessionButton,
-                                            { borderColor: theme.borderColor, backgroundColor: theme.cardBackground },
-                                        ]}
-                                        onPress={() => {
-                                            void handleStartNewVoiceSession();
-                                        }}
-                                        activeOpacity={0.82}
-                                    >
-                                        <Text style={[styles.voiceNewSessionButtonText, { color: theme.tint }]}>
-                                            + New voice session
-                                        </Text>
-                                    </TouchableOpacity>
+                                <VoiceAssistantStage
+                                    state={voiceStageState}
+                                    statusText={voicePanelStatusText}
+                                    caption={voiceStageCaption.text}
+                                    captionSpeaker={voiceStageCaption.speaker}
+                                    onMicPress={() => { void handleMicPress(true); }}
+                                    onSwitchToText={() => {
+                                        // Switch to text without destroying the Realtime session; the mic stays muted while typing.
+                                        pauseRealtimeListening();
+                                        setIsChatInputActive(true);
+                                    }}
+                                    onEnd={handleCloseAgentPanel}
+                                    onNewSession={() => { void handleStartNewVoiceSession(); }}
+                                />
+                                <View>
 
                                     {shouldShowVoiceUpgradePrompt ? (
                                         <View style={[styles.voiceLimitCard, { backgroundColor: theme.tint + '16', borderColor: theme.tint + '66' }]}>
@@ -6543,7 +6482,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                             ) : null}
                                         </View>
                                     ) : null}
-                                </LinearGradient>
+                                </View>
                                 {latestAgentVisualMessage?.recommendedDoctors && latestAgentVisualMessage.recommendedDoctors.length > 0 ? (
                                     <>
                                         <Text style={[styles.voiceRobotCardsTitle, { color: theme.textSecondary }]}>
@@ -6571,7 +6510,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                 >
                                                     <View style={styles.agentDoctorCardTop}>
                                                         <Image
-                                                            source={{ uri: getImageUrl(doc.image || doc.profiles?.profile_picture) || 'https://i.pravatar.cc/100?img=11' }}
+                                                            source={avatarSource(getImageUrl(doc.image || doc.profiles?.profile_picture))}
                                                             style={styles.agentDoctorCardImage}
                                                         />
                                                         <View style={styles.agentDoctorCardInfo}>
@@ -6581,19 +6520,19 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                                         {getDoctorDisplayName(doc, { includePrefix: true, fallbackName: 'Specialist' })}
                                                                     </Text>
                                                                     {(doc.is_verified || doc.isVerified) && (
-                                                                        <CheckCircle size={12} color={theme.success} fill={theme.success + '20'} />
+                                                                        <CheckCircle size={12} color={theme.primary} fill={theme.primary + '20'} />
                                                                     )}
                                                                 </View>
-                                                                <View style={[styles.agentDoctorCardRating, { backgroundColor: theme.successLight }]}>
-                                                                    <Star size={10} color={theme.success} fill={theme.success} />
-                                                                    <Text style={[styles.agentDoctorCardRatingText, { color: theme.success }]}>{doc.rating || '4.5'}</Text>
+                                                                <View style={[styles.agentDoctorCardRating, { backgroundColor: theme.primarySoft }]}>
+                                                                    <Star size={10} color={theme.primary} fill={theme.primary} />
+                                                                    <Text style={[styles.agentDoctorCardRatingText, { color: theme.primary }]}>{doc.rating ? formatDoctorRatingLabel(doc.rating) : 'New'}</Text>
                                                                 </View>
                                                             </View>
                                                             <Text style={[styles.agentDoctorCardSpec, { color: theme.textSecondary }]} numberOfLines={1}>
                                                                 {doc.specialization || doc.specialty || 'Specialist'}
                                                             </Text>
                                                             <View style={styles.agentDoctorCardMetaRow}>
-                                                                <Text style={[styles.agentDoctorCardMeta, { color: theme.textSecondary }]}>{doc.experience || '3+ Years'} Exp.</Text>
+                                                                <Text style={[styles.agentDoctorCardMeta, { color: theme.textSecondary }]}>{doc.experience ? `${parseExperienceYears(doc.experience) || doc.experience} yrs exp` : 'Experience not listed'}</Text>
                                                                 <Text style={[styles.agentDoctorCardMeta, { color: theme.textSecondary }]}>{doc.city || 'India'}</Text>
                                                             </View>
                                                         </View>
@@ -6633,7 +6572,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                         onPress={() => handleAgentSlotPress(slot, index, group.doctor ? { ...latestAgentVisualMessage, recommendedDoctors: [group.doctor] } : latestAgentVisualMessage)}
                                                     >
                                                         <View style={styles.agentSlotHeaderRow}>
-                                                            <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>Slot {index + 1}</Text>
+                                                            <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.primarySoft }]}>Slot {index + 1}</Text>
                                                             <Text style={[styles.agentSlotTapHint, { color: theme.textSecondary }]}>Tap to book</Text>
                                                         </View>
                                                         <Text style={[styles.agentSlotLabel, { color: theme.text }]} numberOfLines={2}>{slot.label}</Text>
@@ -6646,16 +6585,16 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 </>
                             ) : (
                                 <>
-                                    <View style={[styles.bottomSheetIntroCard, { backgroundColor: theme.background, borderColor: theme.successBorder, marginTop: 10, marginBottom: 20, marginHorizontal: 2 }]}>
+                                    <View style={[styles.bottomSheetIntroCard, { backgroundColor: theme.background, borderColor: theme.primaryBorder, marginTop: 10, marginBottom: 20, marginHorizontal: 2 }]}>
                                         <View
                                             style={[
                                                 styles.bottomSheetStatusPill,
                                                 {
                                                     backgroundColor: isAgentSending || isListening || isVoiceSessionActive || isVoiceReplyPlaying
-                                                        ? theme.successLight
+                                                        ? theme.primarySoft
                                                         : theme.cardBackground,
                                                     borderColor: isAgentSending || isListening || isVoiceSessionActive || isVoiceReplyPlaying
-                                                        ? theme.successBorder
+                                                        ? theme.primaryBorder
                                                         : theme.borderColor,
                                                 },
                                             ]}
@@ -6674,7 +6613,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                     </View>
 
                                     {isTextAwaitingResponse ? (
-                                        <View style={[styles.voiceRobotStageCard, { backgroundColor: theme.background, borderColor: theme.successBorder, marginBottom: 18 }]}>
+                                        <View style={[styles.voiceRobotStageCard, { backgroundColor: theme.background, borderColor: theme.primaryBorder, marginBottom: 18 }]}>
                                             <View style={styles.voiceRobotTopRow}>
                                                 <View style={styles.voiceRobotAvatarWrap}>
                                                     <View style={[styles.voiceRobotAvatar, { borderColor: doctorVoiceAccent, backgroundColor: theme.cardBackground }]}>
@@ -6836,7 +6775,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                         >
                                                             <View style={styles.agentDoctorCardTop}>
                                                                 <Image
-                                                                    source={{ uri: getImageUrl(doc.image || doc.profiles?.profile_picture) || 'https://i.pravatar.cc/100?img=11' }}
+                                                                    source={avatarSource(getImageUrl(doc.image || doc.profiles?.profile_picture))}
                                                                     style={styles.agentDoctorCardImage}
                                                                 />
                                                                 <View style={styles.agentDoctorCardInfo}>
@@ -6846,19 +6785,19 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                                                 {getDoctorDisplayName(doc, { includePrefix: true, fallbackName: 'Specialist' })}
                                                                             </Text>
                                                                             {doc.is_verified && (
-                                                                                <CheckCircle size={12} color={theme.success} fill={theme.success + '20'} />
+                                                                                <CheckCircle size={12} color={theme.primary} fill={theme.primary + '20'} />
                                                                             )}
                                                                         </View>
-                                                                        <View style={[styles.agentDoctorCardRating, { backgroundColor: theme.successLight }]}>
-                                                                            <Star size={10} color={theme.success} fill={theme.success} />
-                                                                            <Text style={[styles.agentDoctorCardRatingText, { color: theme.success }]}>{doc.rating || '4.5'}</Text>
+                                                                        <View style={[styles.agentDoctorCardRating, { backgroundColor: theme.primarySoft }]}>
+                                                                            <Star size={10} color={theme.primary} fill={theme.primary} />
+                                                                            <Text style={[styles.agentDoctorCardRatingText, { color: theme.primary }]}>{doc.rating ? formatDoctorRatingLabel(doc.rating) : 'New'}</Text>
                                                                         </View>
                                                                     </View>
                                                                     <Text style={[styles.agentDoctorCardSpec, { color: theme.textSecondary }]} numberOfLines={1}>
                                                                         {doc.specialization || doc.specialty || 'Specialist'}
                                                                     </Text>
                                                                     <View style={styles.agentDoctorCardMetaRow}>
-                                                                        <Text style={[styles.agentDoctorCardMeta, { color: theme.textSecondary }]}>{doc.experience || '3+ Years'} Exp.</Text>
+                                                                        <Text style={[styles.agentDoctorCardMeta, { color: theme.textSecondary }]}>{doc.experience ? `${parseExperienceYears(doc.experience) || doc.experience} yrs exp` : 'Experience not listed'}</Text>
                                                                         <Text style={[styles.agentDoctorCardMeta, { color: theme.textSecondary }]}>{doc.city || 'India'}</Text>
                                                                     </View>
                                                                 </View>
@@ -6894,7 +6833,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                                     onPress={() => handleAgentSlotPress(slot, index, group.doctor ? { ...message, recommendedDoctors: [group.doctor] } : message)}
                                                                 >
                                                                     <View style={styles.agentSlotHeaderRow}>
-                                                                        <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.successLight }]}>Slot {index + 1}</Text>
+                                                                        <Text style={[styles.agentSlotIndexPill, { color: theme.tint, backgroundColor: theme.primarySoft }]}>Slot {index + 1}</Text>
                                                                         <Text style={[styles.agentSlotTapHint, { color: theme.textSecondary }]}>Tap to book</Text>
                                                                     </View>
                                                                     <Text style={[styles.agentSlotLabel, { color: theme.text }]} numberOfLines={2}>{slot.label}</Text>
@@ -6923,7 +6862,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             )}
                         </ScrollView>
 
-                        {/* Bottom Voice/Chat Bar */}
+                        {/* Bottom bar: text input, or the upgrade CTA. In voice mode the stage above owns the mic controls. */}
+                        {isChatInputActive || shouldShowVoiceUpgradePrompt ? (
                         <View
                             style={[
                                 styles.bottomSheetVoiceBar,
@@ -7050,6 +6990,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 </View>
                             )}
                         </View>
+                        ) : null}
                     </View>
                 </AgentSheetWrapper>
             </Modal>
@@ -7077,8 +7018,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 <View key={`top-specialist-${String(doctor._id || index)}`} style={[styles.homeSpecialistCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
                                     <TouchableOpacity onPress={() => handleOpenDoctorProfile(resolveDoctorId(doctor))} activeOpacity={0.82}>
                                         <View style={styles.homeSpecialistTopRow}>
-                                            <Image source={{ uri: getImageUrl(doctor.image) || 'https://i.pravatar.cc/100?img=11' }} style={styles.homeSpecialistAvatar} />
-                                            <View style={[styles.homeVerifiedBadge, { backgroundColor: theme.successLight }]}>
+                                            <Image source={avatarSource(getImageUrl(doctor.image))} style={styles.homeSpecialistAvatar} />
+                                            <View style={[styles.homeVerifiedBadge, { backgroundColor: theme.primarySoft }]}>
                                                 <CheckCircle size={10} color={theme.tint} />
                                                 <Text style={[styles.homeVerifiedText, { color: theme.tint }]}>VERIFIED</Text>
                                             </View>
@@ -7090,9 +7031,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                 <Text style={[styles.homeSpecialistFeeCaption, { color: theme.textSecondary }]}>FEE</Text>
                                                 <Text style={[styles.homeSpecialistFee, { color: theme.tint }]}>{feeLabel || 'On request'}</Text>
                                             </View>
-                                            <View style={[styles.homeSpecialistRating, { backgroundColor: theme.successLight }]}>
-                                                <Star size={10} color={theme.success} fill={theme.success} />
-                                                <Text style={[styles.homeSpecialistRatingText, { color: theme.success }]}>{ratingLabel}</Text>
+                                            <View style={[styles.homeSpecialistRating, { backgroundColor: theme.primarySoft }]}>
+                                                <Star size={10} color={theme.primary} fill={theme.primary} />
+                                                <Text style={[styles.homeSpecialistRatingText, { color: theme.primary }]}>{ratingLabel}</Text>
                                             </View>
                                         </View>
                                     </TouchableOpacity>
@@ -7254,7 +7195,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                         ]}
                                                     >
                                                         <Image
-                                                            source={{ uri: getImageUrl(doctor.image) || 'https://i.pravatar.cc/100?img=11' }}
+                                                            source={avatarSource(getImageUrl(doctor.image))}
                                                             style={styles.promoDoctorMiniAvatar}
                                                         />
                                                         <View style={styles.promoDoctorMiniInfo}>
@@ -7311,7 +7252,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 <View style={styles.bookingOverlay}>
                     <View style={styles.bookingContent}>
                         <Animated.View style={[styles.bookingPulseIcon, { transform: [{ scale: bookingPulse }] }]}>
-                            <View style={[styles.bookingIconWrap, { backgroundColor: theme.successLight }]}>
+                            <View style={[styles.bookingIconWrap, { backgroundColor: theme.primarySoft }]}>
                                 <Check size={42} color={theme.tint} strokeWidth={3} />
                             </View>
                         </Animated.View>
@@ -7346,7 +7287,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     <TouchableOpacity
                         style={[
                             styles.departmentFilterChip,
-                            { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                            { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder },
                         ]}
                         onPress={() => setSelectedDepartmentId(null)}
                         activeOpacity={0.82}
@@ -7359,7 +7300,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             )}
 
             {selectedDepartment && recommendedDoctor && (
-                <View style={[styles.recommendedSectionCard, { backgroundColor: theme.cardBackground, borderColor: theme.successBorder }]}>
+                <View style={[styles.recommendedSectionCard, { backgroundColor: theme.cardBackground, borderColor: theme.primaryBorder }]}>
                     <View style={styles.recommendedHeaderRow}>
                         <View>
                             <Text style={[styles.recommendedTitle, { color: theme.text }]}>
@@ -7369,7 +7310,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 Top rated specialist available for consult
                             </Text>
                         </View>
-                        <View style={[styles.recommendedTag, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
+                        <View style={[styles.recommendedTag, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
                             <Text style={[styles.recommendedTagText, { color: theme.tint }]}>All India</Text>
                         </View>
                     </View>
@@ -7381,7 +7322,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             activeOpacity={0.82}
                         >
                             <Image
-                                source={{ uri: getImageUrl(recommendedDoctor.image) || 'https://i.pravatar.cc/100?img=11' }}
+                                source={avatarSource(getImageUrl(recommendedDoctor.image))}
                                 style={styles.recommendedDoctorImage}
                             />
                             <View style={styles.recommendedDoctorInfo}>
@@ -7389,9 +7330,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                     <Text style={[styles.recommendedDoctorName, { color: theme.text }]}>
                                         {getDoctorDisplayName(recommendedDoctor, { fallbackName: 'Specialist' })}
                                     </Text>
-                                    <View style={[styles.ratingBadge, { backgroundColor: theme.successLight }]}>
-                                        <Star size={12} color={theme.success} fill={theme.success} />
-                                        <Text style={[styles.ratingText, { color: theme.success }]}>{recommendedDoctorMetrics.ratingLabel}</Text>
+                                    <View style={[styles.ratingBadge, { backgroundColor: theme.primarySoft }]}>
+                                        <Star size={12} color={theme.primary} fill={theme.primary} />
+                                        <Text style={[styles.ratingText, { color: theme.primary }]}>{recommendedDoctorMetrics.ratingLabel}</Text>
                                     </View>
                                 </View>
                                 <Text style={[styles.recommendedDoctorSpecialty, { color: theme.textSecondary }]}>
@@ -7421,7 +7362,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     </Text>
 
                     <TouchableOpacity
-                        style={[styles.recommendedConsultButton, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}
+                        style={[styles.recommendedConsultButton, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}
                         onPress={() => handleConsultDoctor(resolveDoctorId(recommendedDoctor))}
                         activeOpacity={0.86}
                     >
@@ -7441,7 +7382,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                 onPress={() => handleOpenDoctorProfile(resolveDoctorId(doctor))}
                                                 activeOpacity={0.82}
                                             >
-                                                <Image source={{ uri: getImageUrl(doctor.image) || 'https://i.pravatar.cc/100?img=11' }} style={styles.image} />
+                                                <Image source={avatarSource(getImageUrl(doctor.image))} style={styles.image} />
                                                 <View style={{ flex: 1, marginLeft: 16 }}>
                                                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                                         <View>
@@ -7450,9 +7391,9 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                             </Text>
                                                             <Text style={[styles.specialty, { color: theme.textSecondary }]}>{doctor.specialization}</Text>
                                                         </View>
-                                                        <View style={[styles.ratingBadge, { backgroundColor: theme.successLight }]}>
-                                                            <Star size={12} color={theme.success} fill={theme.success} />
-                                                            <Text style={[styles.ratingText, { color: theme.success }]}>{ratingLabel}</Text>
+                                                        <View style={[styles.ratingBadge, { backgroundColor: theme.primarySoft }]}>
+                                                            <Star size={12} color={theme.primary} fill={theme.primary} />
+                                                            <Text style={[styles.ratingText, { color: theme.primary }]}>{ratingLabel}</Text>
                                                         </View>
                                                     </View>
                                                     <View style={{ flexDirection: 'row', marginTop: 8, alignItems: 'center' }}>
@@ -7544,7 +7485,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 onPress={() => handleOpenDoctorProfile(resolveDoctorId(doctor))}
                                 activeOpacity={0.82}
                             >
-                                <Image source={{ uri: getImageUrl(doctor.image) || 'https://i.pravatar.cc/100?img=11' }} style={styles.image} />
+                                <Image source={avatarSource(getImageUrl(doctor.image))} style={styles.image} />
                                 <View style={styles.nearbyDoctorInfo}>
                                     <View>
                                         <Text numberOfLines={2} style={[styles.nearbyDoctorName, { color: theme.text }]}>
@@ -7567,20 +7508,20 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             </TouchableOpacity>
 
                             <View style={[styles.nearbyDoctorActionRow, isCompactDoctorCard && styles.nearbyDoctorActionRowCompact]}>
-                                <View style={[styles.feePill, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
+                                <View style={[styles.feePill, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
                                     <Text numberOfLines={1} style={[styles.feePillText, isCompactDoctorCard && styles.feePillTextCompact, { color: theme.text }]}>
                                         {feeLabel || 'Fee on request'}
                                     </Text>
                                 </View>
-                                <View style={[styles.ratingBadge, styles.nearbyDoctorActionRating, { backgroundColor: theme.successLight }]}>
-                                    <Star size={12} color={theme.success} fill={theme.success} />
-                                    <Text style={[styles.ratingText, { color: theme.success }]}>{ratingLabel}</Text>
+                                <View style={[styles.ratingBadge, styles.nearbyDoctorActionRating, { backgroundColor: theme.primarySoft }]}>
+                                    <Star size={12} color={theme.primary} fill={theme.primary} />
+                                    <Text style={[styles.ratingText, { color: theme.primary }]}>{ratingLabel}</Text>
                                 </View>
                                 <TouchableOpacity
                                     style={[
                                         styles.consultButton,
                                         isCompactDoctorCard && styles.nearbyConsultButtonCompact,
-                                        { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                                        { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder },
                                     ]}
                                     onPress={() => handleConsultDoctor(resolveDoctorId(doctor))}
                                 >
@@ -7636,7 +7577,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         activeOpacity={1}
                         onPress={() => setShowProPlanModal(false)}
                     />
-                    <View style={[styles.proPlanModalCard, { backgroundColor: theme.cardBackground, borderColor: theme.successBorder }]}>
+                    <View style={[styles.proPlanModalCard, { backgroundColor: theme.cardBackground, borderColor: theme.primaryBorder }]}>
                         <TouchableOpacity
                             style={[styles.proPlanModalClose, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
                             onPress={() => setShowProPlanModal(false)}
@@ -7645,7 +7586,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             <X size={16} color={theme.textSecondary} />
                         </TouchableOpacity>
 
-                        <View style={[styles.proPlanModalBadge, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
+                        <View style={[styles.proPlanModalBadge, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
                             <Star size={12} color={theme.tint} fill={theme.tint} />
                             <Text style={[styles.proPlanModalBadgeText, { color: theme.tint }]}>Pro Access</Text>
                         </View>
@@ -7727,20 +7668,18 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom + 12, 18) }}
                         showsVerticalScrollIndicator={false}
                     >
-                        {filteredConcerns.map((concern) => (
+                        {filteredConcerns.map((concern, concernIndex) => (
                             <TouchableOpacity
                                 key={concern.id}
                                 style={[styles.concernListItem, { borderBottomColor: theme.borderColor }]}
                                 activeOpacity={0.85}
                                 onPress={() => handleSelectConcernFromList(concern.label)}
                             >
-                                <View style={[styles.concernListIcon, { backgroundColor: concern.iconBg }]}>
-                                    {concern.imageSource ? (
-                                        <Image source={concern.imageSource} style={styles.concernListImage} resizeMode="cover" />
-                                    ) : (
-                                        <concern.Icon size={16} color={concern.iconColor} />
-                                    )}
-                                </View>
+                                {specificConcernArt(concern.label, concern.imageSource) ? (
+                                    <ArtBadge source={specificConcernArt(concern.label, concern.imageSource)!} tone={clayToneAt(concernIndex)} size={48} />
+                                ) : (
+                                    <ClayIcon Icon={iconForConcern(concern.label)} tone={clayToneAt(concernIndex)} size={46} />
+                                )}
                                 <View style={styles.concernListTextWrap}>
                                     <Text style={[styles.concernListTitle, { color: theme.text }]}>{getConcernDisplayLabel(concern.label)}</Text>
                                     <Text style={[styles.concernListSubtitle, { color: theme.textSecondary }]}>
@@ -7802,9 +7741,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             activeOpacity={0.85}
                             onPress={() => handleDepartmentSelect(null)}
                         >
-                            <View style={[styles.concernListIcon, { backgroundColor: theme.successLight }]}>
-                                <Stethoscope size={16} color={theme.tint} />
-                            </View>
+                            <ClayIcon Icon={Stethoscope} tone={clayToneAt(0)} size={46} />
                             <View style={styles.concernListTextWrap}>
                                 <Text style={[styles.concernListTitle, { color: theme.text }]}>{t('home.allDepartments')}</Text>
                                 <Text style={[styles.concernListSubtitle, { color: theme.textSecondary }]}>
@@ -7814,7 +7751,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             {!selectedDepartmentId && <Check size={16} color={theme.tint} />}
                         </TouchableOpacity>
 
-                        {filteredDepartments.map((department) => {
+                        {filteredDepartments.map((department, departmentIndex) => {
                             const isSelected = selectedDepartmentId === department.id;
                             const departmentImage = resolveDepartmentImageSource(department.label, department.id);
                             return (
@@ -7824,13 +7761,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                     activeOpacity={0.85}
                                     onPress={() => handleDepartmentSelect(department.id)}
                                 >
-                                    <View style={[styles.concernListIcon, { backgroundColor: theme.cardBackground }]}>
-                                        {departmentImage ? (
-                                            <Image source={departmentImage} style={styles.concernListImage} resizeMode="cover" />
-                                        ) : (
-                                            <department.Icon size={16} color={theme.tint} />
-                                        )}
-                                    </View>
+                                    {departmentImage ? (
+                                        <ArtBadge source={departmentImage} tone={clayToneAt(departmentIndex + 1)} size={48} />
+                                    ) : (
+                                        <ClayIcon Icon={department.Icon} tone={clayToneAt(departmentIndex + 1)} size={46} />
+                                    )}
                                     <View style={styles.concernListTextWrap}>
                                         <Text style={[styles.concernListTitle, { color: theme.text }]}>{department.label}</Text>
                                         <Text style={[styles.concernListSubtitle, { color: theme.textSecondary }]}>
@@ -7912,7 +7847,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                             <TouchableOpacity
                                 style={[
                                     styles.locationQuickButton,
-                                    { borderColor: theme.successBorder, backgroundColor: theme.successLight },
+                                    { borderColor: theme.primaryBorder, backgroundColor: theme.primarySoft },
                                     !locationCity && styles.locationQuickButtonDisabled,
                                 ]}
                                 onPress={handleUseCurrentLocation}
@@ -7951,7 +7886,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                 style={[
                                     styles.cityOptionRow,
                                     { borderColor: theme.borderColor },
-                                    !selectedCity && { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                                    !selectedCity && { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder },
                                 ]}
                                 onPress={() => handleCityFilterPress(null)}
                                 activeOpacity={0.8}
@@ -7970,7 +7905,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                         style={[
                                             styles.cityOptionRow,
                                             { borderColor: theme.borderColor },
-                                            isSelected && { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                                            isSelected && { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder },
                                         ]}
                                         onPress={() => handleCityFilterPress(city)}
                                         activeOpacity={0.8}
@@ -8764,7 +8699,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
     },
     proPlanModalBackdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(3, 13, 10, 0.68)',
     },
     proPlanModalCard: {
@@ -8860,7 +8795,7 @@ const styles = StyleSheet.create({
         paddingBottom: 0,
     },
     modalBackdrop: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(2,8,7,0.62)',
     },
     modalSheet: {
@@ -10140,7 +10075,7 @@ const styles = StyleSheet.create({
     },
     /* ───── Booking Animation Overlay ───── */
     bookingOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(5, 26, 19, 0.94)',
         zIndex: 9999,
         justifyContent: 'center',

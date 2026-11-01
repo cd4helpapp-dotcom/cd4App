@@ -1,3 +1,4 @@
+import { avatarSource } from '../../src/utils/avatar';
 import React from 'react';
 import {
   View,
@@ -581,7 +582,7 @@ export default function PublicProfileScreen() {
               {isCommunityProfileView ? (
                 <View style={styles.fbProfileTop}>
                   <Image
-                    source={{ uri: getImageUrl(profile.profilePicture) || 'https://i.pravatar.cc/300?img=12' }}
+                    source={avatarSource(getImageUrl(profile.profilePicture))}
                     style={styles.fbAvatar}
                   />
                   <View style={styles.fbMetaCol}>
@@ -600,7 +601,7 @@ export default function PublicProfileScreen() {
                 <>
                   <View style={styles.doctorHeroRow}>
                     <Image
-                      source={{ uri: getImageUrl(profile.profilePicture) || 'https://i.pravatar.cc/300?img=12' }}
+                      source={avatarSource(getImageUrl(profile.profilePicture))}
                       style={styles.avatar}
                     />
                     <View style={styles.doctorHeroContent}>
@@ -774,7 +775,7 @@ const styles = StyleSheet.create({
   },
   headerBanner: { height: 146, width: '100%', borderBottomLeftRadius: 24, borderBottomRightRadius: 24, overflow: 'hidden' },
   headerOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },

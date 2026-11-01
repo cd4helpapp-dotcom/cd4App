@@ -96,8 +96,36 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, fallback:
   }
 };
 
+// initializeAuth() and the INITIAL_SESSION auth event both load the profile at app start; share one request
+// instead of running the whole chain twice. Role slugs never change at runtime, so they are cached.
+const inflightProfiles = new Map<string, Promise<User | null>>();
+const roleSlugCache = new Map<string, string | null | undefined>();
+
+const fetchUserProfile = (userId: string, retries = 3): Promise<User | null> => {
+  const existing = inflightProfiles.get(userId);
+  if (existing) return existing;
+  const request = fetchUserProfileUncached(userId, retries).finally(() => inflightProfiles.delete(userId));
+  inflightProfiles.set(userId, request);
+  return request;
+};
+
 // Fetch profile first, then optional relations separately (safer across schema variants).
-const fetchUserProfile = async (userId: string, retries = 3): Promise<User | null> => {
+const fetchUserProfileUncached = async (userId: string, retries = 3): Promise<User | null> => {
+  // Subscription only needs the user id, so it runs alongside the profile request instead of after it.
+  const subscriptionRequest = (async () => {
+    try {
+      const { data: subRows } = await supabase
+        .from('user_subscriptions')
+        .select('id, plan_code, billing_cycle, status, expires_at, next_billing_at, payment_id, amount_paid, currency, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      return Array.isArray(subRows) ? subRows[0] ?? null : null;
+    } catch {
+      return null;
+    }
+  })();
+
   const PROFILE_SELECT = `
     id, first_name, last_name, email, phone_number,
     age, gender, address, weight, blood_pressure, pulse,
@@ -128,29 +156,19 @@ const fetchUserProfile = async (userId: string, retries = 3): Promise<User | nul
         (async (): Promise<User['role']> => {
           try {
             if (!profile.role_id) return 'Patient';
+            if (roleSlugCache.has(profile.role_id)) return normalizeRoleSlug(roleSlugCache.get(profile.role_id));
             const { data: roleRow } = await supabase
               .from('roles')
               .select('slug')
               .eq('id', profile.role_id)
               .single();
+            if (roleRow?.slug) roleSlugCache.set(profile.role_id, roleRow.slug);
             return normalizeRoleSlug(roleRow?.slug);
           } catch {
             return 'Patient';
           }
         })(),
-        (async () => {
-          try {
-            const { data: subRows } = await supabase
-              .from('user_subscriptions')
-              .select('id, plan_code, billing_cycle, status, expires_at, next_billing_at, payment_id, amount_paid, currency, created_at')
-              .eq('user_id', userId)
-              .order('created_at', { ascending: false })
-              .limit(1);
-            return Array.isArray(subRows) ? subRows[0] ?? null : null;
-          } catch {
-            return null;
-          }
-        })(),
+        subscriptionRequest,
       ]);
 
       let mappedSubscription: User['subscription'] | undefined;
@@ -286,12 +304,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       void (async () => {
         if (!isMounted) return;
 
+        // initializeAuth() already handles the starting session; handling this event too re-showed the loader and repeated every request.
+        if (_event === 'INITIAL_SESSION') return;
+
         if (_event === 'PASSWORD_RECOVERY') {
           router.push('/auth/reset-password');
         }
 
-        const isMajorChange = _event === 'INITIAL_SESSION' || _event === 'SIGNED_IN' || _event === 'SIGNED_OUT';
-        const shouldSyncProfile = _event === 'INITIAL_SESSION' || _event === 'SIGNED_IN' || _event === 'USER_UPDATED';
+        const isMajorChange = _event === 'SIGNED_IN' || _event === 'SIGNED_OUT';
+        const shouldSyncProfile = _event === 'SIGNED_IN' || _event === 'USER_UPDATED';
 
         if (isMajorChange) setIsLoading(true);
 

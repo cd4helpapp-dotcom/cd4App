@@ -1,3 +1,4 @@
+import { avatarSource } from '../../src/utils/avatar';
 import React from 'react';
 import {
   Alert,
@@ -19,7 +20,8 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, Clock, Search, Mic } from 'lucide-react-native';
+import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, Clock, Search, Mic, Sparkles, Stethoscope } from 'lucide-react-native';
+import MyAppointmentsList, { AppointmentListItem } from '../../ui/appointments/MyAppointmentsList';
 import Colors from '../../constants/Colors';
 import { useDoctors } from '../../hooks/useDoctor';
 import { getImageUrl } from '../../constants/Config';
@@ -35,6 +37,7 @@ import { useAppLanguage } from '../../context/AppLanguageContext';
 import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 import { useDeferredFocusSync } from '../../hooks/useDeferredFocusSync';
+import { isCityMatch } from '../../src/utils/city';
 
 type Doctor = {
   _id?: string;
@@ -89,20 +92,6 @@ const parseConcernParam = (value: string | string[] | undefined): string => {
     return value[0] || '';
   }
   return value || '';
-};
-
-const isCityMatch = (doctorCity: string | null | undefined, selectedCity: string): boolean => {
-  const doctorValue = normalizeText(doctorCity);
-  const selectedValue = normalizeText(selectedCity);
-  if (!doctorValue || !selectedValue) {
-    return false;
-  }
-
-  return (
-    doctorValue === selectedValue ||
-    doctorValue.includes(selectedValue) ||
-    selectedValue.includes(doctorValue)
-  );
 };
 
 const getConcernKeywords = (concern: string): string[] => {
@@ -217,6 +206,22 @@ const buildCalendarDays = (monthDate: Date): Array<Date | null> => {
 const formatMonthLabel = (value: Date): string =>
   value.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
+// Slot times come from the database as "13:00:00"; patients should read "1:00 PM".
+const formatSlotClock = (value?: string | null): string => {
+  const [h = '0', m = '0'] = String(value || '').split(':');
+  const hours = parseInt(h, 10) || 0;
+  const minutes = parseInt(m, 10) || 0;
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  const h12 = hours % 12 === 0 ? 12 : hours % 12;
+  return `${h12}:${String(minutes).padStart(2, '0')} ${suffix}`;
+};
+
+// "YYYY-MM-DD" parsed as a local date (new Date('2026-11-07') is UTC midnight and can show the previous day).
+const parseSlotDate = (value?: string | null): Date | null => {
+  const [y, m, d] = String(value || '').slice(0, 10).split('-').map(Number);
+  return y && m && d ? new Date(y, m - 1, d) : null;
+};
+
 const showBookingAlert = (title: string, message: string) => {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     window.alert(`${title}\n${message}`);
@@ -254,6 +259,7 @@ export default function AppointmentsScreen() {
     reportId?: string | string[];
     conversationId?: string | string[];
     appointmentType?: string | string[];
+    tab?: string | string[];
   }>();
   const { user } = useAuthContext();
   const concern = parseConcernParam(params.concern);
@@ -279,6 +285,11 @@ export default function AppointmentsScreen() {
   const [appointmentType, setAppointmentType] = React.useState<AppointmentType>('consultation');
   const [autoOpenedDoctorId, setAutoOpenedDoctorId] = React.useState<string | null>(null);
   const [keyboardHeight, setKeyboardHeight] = React.useState(0);
+  // "find" = search doctors and book; "mine" = the patient's own appointments. Booking flows return with tab=mine.
+  const [segment, setSegment] = React.useState<'find' | 'mine'>(parseConcernParam(params.tab) === 'mine' ? 'mine' : 'find');
+  React.useEffect(() => {
+    if (parseConcernParam(params.tab) === 'mine') setSegment('mine');
+  }, [params.tab]);
 
   // Fetch patient's existing appointments to show booked status
   const { data: myAppointments = [], refetch: refetchApts } = useMyAppointments();
@@ -353,7 +364,7 @@ export default function AppointmentsScreen() {
       hideSub.remove();
     };
   }, []);
-  const isDarkTheme = theme.background.toLowerCase() === '#121212' || theme.cardBackground.toLowerCase() === '#1e1e1e';
+  const isDarkTheme = theme.background === Colors.dark.background;
   const skeletonBaseColor = isDarkTheme ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
   const skeletonGlowColor = isDarkTheme ? 'rgba(255,255,255,0.20)' : 'rgba(255,255,255,0.72)';
 
@@ -478,6 +489,42 @@ export default function AppointmentsScreen() {
   }, [doctorsData, language, t]);
 
   const concernKeywords = React.useMemo(() => getConcernKeywords(concern), [concern]);
+
+  const appointmentItems = React.useMemo<AppointmentListItem[]>(() => {
+    const doctorById = new Map<string, Doctor>();
+    doctorsData.forEach((doctor) => {
+      const id = getEntityId(doctor);
+      if (id) doctorById.set(id, doctor);
+    });
+    return (myAppointments as any[]).map((apt) => {
+      const doctorId = typeof apt.doctor === 'string' ? apt.doctor : String(apt.doctor?._id || apt.doctor?.id || '');
+      const doctor = doctorById.get(doctorId);
+      return {
+        id: String(apt._id || apt.id),
+        status: apt.status,
+        appointmentType: apt.appointmentType,
+        date: apt.slot?.date,
+        startTime: apt.slot?.startTime,
+        endTime: apt.slot?.endTime,
+        doctorId,
+        doctorName: doctorNameById[doctorId] || t('appointments.yourDoctor'),
+        specialization: doctor?.specialization || null,
+        city: doctor?.city || null,
+        image: getImageUrl(doctor?.image) || null,
+      };
+    });
+  }, [doctorNameById, doctorsData, myAppointments, t]);
+  const upcomingCount = React.useMemo(
+    () =>
+      appointmentItems.filter((item) => {
+        if (item.status !== 'pending' && item.status !== 'confirmed') return false;
+        const [y, m, d] = String(item.date || '').split('-').map(Number);
+        if (!y) return true;
+        const [hh = 0, mm = 0] = String(item.endTime || item.startTime || '23:59').split(':').map(Number);
+        return new Date(y, m - 1, d, hh, mm).getTime() >= Date.now();
+      }).length,
+    [appointmentItems]
+  );
 
   const filteredDoctors = React.useMemo(() => {
     let candidates = doctorsData;
@@ -823,13 +870,52 @@ export default function AppointmentsScreen() {
   return (
     <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.header}>
-        <Text style={[styles.headerTitle, { color: theme.text }]}>{t('appointments.title')}</Text>
+        <Text style={[styles.headerTitle, { color: theme.text }]}>{segment === 'mine' ? 'My Appointments' : t('appointments.title')}</Text>
         <Text style={[styles.headerSubTitle, { color: theme.textSecondary }]}>
-          {loadingCity
-            ? t('appointments.findingLocation')
-            : t('appointments.showingDoctorsNear', { city: locationCity || t('appointments.selectedCityFallback') })}
+          {segment === 'mine'
+            ? 'Your consultations and bookings'
+            : loadingCity
+              ? t('appointments.findingLocation')
+              : t('appointments.showingDoctorsNear', { city: locationCity || t('appointments.selectedCityFallback') })}
         </Text>
+        <View style={[styles.segmentWrap, { backgroundColor: theme.surfaceMuted }]} accessibilityRole="tablist">
+          {([
+            { key: 'find', label: 'Find a doctor' },
+            { key: 'mine', label: upcomingCount > 0 ? `My appointments · ${upcomingCount}` : 'My appointments' },
+          ] as const).map((option) => {
+            const active = segment === option.key;
+            return (
+              <TouchableOpacity
+                key={option.key}
+                onPress={() => { setOpenDropdown(null); setSegment(option.key); }}
+                activeOpacity={0.85}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                style={[styles.segmentButton, active && { backgroundColor: theme.cardBackground, shadowColor: theme.shadow, shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 }]}
+              >
+                <Text style={{ color: active ? theme.text : theme.textSecondary, fontSize: 13.5, fontWeight: '700' }}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
+
+      {segment === 'mine' ? (
+        <MyAppointmentsList
+          items={appointmentItems}
+          isLoading={showAppointmentsSkeleton}
+          isRefreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          onMessageDoctor={() => router.push('/(tabs)/chat')}
+          onBookAgain={(item) => {
+            const doctor = doctorsData.find((candidate) => getEntityId(candidate) === item.doctorId);
+            if (doctor) openBookingModal(doctor);
+            else setSegment('find');
+          }}
+          onFindDoctor={() => setSegment('find')}
+          bottomPadding={Math.max(insets.bottom + 24, 32)}
+        />
+      ) : (
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -866,28 +952,46 @@ export default function AppointmentsScreen() {
           <TouchableOpacity onPress={() => setOpenDropdown('category')} style={styles.categoryArrowButton} activeOpacity={0.8} accessibilityLabel="View all departments"><ChevronRight size={20} color={theme.tint} strokeWidth={2.5} /></TouchableOpacity>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
-          <TouchableOpacity style={[styles.categoryChip, { backgroundColor: selectedCategory === 'all' ? theme.successLight : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory('all')}>
+          <TouchableOpacity style={[styles.categoryChip, { backgroundColor: selectedCategory === 'all' ? theme.primarySoft : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory('all')}>
             <View style={[styles.categoryIcon, { backgroundColor: theme.cardBackground }]}><CalendarDays size={17} color={theme.tint} /></View>
             <Text style={[styles.categoryChipText, { color: theme.text }]}>All</Text>
           </TouchableOpacity>
           {categoryOptions.slice(0, 8).map((category) => {
             const active = normalizeText(selectedCategory) === normalizeText(category);
-            return <TouchableOpacity key={category} style={[styles.categoryChip, { backgroundColor: active ? theme.successLight : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory(active ? 'all' : category)}>
-              <View style={[styles.categoryIcon, { backgroundColor: active ? theme.cardBackground : (isDarkTheme ? '#26384B' : '#EAF2FB') }]}><MapPin size={17} color={active ? theme.tint : theme.textSecondary} /></View>
+            return <TouchableOpacity key={category} style={[styles.categoryChip, { backgroundColor: active ? theme.primarySoft : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory(active ? 'all' : category)}>
+              <View style={[styles.categoryIcon, { backgroundColor: active ? theme.cardBackground : (isDarkTheme ? '#26384B' : '#EAF2FB') }]}><Stethoscope size={17} color={active ? theme.tint : theme.textSecondary} /></View>
               <Text numberOfLines={1} style={[styles.categoryChipText, { color: theme.text }]}>{category}</Text>
             </TouchableOpacity>;
           })}
         </ScrollView>
 
-        <View style={[styles.triageCard, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
-          <Text style={[styles.triageLabel, { color: theme.tint }]}>{t('appointments.triageResult')}</Text>
-          <Text style={[styles.triageText, { color: theme.text }]}>
-            {t('appointments.triageSummary', { concern: triageConcernLabel, category: triageCategory })}
-          </Text>
-          <TouchableOpacity onPress={handleTriagePress} activeOpacity={0.8}>
-            <Text style={[styles.triageAction, { color: theme.text }]}>{t('appointments.viewDetailedReport')}</Text>
+        {hasConcern ? (
+        <View style={[styles.triageCard, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
+            <Text style={[styles.triageLabel, { color: theme.tint }]}>{t('appointments.triageResult')}</Text>
+            <Text style={[styles.triageText, { color: theme.text }]}>
+              {t('appointments.triageSummary', { concern: triageConcernLabel, category: triageCategory })}
+            </Text>
+            <TouchableOpacity onPress={handleTriagePress} activeOpacity={0.8}>
+              <Text style={[styles.triageAction, { color: theme.text }]}>{t('appointments.viewDetailedReport')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <TouchableOpacity
+            onPress={handleTriagePress}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            style={[styles.triageCard, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder, flexDirection: 'row', alignItems: 'center', gap: 12 }]}
+          >
+            <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: theme.cardBackground, alignItems: 'center', justifyContent: 'center' }}>
+              <Sparkles size={20} color={theme.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.text, fontSize: 15, fontWeight: '700' }}>Not sure who to see?</Text>
+              <Text style={{ color: theme.textSecondary, fontSize: 12.5, marginTop: 2 }}>Describe your symptoms and our AI will suggest the right specialist.</Text>
+            </View>
+            <ChevronRight size={18} color={theme.primary} />
           </TouchableOpacity>
-        </View>
+        )}
 
         <View style={styles.filtersRow}>
           <View style={styles.dropdownWrap}>
@@ -975,7 +1079,7 @@ export default function AppointmentsScreen() {
                   activeOpacity={0.7}
                 >
                   <Image
-                    source={{ uri: getImageUrl(doctor.image) || 'https://i.pravatar.cc/100?img=12' }}
+                    source={avatarSource(getImageUrl(doctor.image))}
                     style={styles.avatar}
                   />
                   <View style={styles.cardMain}>
@@ -983,7 +1087,7 @@ export default function AppointmentsScreen() {
                       <View style={styles.ratingRow}>
                         <Star size={12} color="#F59E0B" fill="#F59E0B" />
                         <Text style={[styles.ratingLabel, { color: theme.textSecondary }]}>
-                          {(doctor.rating || 0).toFixed(1)}
+                          {doctor.rating > 0 ? doctor.rating.toFixed(1) : 'New'}
                         </Text>
                       </View>
                       <Text style={[styles.doctorName, { color: theme.text }]}>
@@ -1011,7 +1115,14 @@ export default function AppointmentsScreen() {
                   </View>
                 </TouchableOpacity>
                 <View style={[styles.footerRow, { backgroundColor: theme.background, borderColor: theme.borderColor }]}>
-                  <View style={styles.nextAvailabilityBlock}>
+                  <TouchableOpacity
+                    style={styles.nextAvailabilityBlock}
+                    activeOpacity={0.8}
+                    disabled={isBooked || !doctorId}
+                    onPress={() => { if (doctorId) openBookingModal({ ...doctor, _id: doctorId }); }}
+                    accessibilityRole="button"
+                    accessibilityLabel={isBooked ? 'Appointment booked' : 'View available slots'}
+                  >
                     <Text style={[styles.nextLabel, { color: theme.textSecondary }]}>
                       {isBooked ? t('appointments.appointmentBooked') : t('appointments.bookAppointment')}
                     </Text>
@@ -1021,7 +1132,7 @@ export default function AppointmentsScreen() {
                     {isBooked && bookedApt?.appointmentType === 'second_opinion' ? (
                       <Text style={[styles.appointmentTypeHint, { color: theme.tint }]}>Second Opinion</Text>
                     ) : null}
-                  </View>
+                  </TouchableOpacity>
                   {isBooked ? (
                     <TouchableOpacity
                       style={[
@@ -1048,23 +1159,18 @@ export default function AppointmentsScreen() {
                     <TouchableOpacity
                       style={[
                         styles.bookButton,
-                        { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                        { backgroundColor: theme.buttonPrimary, borderColor: theme.buttonPrimary },
                       ]}
                       onPress={() => {
                         if (!doctorId) return;
                         openBookingModal({ ...doctor, _id: doctorId });
                       }}
                       disabled={!doctorId}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Book a slot with ${doctor.firstName} ${doctor.lastName}`}
                     >
-                      <Text
-                        style={[
-                          styles.bookButtonText,
-                          { color: theme.tint },
-                        ]}
-                      >
-                        {t('appointments.consultNow')}
-                      </Text>
-                      <CalendarDays size={13} color={theme.tint} style={styles.bookButtonIcon} />
+                      <Text style={[styles.bookButtonText, { color: '#FFFFFF' }]}>Book slot</Text>
+                      <CalendarDays size={13} color="#FFFFFF" style={styles.bookButtonIcon} />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -1105,6 +1211,7 @@ export default function AppointmentsScreen() {
           </View>
         ) : null}
       </ScrollView>
+      )}
 
       <Modal
         visible={openDropdown !== null}
@@ -1168,7 +1275,7 @@ export default function AppointmentsScreen() {
                     style={[
                       styles.filterModalItem,
                       { borderColor: theme.borderColor },
-                      isSelected && { backgroundColor: theme.successLight, borderColor: theme.successBorder },
+                      isSelected && { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder },
                     ]}
                     onPress={() => handleDropdownSelect(option.value)}
                     activeOpacity={0.82}
@@ -1216,11 +1323,15 @@ export default function AppointmentsScreen() {
                 <Text style={[styles.modalTitle, { color: theme.text }]}>{t('appointments.bookAppointment')}</Text>
                 <Text style={[styles.modalSubtitle, { color: theme.textSecondary }]}>
                   {bookingDoctor
-                    ? getLocalizedDoctorName(
-                        { firstName: bookingDoctor.firstName, lastName: bookingDoctor.lastName },
-                        language,
-                        { includePrefix: true, fallbackName: t('appointments.yourDoctor') }
-                      )
+                    ? [
+                        getLocalizedDoctorName(
+                          { firstName: bookingDoctor.firstName, lastName: bookingDoctor.lastName },
+                          language,
+                          { includePrefix: true, fallbackName: t('appointments.yourDoctor') }
+                        ),
+                        String(bookingDoctor.specialization || '').trim() || null,
+                        bookingDoctor.fee ? (String(bookingDoctor.fee).includes('₹') ? String(bookingDoctor.fee) : `₹${bookingDoctor.fee}`) : null,
+                      ].filter(Boolean).join(' · ')
                     : ''}
                 </Text>
               </View>
@@ -1228,8 +1339,6 @@ export default function AppointmentsScreen() {
                 <X size={18} color={theme.textSecondary} />
               </TouchableOpacity>
             </View>
-
-            <Text style={[styles.timeTitle, { color: theme.textSecondary }]}>{t('appointments.availableSlots')}</Text>
 
             <View style={styles.appointmentTypeSection}>
               <Text style={[styles.appointmentTypeLabel, { color: theme.textSecondary }]}>Type of appointment</Text>
@@ -1249,6 +1358,7 @@ export default function AppointmentsScreen() {
               {appointmentType === 'second_opinion' && <Text style={[styles.appointmentTypeHint, { color: theme.textSecondary }]}>Get an expert review of an existing diagnosis or treatment plan.</Text>}
             </View>
 
+            <Text style={[styles.timeTitle, { color: theme.textSecondary }]}>{t('appointments.availableSlots')}</Text>
             {loadingSlots ? (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={theme.tint} />
@@ -1270,41 +1380,57 @@ export default function AppointmentsScreen() {
               </View>
             ) : (
               <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-                {availableSlots.map((slot: Slot) => {
-                  const dateObj = new Date(slot.date);
-                  const formattedDate = dateObj.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
-                  const slotId = getEntityId(slot as unknown as IdCarrier);
-                  const selectedSlotId = getEntityId(selectedSlot as unknown as IdCarrier);
-                  const isSelected = Boolean(slotId) && selectedSlotId === slotId;
-                  return (
-                    <TouchableOpacity
-                      key={slotId || `${slot.date}-${slot.startTime}-${slot.endTime}`}
-                      style={[
-                        styles.slotItem,
-                        {
-                          backgroundColor: isSelected ? theme.tint + '18' : theme.background,
-                          borderColor: isSelected ? theme.tint : theme.borderColor,
-                        },
-                      ]}
-                      onPress={() => setSelectedSlot(slot)}
-                      activeOpacity={0.82}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-                          <Clock size={14} color={isSelected ? theme.tint : theme.textSecondary} style={{ marginRight: 6 }} />
-                          <Text style={[{ fontSize: 15, fontWeight: '700' }, { color: isSelected ? theme.tint : theme.text }]}>
-                            {slot.startTime} – {slot.endTime}
+                {(() => {
+                  const todayKey = new Date().toDateString();
+                  const tomorrow = new Date();
+                  tomorrow.setDate(tomorrow.getDate() + 1);
+                  let lastDay = '';
+                  return availableSlots.map((slot: Slot) => {
+                    const dateObj = parseSlotDate(slot.date);
+                    const dayLabel = !dateObj
+                      ? 'Date pending'
+                      : dateObj.toDateString() === todayKey
+                        ? 'Today'
+                        : dateObj.toDateString() === tomorrow.toDateString()
+                          ? 'Tomorrow'
+                          : dateObj.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+                    const showHeader = dayLabel !== lastDay;
+                    lastDay = dayLabel;
+                    const slotId = getEntityId(slot as unknown as IdCarrier);
+                    const selectedSlotId = getEntityId(selectedSlot as unknown as IdCarrier);
+                    const isSelected = Boolean(slotId) && selectedSlotId === slotId;
+                    return (
+                      <React.Fragment key={slotId || `${slot.date}-${slot.startTime}-${slot.endTime}`}>
+                        {showHeader ? (
+                          <Text style={{ color: theme.textSecondary, fontSize: 12, fontWeight: '800', letterSpacing: 0.4, marginTop: 6, marginBottom: 8 }}>
+                            {dayLabel.toUpperCase()}
                           </Text>
-                        </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                          <CalendarDays size={12} color={theme.textSecondary} style={{ marginRight: 6 }} />
-                          <Text style={{ fontSize: 13, color: theme.textSecondary }}>{formattedDate}</Text>
-                        </View>
-                      </View>
-                      {isSelected && <Check size={18} color={theme.tint} />}
-                    </TouchableOpacity>
-                  );
-                })}
+                        ) : null}
+                        <TouchableOpacity
+                          style={[
+                            styles.slotItem,
+                            {
+                              backgroundColor: isSelected ? theme.primarySoft : theme.background,
+                              borderColor: isSelected ? theme.primary : theme.borderColor,
+                            },
+                          ]}
+                          onPress={() => setSelectedSlot(slot)}
+                          activeOpacity={0.82}
+                          accessibilityRole="radio"
+                          accessibilityState={{ selected: isSelected }}
+                        >
+                          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                            <Clock size={15} color={isSelected ? theme.primary : theme.textSecondary} style={{ marginRight: 8 }} />
+                            <Text style={{ fontSize: 15, fontWeight: '700', color: isSelected ? theme.primary : theme.text }}>
+                              {formatSlotClock(slot.startTime)} – {formatSlotClock(slot.endTime)}
+                            </Text>
+                          </View>
+                          {isSelected && <Check size={18} color={theme.primary} />}
+                        </TouchableOpacity>
+                      </React.Fragment>
+                    );
+                  });
+                })()}
               </ScrollView>
             )}
 
@@ -1312,16 +1438,16 @@ export default function AppointmentsScreen() {
               style={[
                 styles.confirmButton,
                 {
-                  backgroundColor: theme.successLight,
-                  borderColor: theme.successBorder,
-                  opacity: selectedSlot ? 1 : 0.65,
+                  backgroundColor: selectedSlot ? theme.buttonPrimary : theme.surfaceMuted,
+                  borderColor: selectedSlot ? theme.buttonPrimary : theme.borderColor,
+                  opacity: 1,
                 },
               ]}
               onPress={handleBookSlotConfirm}
               disabled={!selectedSlot}
               activeOpacity={0.85}
             >
-              <Text style={[styles.confirmButtonText, { color: theme.tint }]}>{t('appointments.confirmAndBookSlot')}</Text>
+              <Text style={[styles.confirmButtonText, { color: selectedSlot ? '#FFFFFF' : theme.textTertiary }]}>{t('appointments.confirmAndBookSlot')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1331,6 +1457,8 @@ export default function AppointmentsScreen() {
 }
 
 const styles = StyleSheet.create({
+  segmentWrap: { flexDirection: 'row', borderRadius: 12, padding: 4, marginTop: 12 },
+  segmentButton: { flex: 1, height: 38, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
   headerTitle: { fontSize: 28, fontWeight: '800' },
@@ -1514,7 +1642,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   filterModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(6,12,10,0.48)',
   },
   filterModalSheet: {
@@ -1586,7 +1714,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(6,12,10,0.5)',
   },
   modalCard: {

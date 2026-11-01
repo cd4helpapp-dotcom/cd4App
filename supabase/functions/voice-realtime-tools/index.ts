@@ -66,6 +66,27 @@ Deno.serve(async (request: Request) => {
       if (doctorError || !doctor) return json({ success: false, message: "Selected doctor was not found" }, 400)
       if (slotError || !slot || slot.is_booked) return json({ success: false, message: "That slot is no longer available" }, 400)
 
+      const { data: recentBooking } = await admin
+        .from("appointments")
+        .select("created_at")
+        .eq("patient_id", userData.user.id)
+        .eq("doctor_id", doctorId)
+        .in("status", ["pending", "confirmed", "completed"])
+        .gte("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (recentBooking?.created_at) {
+        const nextDate = new Date(new Date(recentBooking.created_at).getTime() + 30 * 24 * 60 * 60 * 1000)
+          .toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" })
+        return json({
+          success: true,
+          result: {
+            status: "booking_cooldown",
+            message: `The patient already booked this doctor in the last 30 days and can book again on ${nextDate}. Tell them this kindly and offer another doctor.`,
+          },
+        })
+      }
       const doctorName = `${doctor.first_name || ""} ${doctor.last_name || ""}`.trim() || "your doctor"
       const slotLabel = `${slot.date || "Selected date"} • ${slot.start_time || ""}${slot.end_time ? ` - ${slot.end_time}` : ""}`
       return json({
@@ -109,8 +130,16 @@ Deno.serve(async (request: Request) => {
         if (searchTerm) query = query.or(`first_name.ilike.%${searchTerm}%,last_name.ilike.%${searchTerm}%`)
         return query
       }
+      // ilike %patna% also matches "Visakhapatnam"; keep only whole-word city matches.
+      const sameCity = (doctorCity: unknown) => {
+        const tokens = (value: unknown) => String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean)
+        const a = tokens(doctorCity)
+        const b = tokens(city)
+        const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a]
+        return shorter.length > 0 && shorter.every((token) => longer.includes(token))
+      }
       let doctorResult = await findDoctors(city)
-      let doctors = doctorResult.data || []
+      let doctors = (doctorResult.data || []).filter((doctor: any) => !city || sameCity(doctor.city))
       if (doctors.length === 0 && city) {
         doctorResult = await findDoctors("")
         doctors = doctorResult.data || []
@@ -146,9 +175,14 @@ Deno.serve(async (request: Request) => {
           .gte("date", today)
           .order("date", { ascending: true })
           .order("start_time", { ascending: true })
-          .limit(12)
+          .limit(40)
         const doctorById = new Map(doctorRecommendations.map((doctor: any) => [String(doctor.id), doctor]))
-        bookingSlotOptions = (slots || []).map((slot: any) => {
+        // The query filters by date only; drop slots earlier today (clinic time is IST) and anything starting in <10 min.
+        const bookableFromMs = Date.now() + 10 * 60 * 1000
+        const upcomingSlots = (slots || [])
+          .filter((slot: any) => new Date(`${slot.date}T${String(slot.start_time || "00:00:00").slice(0, 8)}+05:30`).getTime() >= bookableFromMs)
+          .slice(0, 12)
+        bookingSlotOptions = upcomingSlots.map((slot: any) => {
           const doctor = doctorById.get(String(slot.doctor_id)) || {}
           const doctorLabel = `${doctor.firstName || ""} ${doctor.lastName || ""}`.trim() || "Doctor"
           const timeLabel = `${slot.date || ""}${slot.start_time ? ` • ${String(slot.start_time).slice(0, 5)}` : ""}${slot.end_time ? `–${String(slot.end_time).slice(0, 5)}` : ""}`
@@ -185,7 +219,7 @@ Deno.serve(async (request: Request) => {
 
     const response = await fetch(`${url}/functions/v1/chat-ai`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, apikey: anonKey, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${token}`, apikey: anonKey, "Content-Type": "application/json", "x-internal-key": serviceKey },
       body: JSON.stringify({ message: `Please find verified doctors for ${args.concern || "this health concern"}.`, concern: args.concern || "General health", showDoctors: true, searchAreaCity: args.city || null, locationCity: args.city || null, replyInVoice: true }),
     })
     const payload = await response.json().catch(() => ({}))

@@ -115,7 +115,7 @@ export const usePushNotifications = () => {
     const notificationListener = useRef<Notifications.Subscription | null>(null);
     const responseListener = useRef<Notifications.Subscription | null>(null);
     const handledResponseKeysRef = useRef<Set<string>>(new Set());
-    const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+    const appStateRef = useRef<AppStateStatus>((AppState.currentState ?? 'active') as AppStateStatus);
     const syncInFlightRef = useRef(false);
     const bootSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastTokenSyncAtRef = useRef(0);
@@ -178,6 +178,8 @@ export const usePushNotifications = () => {
     };
 
     const configureNotificationCategories = async () => {
+        // Notification categories are native-only (no-op API on web).
+        if (Platform.OS === 'web') return;
         try {
             await Notifications.setNotificationCategoryAsync('incoming_call', [
                 {
@@ -363,8 +365,8 @@ export const usePushNotifications = () => {
             void handleNotificationResponse(response);
         });
 
-        // Handles notification tap/actions that launched app from terminated state.
-        void Notifications.getLastNotificationResponseAsync().then(async (lastResponse) => {
+        // Handles notification tap/actions that launched app from terminated state (native only).
+        if (Platform.OS !== 'web') void Notifications.getLastNotificationResponseAsync().then(async (lastResponse) => {
             if (!lastResponse) return;
             await handleNotificationResponse(lastResponse);
             const clearLastResponseAsync = (Notifications as any).clearLastNotificationResponseAsync;

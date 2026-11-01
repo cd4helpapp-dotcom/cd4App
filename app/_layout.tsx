@@ -1,6 +1,7 @@
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState, useCallback } from 'react';
-import { InteractionManager, View } from 'react-native';
+import { View } from 'react-native';
+import { runAfterInteractions } from '../src/utils/afterInteractions';
 import { StatusBar } from 'expo-status-bar';
 import { Stack, useRouter } from 'expo-router';
 import AnimatedSplash from '../ui/AnimatedSplash';
@@ -49,7 +50,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (!appReady || !splashAnimationFinished) return;
 
-    const task = InteractionManager.runAfterInteractions(() => {
+    const task = runAfterInteractions(() => {
       setHeavyProvidersReady(true);
     });
 

@@ -336,7 +336,7 @@ export default function NotificationsScreen() {
                     refreshControl={
                         <RefreshControl
                             refreshing={false}
-                            onRefresh={refetch}
+                            onRefresh={() => { void refetch(); }}
                             tintColor={theme.tint}
                             colors={[theme.tint]}
                         />

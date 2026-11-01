@@ -66,7 +66,7 @@ export default function HospitalDoctorsScreen() {
         <ScrollView
             style={[styles.container, { backgroundColor: theme.background }]}
             contentContainerStyle={[styles.content, { paddingTop: insets.top + 20 }]}
-            refreshControl={<RefreshControl refreshing={doctorsQuery.isRefetching} onRefresh={doctorsQuery.refetch} tintColor={theme.tint} />}
+            refreshControl={<RefreshControl refreshing={doctorsQuery.isRefetching} onRefresh={() => { void doctorsQuery.refetch(); }} tintColor={theme.tint} />}
             keyboardShouldPersistTaps="handled"
         >
             <View style={styles.headerRow}>
@@ -161,7 +161,7 @@ export default function HospitalDoctorsScreen() {
             ) : doctors.length ? (
                 doctors.map((doctor) => (
                     <View key={doctor.id} style={[styles.doctorCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                        <View style={[styles.avatar, { backgroundColor: theme.successLight }]}>
+                        <View style={[styles.avatar, { backgroundColor: theme.primarySoft }]}>
                             <Stethoscope size={18} color={theme.tint} />
                         </View>
                         <View style={{ flex: 1 }}>

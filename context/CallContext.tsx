@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, AppStateStatus, PermissionsAndroid, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from './AuthContext';
@@ -167,14 +167,14 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [isAudioMuted, setIsAudioMuted] = useState(false);
     const [isVideoMuted, setIsVideoMuted] = useState(false);
     const [isSpeakerOn, setIsSpeakerOn] = useState(false);
-    const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
+    const [appState, setAppState] = useState<AppStateStatus>((AppState.currentState ?? 'active') as AppStateStatus);
 
     const engineRef = useRef<any>(null);
     const roomChannelRef = useRef<any>(null);
     const ringingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const statusResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const ongoingNotificationIdRef = useRef<string | null>(null);
-    const incomingRingtoneSoundRef = useRef<Audio.Sound | null>(null);
+    const incomingRingtoneSoundRef = useRef<AudioPlayer | null>(null);
     const isIncomingRingtonePlayingRef = useRef(false);
     const isJoiningChannelRef = useRef(false);
 
@@ -243,12 +243,12 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!activeSound) return;
 
         try {
-            await activeSound.stopAsync();
+            activeSound.pause();
         } catch {
             // best-effort
         }
         try {
-            await activeSound.unloadAsync();
+            activeSound.remove();
         } catch {
             // best-effort
         }
@@ -260,24 +260,18 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isIncomingRingtonePlayingRef.current = true;
 
         try {
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
-                interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-                shouldDuckAndroid: false,
-                interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-                playThroughEarpieceAndroid: false,
-                staysActiveInBackground: true,
+            await setAudioModeAsync({
+                allowsRecording: false,
+                playsInSilentMode: true,
+                interruptionMode: 'doNotMix',
+                shouldRouteThroughEarpiece: false,
+                shouldPlayInBackground: true,
             });
 
-            const { sound } = await Audio.Sound.createAsync(
-                require('../assets/ringtone.wav'),
-                {
-                    shouldPlay: true,
-                    isLooping: true,
-                    volume: 1,
-                }
-            );
+            const sound = createAudioPlayer(require('../assets/ringtone.wav'));
+            sound.loop = true;
+            sound.volume = 1;
+            sound.play();
 
             incomingRingtoneSoundRef.current = sound;
         } catch (error) {
