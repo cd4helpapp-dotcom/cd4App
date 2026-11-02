@@ -3,7 +3,7 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import Toast from 'react-native-toast-message';
-import { Banknote, Bell, Building, ChevronRight, Database, Globe, HelpCircle, LogOut, Receipt, SunMoon, UserCheck } from 'lucide-react-native';
+import { PenLine, Banknote, Bell, Building, ChevronRight, Database, Globe, HelpCircle, LogOut, Receipt, SunMoon, UserCheck } from 'lucide-react-native';
 import { useAuthContext } from '../../context/AuthContext';
 import { useLogout } from '../../hooks/useAuth';
 import { useThemePreference } from '../../context/ThemePreferenceContext';
@@ -98,6 +98,7 @@ export default function DoctorSettings() {
                         <SettingsRow icon={UserCheck} label={t('settings.profileCredentials')} onPress={() => router.push('/doctor/profile-details')} />
                         <SettingsRow icon={Banknote} label={t('settings.consultationFees')} onPress={() => router.push('/doctor/profile/fees')} />
                         <SettingsRow icon={Building} label={t('settings.clinicDetails')} onPress={() => router.push('/doctor/profile/clinic')} />
+                        <SettingsRow icon={PenLine} label="Signature & Stamp" onPress={() => router.push('/doctor/profile/signature')} />
                         <SettingsRow icon={Receipt} label="Transactions" onPress={() => router.push('/doctor/transactions')} />
                     </SettingsGroup>
 
@@ -132,7 +133,7 @@ export default function DoctorSettings() {
                         )}
                     </Pressable>
 
-                    <Text style={[Typography.caption, styles.version, { color: theme.textTertiary }]}>CD4 Health · Version {appVersion}</Text>
+                    <Text style={[Typography.caption, styles.version, { color: theme.textTertiary }]}>CD4 · Version {appVersion}</Text>
                 </View>
             </ScrollView>
         </DoctorSafeScreen>

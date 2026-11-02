@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthContext } from '../context/AuthContext';
 import { usePatientPaymentHistory } from '../hooks/useAdmin';
 import Colors from '../constants/Colors';
+import { useAppLanguage } from '../context/AppLanguageContext';
 
 const money = (amount: number, currency: string) => `${currency === 'INR' ? '₹' : currency} ${Math.round(amount).toLocaleString('en-IN')}`;
 
@@ -12,10 +13,15 @@ export default function PaymentHistoryScreen() {
   const { user } = useAuthContext();
   const { data = [], isLoading, error } = usePatientPaymentHistory(user?.id);
   const theme = Colors[useColorScheme() ?? 'light'];
+  const { t } = useAppLanguage();
+  const statusLabel = (status: string) =>
+    status === 'paid' ? t('payment.statusPaid') : status === 'refunded' ? t('payment.statusRefunded') : status === 'failed' ? t('payment.statusFailed') : status;
+  const formatWhen = (value: string) =>
+    new Date(value).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
   return <SafeAreaView style={[styles.safe, { backgroundColor: theme.background }]}><ScrollView contentContainerStyle={styles.content}>
-    <Text style={[styles.title, { color: theme.text }]}>Payment history</Text>
-    <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Your consultation and subscription receipts</Text>
-    {isLoading ? <ActivityIndicator color={theme.tint} style={styles.loader} /> : error ? <Text style={[styles.empty, { color: theme.textSecondary }]}>Could not load payment history.</Text> : data.length === 0 ? <Text style={[styles.empty, { color: theme.textSecondary }]}>No payments found yet.</Text> : data.map((item) => <View key={`${item.kind}-${item.id}`} style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}><View style={styles.row}><View style={[styles.icon, { backgroundColor: theme.tint + '16' }]}><Ionicons name={item.kind === 'subscription' ? 'card-outline' : 'medkit-outline'} size={19} color={theme.tint} /></View><View style={styles.main}><Text style={[styles.kind, { color: theme.text }]}>{item.kind === 'subscription' ? 'Pro subscription' : 'Doctor consultation'}</Text><Text style={[styles.date, { color: theme.textSecondary }]}>{new Date(item.paidAt || item.createdAt).toLocaleString('en-IN')}</Text></View><Text style={[styles.amount, { color: theme.text }]}>{money(item.amount, item.currency)}</Text></View><View style={styles.meta}><Text style={[styles.status, { color: item.status === 'paid' ? theme.tint : theme.textSecondary }]}>{item.status.toUpperCase()}</Text><Text style={[styles.id, { color: theme.textSecondary }]}>{item.paymentId || item.orderId || 'Payment pending'}</Text></View></View>)}
+    <Text style={[styles.title, { color: theme.text }]}>{t('payment.historyTitle')}</Text>
+    <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{t('payment.historySubtitle')}</Text>
+    {isLoading ? <ActivityIndicator color={theme.tint} style={styles.loader} /> : error ? <Text style={[styles.empty, { color: theme.textSecondary }]}>{t('payment.historyError')}</Text> : data.length === 0 ? <Text style={[styles.empty, { color: theme.textSecondary }]}>{t('payment.historyEmpty')}</Text> : data.map((item) => <View key={`${item.kind}-${item.id}`} style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}><View style={styles.row}><View style={[styles.icon, { backgroundColor: theme.tint + '16' }]}><Ionicons name={item.kind === 'subscription' ? 'card-outline' : 'medkit-outline'} size={19} color={theme.tint} /></View><View style={styles.main}><Text style={[styles.kind, { color: theme.text }]}>{item.kind === 'subscription' ? t('payment.kindPro') : t('payment.kindDoctor')}</Text><Text style={[styles.date, { color: theme.textSecondary }]}>{formatWhen(item.paidAt || item.createdAt)}</Text></View><Text style={[styles.amount, { color: theme.text }]}>{money(item.amount, item.currency)}</Text></View><View style={styles.meta}><Text style={[styles.status, { color: item.status === 'paid' ? theme.tint : theme.textSecondary }]}>{statusLabel(item.status)}</Text><Text style={[styles.id, { color: theme.textSecondary }]}>{item.paymentId || item.orderId}</Text></View></View>)}
   </ScrollView></SafeAreaView>;
 }
 

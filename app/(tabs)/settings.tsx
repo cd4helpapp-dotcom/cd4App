@@ -174,7 +174,7 @@ export default function SettingsScreen() {
           )}
         </Pressable>
 
-        <Text style={[Typography.caption, styles.version, { color: theme.textTertiary }]}>CD4 Health · Version {appVersion}</Text>
+        <Text style={[Typography.caption, styles.version, { color: theme.textTertiary }]}>CD4 · Version {appVersion}</Text>
       </View>
     </ScrollView>
   );

@@ -91,5 +91,26 @@ eq('highlights: pipe format (live data)', [
   { name: 'Creatinine/eGFR', value: '1.03', unit: 'mg/dL', reference: '0.67 – 1.17', flag: 'normal' },
 ]);
 
+eq('title: AI title wins over the file name', t.getReportTitle({ ...base, fileName: 'x.pdf', aiStructured: { report_title: 'Full Body Checkup' } }), 'Full Body Checkup');
+eq('title: copy and numbers removed from the file name', t.getReportTitle({ ...base, fileName: '1793524869328_1786448201674_Lab_Report_copy.pdf' }), 'Lab Report');
+eq('reference: not printed is hidden', t.formatReference('not printed'), '');
+eq('headline: stored one', t.getHeadline({ ...base, aiStructured: { headline: 'Your cholesterol is high.' } }), 'Your cholesterol is high.');
+eq('headline: older report uses first sentence, decimals intact', t.getHeadline({ ...base, aiSummary: 'HbA1c is 5.8% today. Kidney tests are fine.', aiStructured: {} }), 'HbA1c is 5.8% today.');
+eq('points: older report uses the rest', t.getPlainPoints({ ...base, aiSummary: 'HbA1c is 5.8% today. Kidney tests are fine.', aiStructured: {} }), [{ title: '', detail: 'Kidney tests are fine.', tone: 'neutral' }]);
+eq('points: stored ones', t.getPlainPoints({ ...base, aiStructured: { plain_points: [{ title: 'Cholesterol', detail: 'High.', tone: 'concern' }] } }), [{ title: 'Cholesterol', detail: 'High.', tone: 'concern' }]);
+eq('kind: OPD note with injections stays a note', t.getReportKind({ ...base, reportType: 'clinical_note', aiStructured: { medications: ['Inj Diclo'] } }), 'note');
+eq('kind: patient chose prescription upload', t.getReportKind({ ...base, source: 'prescription_upload', reportType: 'clinical_note' }), 'prescription');
+eq('highlight: blood pressure keeps both numbers', t.parseHighlightLine('Blood pressure: 110/70 mmHg | reference not printed | not marked abnormal')?.value, '110/70');
+eq('meter: middle of range', t.getRangeMeter({ value: '15', reference: '13 – 17' }), { position: 0.5, normalStart: 0.25, normalEnd: 0.75 });
+eq('meter: above the upper limit', t.getRangeMeter({ value: '180.12', reference: 'below 100' })?.position, 0.97);
+eq('meter: inside "above" range', t.getRangeMeter({ value: '60', reference: 'above 40' }), { position: 0.6, normalStart: 0.4, normalEnd: 1 });
+eq('meter: no usable range', t.getRangeMeter({ value: '110/70', reference: '' }), null);
+eq('counts', t.getValueCounts({ ...base, aiStructured: { parameter_highlights: ['Hb / 14 / g/dL / reference 13-17 / normal', 'LDL / 180 / mg/dL / reference <100 / high'] } }), { normal: 1, attention: 1 });
+eq('unread items skip empty ones', t.getUnreadItems({ ...base, aiStructured: { missing_sections: ['None', 'Date on stamp'] } }), ['Date on stamp']);
+const transcript = t.getDocumentTranscript({ ...base, aiStructured: { document_transcript: 'PRINTED DETAILS: City Hospital\nNOTES:\n- BP 120/80 -> Blood pressure 120/80\n- Inj Diclo 1 IM stat → Diclofenac injection, given at once\nCROSSED OUT: T. PCM 500 SOS\nCOULD NOT READ: None' } });
+eq('transcript: notes split into written and meaning', transcript.notes[1], { written: 'Inj Diclo 1 IM stat', meaning: 'Diclofenac injection, given at once' });
+eq('transcript: crossed out kept apart', transcript.crossedOut, ['T. PCM 500 SOS']);
+eq('transcript: missing on older reports', t.getDocumentTranscript({ ...base, aiStructured: {} }), null);
+
 console.log(failures ? `\n${failures} test(s) failed` : '\nAll report helper tests passed');
 process.exit(failures ? 1 : 0);

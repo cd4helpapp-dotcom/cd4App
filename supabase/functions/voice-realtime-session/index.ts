@@ -4,6 +4,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { buildClinicalContext } from "../_shared/clinicalBrain.ts"
 import { getAiQuota, recordAiUsage, voiceQuotaBlockedReply } from "../_shared/aiUsage.ts"
+import { CD4_AI_PERSONA, GROUNDING_RULES } from "../_shared/agent/persona.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +28,10 @@ const clip = (value: unknown, max: number) => {
 const realtimeModel = Deno.env.get("OPENAI_REALTIME_MODEL")?.trim() || "gpt-realtime-2.1-mini"
 const realtimeTranscriptionModel = Deno.env.get("OPENAI_REALTIME_TRANSCRIBE_MODEL")?.trim() || "gpt-realtime-whisper"
 
+// Tells the speech-to-text model which words to expect. Without it, a short "sir" or "sar" (head) in Hindi can come out as "serum".
+// The transcript matters: it is shown on screen and goes into the doctor's summary.
+const TRANSCRIPTION_HINT = "Health conversation in Hindi, English or Hinglish. sir, sar, sir dard, sar dard, head, headache, pet dard, stomach pain, seene mein dard, kamar dard, bukhar, fever, khansi, cough, zukaam, ulti, dast, chakkar, saans, sugar, BP, thyroid, dawai, tablet, doctor, report."
+
 const buildInstructions = (body: any) => {
   const isHospitalMode = body?.mode === "hospital"
   const hospitalContext = isHospitalMode ? `
@@ -44,7 +49,17 @@ HOSPITAL INTAKE MODE:
 ` : ""
 
   return `
-You are CD4 Health Assistant, a warm, clinically careful medical voice assistant.
+${CD4_AI_PERSONA}
+This is a voice conversation, so everything you say is spoken aloud.
+HEARING THE PATIENT:
+- Speech recognition makes mistakes, especially with short words and noise. Patients mix Hindi and English, and "sir" or "sar" usually means head. Choose the everyday meaning that fits a health conversation. Never assume a rare medical word such as "serum" from a short or unclear phrase.
+- When the patient first states a symptom, say it back in your own plain words as part of your reply ("Aapke sir mein dard hai, sahi?"), so a mishearing gets corrected early.
+- If you could not understand, or there is noise, ask them once to repeat it. Do not guess a symptom.
+ANSWERING FROM CD4'S DATA:
+- Questions about how CD4 works (booking, payment, refunds, cancelling, reports, privacy): call lookup_cd4_information and answer from the result.
+- "When is my appointment?" or similar: call get_my_appointments. "What does my report say?" or similar: call search_my_reports.
+- Tool results only ever cover this signed-in person. Never say you can see anyone else's records.
+${GROUNDING_RULES}
 ${buildClinicalContext({ concern: body?.concern, clinicalSummary: body?.clinicalSummary, history: body?.history })}
 ${hospitalContext}
 IDENTITY AND MEDICAL LANGUAGE:
@@ -80,7 +95,8 @@ VOICE DELIVERY:
 - MEDICINE INFORMATION: You may explain what a medicine is for, the standard labelled adult dose and the daily maximum, common side effects, interactions and who should avoid it. When the patient says they already took something, check the total amount and the timing before reassuring them, and treat a possible overdose as urgent. Do not tell a specific patient to start, stop or change a prescribed medicine, and do not set doses for children, pregnancy or kidney/liver disease; tell them to confirm with their doctor or pharmacist.
 - BOOKING RESULTS: If a booking tool returns status "booking_cooldown", say kindly that they already booked this doctor in the last 30 days and cannot book again yet, give the date from the message, and offer another doctor. If it returns that a slot is unavailable, apologise briefly and offer another slot.
 - Before booking, say: "Would you like me to confirm this exact doctor and slot?" Only after a clear yes/haan/confirm for that specific slot, call book_appointment immediately with the exact doctorId and slotId from the selected slot and confirmed=true. Do not ask a second confirmation, do not repeat the doctor card, and do not merely say that you will check. The tool call is the only way to open the secure payment step. Never say the appointment is booked until payment succeeds.
-- When the patient asks to find a doctor, see available slots, or book a consultation, call search_verified_doctors immediately. Do not answer that slots are unavailable without calling the tool first. For a generic request, show verified doctors first and say that slots will be shown after the patient chooses a doctor; do not present unattributed slots.
+- When the patient asks to find a doctor, see available slots, or book a consultation, call search_verified_doctors immediately. Do not answer that slots are unavailable without calling the tool first. The result lists doctors with their next open slot: say each doctor's name, speciality, fee and next slot, then ask which they would like. Always name the doctor with a slot, never an unattributed time. If the result has searchNote, say it plainly first.
+- When speaking about results, talk like a helpful clinic receptionist. Never mention the system, a search, a database, tools, filters or scope, and never guess why something was not found. Any city in India is a valid request: pass exactly the city the patient says, even if you just asked about something else.
 - If the patient names a specific doctor, pass the name in the doctorName field (for example, "Dr Nitesh"), keep concern as the medical concern or "General health", and show only that doctor's exact live slots under that doctor's name.
 - Infer the likely department from the patient's active symptom instead of asking the patient to choose one. For ordinary fever, fever with mild cough/body aches, or an unclear general illness, route to General Physician/General Medicine. This is only a booking-routing suggestion, not a diagnosis. Keep the actual symptom (for example, fever) in the concern passed to doctor search.
 - When the useful history is complete, stop routine questions. Say a short summary, name the suggested department, and ask only: "Kya main aapke liye verified doctor aur available slots search kar doon?" Use the patient's current language. Call search_verified_doctors only after the patient agrees, or if they directly asked for a doctor/search/appointment. Do not ask another symptom question after this completion handoff unless the patient gives new information.
@@ -116,7 +132,7 @@ Deno.serve(async (request: Request) => {
         .maybeSingle()
       if (profileError) return json({ success: false, message: "Could not verify hospital access" }, 500)
       const role = Array.isArray(profile?.roles) ? profile.roles[0]?.slug : profile?.roles?.slug
-      if (String(role || userData.user.user_metadata?.role || "").trim().toLowerCase() !== "hospital") {
+      if (String(role || "").trim().toLowerCase() !== "hospital") {
         return json({ success: false, message: "Hospital admin access required" }, 403)
       }
     }
@@ -130,21 +146,23 @@ Deno.serve(async (request: Request) => {
       await recordAiUsage(admin, userData.user.id, voiceQuota)
     }
     const safetyIdentifier = `${userData.user.id}`.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100)
-    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    const createSession = (sessionBody: any) => fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${openAiKey}`,
         "OpenAI-Safety-Identifier": safetyIdentifier,
       },
-      body: JSON.stringify({
+      body: JSON.stringify(sessionBody),
+    })
+    const sessionBody = {
         session: {
           type: "realtime",
           model: realtimeModel,
           instructions: buildInstructions(body),
           audio: {
             input: {
-              transcription: { model: realtimeTranscriptionModel, language: body?.language || undefined },
+              transcription: { model: realtimeTranscriptionModel, language: body?.language || undefined, prompt: TRANSCRIPTION_HINT },
               // The phone plays the assistant on its loudspeaker, so filter for a far-field mic.
               // This removes room noise/echo before VAD instead of relying on a high VAD threshold,
               // which made quiet or low-gain Android mics fail to register the patient at all.
@@ -153,7 +171,8 @@ Deno.serve(async (request: Request) => {
               // fixed silence, so natural pauses ("umm… since yesterday") are not cut off.
               turn_detection: {
                 type: "semantic_vad",
-                eagerness: "auto",
+                // Low waits for the patient to finish. A clipped "sar..." alone is what speech-to-text most often mishears.
+                eagerness: (Deno.env.get("VOICE_VAD_EAGERNESS") || "low").trim(),
                 create_response: true,
                 interrupt_response: true,
               },
@@ -169,11 +188,33 @@ Deno.serve(async (request: Request) => {
           tools: body?.mode === "hospital" ? [] : [
             {
               type: "function",
+              name: "lookup_cd4_information",
+              description: "Look up verified facts about how CD4 works: booking, payment, refunds, cancelling, rescheduling, reports, privacy, plans.",
+              parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+            },
+            {
+              type: "function",
+              name: "get_my_appointments",
+              description: "Get this signed-in patient's own upcoming appointments.",
+              parameters: { type: "object", properties: {}, additionalProperties: false },
+            },
+            {
+              type: "function",
+              name: "search_my_reports",
+              description: "Search this signed-in patient's own uploaded reports and prescriptions.",
+              parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+            },
+            {
+              type: "function",
               name: "search_verified_doctors",
               description: "Find verified doctors. For a generic doctor request, return doctors only and do not show slots. If the patient names a specific doctor, return only that doctor's live available slots.",
               parameters: {
                 type: "object",
-              properties: { concern: { type: "string" }, doctorName: { type: ["string", "null"] }, city: { type: ["string", "null"] } },
+              properties: {
+                  concern: { type: "string", description: "The specialty that fits the patient's problem, in English, such as Cardiology or General Physician. Work it out from what they said. Use General health if unclear." },
+                  doctorName: { type: ["string", "null"] },
+                  city: { type: ["string", "null"], description: "The city they named, spelled correctly." },
+                },
               required: ["concern", "doctorName", "city"],
                 additionalProperties: false,
               },
@@ -191,11 +232,16 @@ Deno.serve(async (request: Request) => {
             },
           ],
         },
-      }),
-    })
+    }
+    let response = await createSession(sessionBody)
+    if (!response.ok && response.status === 400) {
+      // A transcription model that rejects the hint must not take voice down.
+      delete sessionBody.session.audio.input.transcription.prompt
+      response = await createSession(sessionBody)
+    }
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) return json({ success: false, message: payload?.error?.message || "Realtime session creation failed" }, response.status)
-    return json({ success: true, data: { clientSecret: payload?.value || payload?.client_secret?.value || payload?.client_secret || null, model: realtimeModel, expiresAt: payload?.expires_at || null } })
+    return json({ success: true, data: { bargeIn: (Deno.env.get("VOICE_BARGE_IN") || "on").trim() !== "off", clientSecret: payload?.value || payload?.client_secret?.value || payload?.client_secret || null, model: realtimeModel, expiresAt: payload?.expires_at || null } })
   } catch (error) {
     console.error("[voice-realtime-session] failed", error)
     return json({ success: false, message: error instanceof Error ? error.message : "Realtime session failed" }, 500)

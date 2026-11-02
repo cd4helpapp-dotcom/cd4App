@@ -63,7 +63,8 @@ export default function CommunityPostDeepLinkScreen() {
   const comments = commentsQuery.data || [];
 
   const handleLike = async () => {
-    if (!post) return;
+    // A second tap before the first is saved would send the opposite of what the person sees.
+    if (!post || likeMutation.isPending) return;
     try {
       await likeMutation.mutateAsync({
         postId: post.id,

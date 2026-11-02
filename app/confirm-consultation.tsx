@@ -17,6 +17,7 @@ import { useThemePreference } from '../context/ThemePreferenceContext';
 import { supabase } from '../src/lib/supabase';
 import { openRazorpayCheckout } from '../services/razorpay';
 import { useAuthContext } from '../context/AuthContext';
+import { useAppLanguage } from '../context/AppLanguageContext';
 import { useBookAppointment } from '../hooks/useAppointment';
 import { syncAppointmentWithDeviceCalendar } from '../services/appointmentCalendar';
 
@@ -44,7 +45,8 @@ export default function ConfirmConsultationScreen() {
   const router = useRouter();
   const { resolvedColorScheme } = useThemePreference();
   const theme = Colors[resolvedColorScheme ?? 'light'];
-  const { user, session } = useAuthContext();
+  const { user, session, isLoading: isAuthLoading } = useAuthContext();
+  const { t } = useAppLanguage();
   const bookAppointmentMutation = useBookAppointment();
   const params = useLocalSearchParams<{
     doctorId?: string;
@@ -84,7 +86,7 @@ export default function ConfirmConsultationScreen() {
 
   const slotDateLabel = parsedSlotDate
     ? parsedSlotDate.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
-    : 'Selected date';
+    : t('payment.selectedDate');
 
   const leaveBooking = React.useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -98,7 +100,7 @@ export default function ConfirmConsultationScreen() {
 
   const loadQuote = React.useCallback(async () => {
     if (!doctorId || !slotId) {
-      showUiAlert('Booking failed', 'Doctor or slot details missing. Please select slot again.');
+      showUiAlert(t('payment.bookingFailed'), t('payment.detailsMissing'));
       leaveBooking();
       return;
     }
@@ -121,7 +123,7 @@ export default function ConfirmConsultationScreen() {
       });
       const requestResult = await Promise.race([
         supabase.functions.invoke('manage-appointment-payment', {
-          body: { action: 'create_order', doctorId, slotId, appointmentType },
+          body: { action: 'create_order', doctorId, slotId, appointmentType, concern, conversationId, aiReportId: reportId },
         }),
         timeout,
       ]);
@@ -151,7 +153,7 @@ export default function ConfirmConsultationScreen() {
     try {
       await request;
     } catch (error: any) {
-      showUiAlert('Payment setup failed', error?.message || 'Could not prepare payment right now.');
+      showUiAlert(t('payment.setupFailed'), error?.message || t('payment.setupFailedBody'));
       leaveBooking();
     } finally {
       if (quoteRequestRef.current?.key === requestKey) {
@@ -159,19 +161,21 @@ export default function ConfirmConsultationScreen() {
       }
       setIsPreparing(false);
     }
-  }, [appointmentType, doctorId, fallbackGrossAmount, leaveBooking, session?.access_token, slotId]);
+  }, [appointmentType, concern, conversationId, doctorId, fallbackGrossAmount, leaveBooking, reportId, session?.access_token, slotId, t]);
 
+  // After a refresh the saved session takes a moment to load; asking too early looked like being logged out.
   React.useEffect(() => {
+    if (isAuthLoading) return;
     void loadQuote();
-  }, [loadQuote]);
+  }, [isAuthLoading, loadQuote]);
 
   const handlePay = async () => {
     if (!quote) {
-      showUiAlert('Please wait', 'Payment details are still loading.');
+      showUiAlert(t('payment.pleaseWait'), t('payment.stillLoading'));
       return;
     }
     if (!user?.id) {
-      showUiAlert('Login required', 'Please login again and retry booking.');
+      showUiAlert(t('payment.loginRequired'), t('payment.loginAgain'));
       router.replace('/auth/login');
       return;
     }
@@ -228,16 +232,16 @@ export default function ConfirmConsultationScreen() {
         },
       });
     } catch (error: any) {
-      if (chargedPaymentId) {
-        // The payment went through but the booking step failed. Never call this "payment failed": the patient
-        // would pay again. The payment webhook reconciles the booking; support can confirm with the payment id.
-        showUiAlert(
-          'Payment received',
-          `Your payment (${chargedPaymentId}) was successful, but we could not confirm the slot yet. Please do not pay again. Check My appointments in a minute, or contact support with this payment ID.`
-        );
+      if (chargedPaymentId && String(error?.code || '').startsWith('slot_taken')) {
+        showUiAlert(t('payment.slotGone'), `${error.code === 'slot_taken_refunded' ? t('payment.slotGoneRefunded') : t('payment.slotGoneRefundPending')}\n\n${t('payment.paymentId', { id: chargedPaymentId })}`);
+        router.replace('/(tabs)/appointments');
+      } else if (chargedPaymentId) {
+        // The payment went through but this verify call failed. Never call this "payment failed": the patient
+        // would pay again. The payment webhook makes the booking, or refunds it if the slot has gone.
+        showUiAlert(t('payment.received'), t('payment.receivedConfirming', { id: chargedPaymentId }));
         router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } });
       } else {
-        showUiAlert('Payment failed', error?.message || 'Could not complete payment.');
+        showUiAlert(t('payment.failed'), error?.message || t('payment.failedBody'));
       }
     } finally {
       setIsPaying(false);
@@ -255,12 +259,12 @@ export default function ConfirmConsultationScreen() {
           >
             <ChevronLeft size={18} color={theme.text} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Confirm Consultation</Text>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>{t('payment.confirmTitle')}</Text>
           <View style={styles.headerSpacer} />
         </View>
 
         <View style={[styles.summaryCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Booking Summary</Text>
+          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>{t('payment.bookingSummary')}</Text>
           <View style={styles.identityRow}>
             <View style={[styles.identityIcon, { backgroundColor: theme.primarySoft }]}>
               <Stethoscope size={18} color={theme.tint} />
@@ -275,13 +279,13 @@ export default function ConfirmConsultationScreen() {
           <View style={styles.metaRow}>
             <MapPin size={14} color={theme.textSecondary} />
             <Text style={[styles.metaText, { color: theme.textSecondary }]} numberOfLines={1}>
-              {doctorCity || 'City unavailable'}
+              {doctorCity || t('payment.cityUnavailable')}
             </Text>
           </View>
           <View style={styles.metaRow}>
             <Stethoscope size={14} color={theme.textSecondary} />
             <Text style={[styles.metaText, { color: theme.textSecondary }]}>
-              {appointmentType === 'second_opinion' ? 'Second Opinion' : 'Consultation'}
+              {appointmentType === 'second_opinion' ? t('payment.secondOpinion') : t('payment.consultation')}
             </Text>
           </View>
           <View style={styles.metaRow}>
@@ -291,25 +295,25 @@ export default function ConfirmConsultationScreen() {
             </Text>
           </View>
           {!!concern && (
-            <Text style={[styles.concernText, { color: theme.textSecondary }]}>Concern: {concern}</Text>
+            <Text style={[styles.concernText, { color: theme.textSecondary }]}>{t('payment.concern', { concern })}</Text>
           )}
         </View>
 
         <View style={[styles.paymentCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>Payment Details</Text>
+          <Text style={[styles.sectionLabel, { color: theme.textSecondary }]}>{t('payment.details')}</Text>
           {isPreparing || !quote ? (
             <View style={styles.loadingWrap}>
               <ActivityIndicator color={theme.tint} />
-              <Text style={[styles.loadingText, { color: theme.textSecondary }]}>Preparing payment details...</Text>
+              <Text style={[styles.loadingText, { color: theme.textSecondary }]}>{t('payment.preparing')}</Text>
             </View>
           ) : (
             <>
               <View style={styles.lineRow}>
-                <Text style={[styles.totalLabel, { color: theme.text }]}>Amount to Pay</Text>
+                <Text style={[styles.totalLabel, { color: theme.text }]}>{t('payment.amountToPay')}</Text>
                 <Text style={[styles.totalValue, { color: theme.text }]}>₹{Math.round(quote.grossAmount)}</Text>
               </View>
               <Text style={[styles.paymentNote, { color: theme.textSecondary }]}>
-                You will be charged only this amount.
+                {t('payment.onlyThisAmount')}
               </Text>
             </>
           )}
@@ -331,7 +335,7 @@ export default function ConfirmConsultationScreen() {
             <>
               <CreditCard size={18} color="#fff" />
               <Text style={styles.payButtonText}>
-                Pay ₹{Math.round(quote?.grossAmount || fallbackGrossAmount)} & Confirm Booking
+                {t('payment.payAndConfirm', { amount: Math.round(quote?.grossAmount || fallbackGrossAmount) })}
               </Text>
             </>
           )}

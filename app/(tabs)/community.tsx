@@ -7,28 +7,25 @@ import {
   useColorScheme,
   Image,
   Pressable,
+  ScrollView,
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
   RefreshControl,
   Modal,
   KeyboardAvoidingView,
-  Keyboard,
   Platform,
-  Alert,
   Share,
   Linking,
 } from 'react-native';
-import type { TextInputInstance } from 'react-native';
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
+import Toast from 'react-native-toast-message';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import {
   Camera,
-  Tag,
   X,
-  Send,
   Megaphone,
   Share2,
   EyeOff,
@@ -37,22 +34,21 @@ import {
   Flag,
   UserX,
   VolumeX,
-  MessageCircle,
 } from 'lucide-react-native';
 import PostCard, { CommunityPostCard } from '../../ui/PostCard';
+import CommunityAvatar from '../../ui/community/CommunityAvatar';
+import CommentsSheet from '../../ui/community/CommentsSheet';
+import CommunityComposer from '../../ui/community/CommunityComposer';
+import { toPostCard } from '../../ui/community/communityFormat';
 import Colors from '../../constants/Colors';
 import { CommunityTabSkeleton } from '../../ui/common/TabLoadingSkeletons';
 import {
   CommunityAd,
   CommunityCategory,
-  CommunityMediaAssetInput,
   CommunityPost,
-  CommunityComment,
+  hydrateCommunityFeedFromDisk,
   useBlockCommunityUser,
-  useAddCommunityComment,
-  useCommunityComments,
   useCommunityFeed,
-  useCreateCommunityPost,
   useDeleteCommunityPost,
   useEditCommunityPost,
   useMuteCommunityKeyword,
@@ -61,8 +57,10 @@ import {
   useToggleCommunityLike,
   useTrackCommunityShare,
   useCommunityPostLikes,
-  patchFeedPostsInCache,
 } from '../../hooks/useCommunity';
+import { useToggleCommunityFollow } from '../../hooks/useCommunityFollow';
+import { useAppLanguage } from '../../context/AppLanguageContext';
+import { confirmAction } from '../../src/utils/confirm';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 import { useAuthContext } from '../../context/AuthContext';
 import { useDeferredFocusSync } from '../../hooks/useDeferredFocusSync';
@@ -70,48 +68,19 @@ import { useDeferredFocusSync } from '../../hooks/useDeferredFocusSync';
 type FeedFilter = 'all' | CommunityCategory;
 type FeedItem = { type: 'post'; id: string; post: CommunityPost } | { type: 'ad'; id: string; ad: CommunityAd };
 
-const FEED_FILTERS: Array<{ label: string; value: FeedFilter }> = [
-  { label: 'All Posts', value: 'all' },
-  { label: 'Success Stories', value: 'success_stories' },
-  { label: 'Challenges', value: 'challenges' },
-  { label: 'Mentor Tips', value: 'mentor_tips' },
+const FEED_FILTERS: Array<{ labelKey: 'community.filterAll' | 'community.filterStories' | 'community.filterChallenges' | 'community.filterTips'; value: FeedFilter }> = [
+  { labelKey: 'community.filterAll', value: 'all' },
+  { labelKey: 'community.filterStories', value: 'success_stories' },
+  { labelKey: 'community.filterChallenges', value: 'challenges' },
+  { labelKey: 'community.filterTips', value: 'mentor_tips' },
 ];
 
-const COMPOSER_CATEGORY_SEQUENCE: CommunityCategory[] = ['general', 'success_stories', 'challenges', 'mentor_tips'];
-
-const getComposerCategoryLabel = (value: CommunityCategory): string => {
-  if (value === 'success_stories') return 'Success Story';
-  if (value === 'challenges') return 'Challenge';
-  if (value === 'mentor_tips') return 'Mentor Tip';
-  return 'General';
+// The handler stays the same object between renders, so memoised post cards do not re-render when the screen does.
+const useStableCallback = <Args extends any[], Result>(handler: (...args: Args) => Result) => {
+  const latest = React.useRef(handler);
+  latest.current = handler;
+  return React.useCallback((...args: Args) => latest.current(...args), []);
 };
-
-const formatCommentTime = (iso: string): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return 'now';
-  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
-
-const mapPostToCardModel = (post: CommunityPost): CommunityPostCard => ({
-  id: post.id,
-  content: post.content,
-  imageUrl: post.imageUrl,
-  category: post.category,
-  createdAt: post.createdAt,
-  isPinned: post.isPinned,
-  likeCount: post.likeCount,
-  commentCount: post.commentCount,
-  shareCount: post.shareCount,
-  likedByMe: post.likedByMe,
-  media: post.media,
-  author: {
-    id: post.author.id,
-    name: post.author.fullName,
-    avatar: post.author.profilePicture,
-    role: post.author.role,
-    isVerified: post.author.isVerified,
-  },
-});
 
 const COMMUNITY_POST_DEEPLINK_PREFIX = 'cd4://community/post';
 const COMMUNITY_POST_WEB_LINK_PREFIX = 'https://cd4.app/community/post';
@@ -134,22 +103,19 @@ export default function CommunityScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const insets = useSafeAreaInsets();
-  const { user, session } = useAuthContext();
+  const { user } = useAuthContext();
+  const { t } = useAppLanguage();
   const queryClient = useQueryClient();
   const router = useRouter();
 
-  const [composerText, setComposerText] = React.useState('');
-  const [composerCategory, setComposerCategory] = React.useState<CommunityCategory>('general');
-  const [composerAssets, setComposerAssets] = React.useState<ImagePicker.ImagePickerAsset[]>([]);
-  const [composerStage, setComposerStage] = React.useState<'uploading' | 'scanning' | 'publishing' | null>(null);
   const [activeFilter, setActiveFilter] = React.useState<FeedFilter>('all');
-  const [activePost, setActivePost] = React.useState<CommunityPost | null>(null);
+  const [commentsPostId, setCommentsPostId] = React.useState<string | null>(null);
   const [commentsVisible, setCommentsVisible] = React.useState(false);
-  const [commentText, setCommentText] = React.useState('');
   const [isPullRefreshing, setIsPullRefreshing] = React.useState(false);
   const [isTabSwitchLoading, setIsTabSwitchLoading] = React.useState(false);
-  const [pendingLikePostIds, setPendingLikePostIds] = React.useState<Record<string, true>>({});
-  const [pendingSharePostIds, setPendingSharePostIds] = React.useState<Record<string, true>>({});
+  // Refs, not state: a tap in progress should block a second tap without re-rendering the feed.
+  const pendingLikesRef = React.useRef(new Set<string>());
+  const pendingSharesRef = React.useRef(new Set<string>());
   const [hiddenPostIds, setHiddenPostIds] = React.useState<Record<string, true>>({});
   const [postActionsVisible, setPostActionsVisible] = React.useState(false);
   const [postActionsTarget, setPostActionsTarget] = React.useState<CommunityPost | null>(null);
@@ -157,11 +123,8 @@ export default function CommunityScreen() {
   const [editPostId, setEditPostId] = React.useState<string | null>(null);
   const [editPostText, setEditPostText] = React.useState('');
   const [editPostAssets, setEditPostAssets] = React.useState<ImagePicker.ImagePickerAsset[]>([]);
-  const [replyTo, setReplyTo] = React.useState<CommunityComment | null>(null);
   const [likesVisible, setLikesVisible] = React.useState(false);
   const [activeLikesPostId, setActiveLikesPostId] = React.useState<string | null>(null);
-  const [modalKeyboardHeight, setModalKeyboardHeight] = React.useState(0);
-  const commentInputRef = React.useRef<TextInputInstance | null>(null);
   const tabSwipeHandlers = useTabSwipeNavigation('community', {
     disabled: commentsVisible || postActionsVisible || editPostVisible || likesVisible,
   });
@@ -169,25 +132,25 @@ export default function CommunityScreen() {
   const viewabilityConfig = React.useRef({ itemVisiblePercentThreshold: 60 }).current;
 
   const feedQuery = useCommunityFeed(user?.id || null);
-  const createPostMutation = useCreateCommunityPost(user?.id || null);
   const deletePostMutation = useDeleteCommunityPost(user?.id || null);
   const editPostMutation = useEditCommunityPost(user?.id || null);
   const toggleLikeMutation = useToggleCommunityLike(user?.id || null);
-  const addCommentMutation = useAddCommunityComment(user?.id || null);
   const reportPostMutation = useReportCommunityPost(user?.id || null);
   const blockUserMutation = useBlockCommunityUser(user?.id || null);
   const muteKeywordMutation = useMuteCommunityKeyword(user?.id || null);
   const trackAdEventMutation = useTrackCommunityAdEvent(user?.id || null);
   const trackShareMutation = useTrackCommunityShare(user?.id || null);
-  const commentsQuery = useCommunityComments(activePost?.id || null, commentsVisible);
+  const toggleFollow = useToggleCommunityFollow(user?.id || null);
   const refetchFeed = feedQuery.refetch;
+  const viewerName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
 
-  // Keyboard listeners are no longer needed for manual padding as we'll use standard KeyboardAvoidingView
+  // Shows the last feed saved on this phone straight away, while the fresh one loads.
   React.useEffect(() => {
-    return () => {
-      setModalKeyboardHeight(0);
-    };
-  }, []);
+    if (user?.id) void hydrateCommunityFeedFromDisk(queryClient, user.id);
+  }, [queryClient, user?.id]);
+
+  const showActionError = (error: any) =>
+    Toast.show({ type: 'error', text1: t('community.actionFailed'), text2: error?.message || t('community.tryAgain') });
 
   const pagedFeed = feedQuery.data?.pages || [];
   const posts = React.useMemo(() => {
@@ -208,7 +171,6 @@ export default function CommunityScreen() {
     const firstPageWithAds = pagedFeed.find((page) => page.ads.length > 0);
     return firstPageWithAds?.ads || [];
   }, [pagedFeed]);
-  const comments = commentsQuery.data || [];
   const modalBottomInset = Math.max(insets.bottom + 8, 14);
 
   const filteredPosts = React.useMemo(() => {
@@ -239,171 +201,72 @@ export default function CommunityScreen() {
     return items;
   }, [activeAds, filteredPosts]);
 
-  const cycleComposerCategory = () => {
-    const currentIndex = COMPOSER_CATEGORY_SEQUENCE.indexOf(composerCategory);
-    const nextIndex = (currentIndex + 1) % COMPOSER_CATEGORY_SEQUENCE.length;
-    setComposerCategory(COMPOSER_CATEGORY_SEQUENCE[nextIndex]);
-  };
-
-  const pickComposerAssets = async () => {
+  const handleLike = useStableCallback(async (post: CommunityPostCard) => {
+    if (pendingLikesRef.current.has(post.id)) return;
+    pendingLikesRef.current.add(post.id);
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (permission.status !== 'granted') {
-        Alert.alert('Permission Required', 'Please allow media permission to attach photos or videos.');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
-        allowsMultipleSelection: true,
-        selectionLimit: 10,
-        quality: 0.7,
-      });
-
-      if (result.canceled || !result.assets?.length) return;
-      
-      // Merge with existing or replace? User expects merge usually
-      setComposerAssets((prev) => [...prev, ...result.assets].slice(0, 10));
-    } catch {
-      Alert.alert('Media Error', 'Could not open media library right now.');
-    }
-  };
-
-  const removeComposerAsset = (index: number) => {
-    setComposerAssets((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleCreatePost = async () => {
-    if (!user?.id) {
-      Alert.alert('Login Required', 'Please login to create posts.');
-      return;
-    }
-
-    try {
-      setComposerStage(composerAssets.length > 0 ? 'uploading' : 'publishing');
-      const result = await createPostMutation.mutateAsync({
-        content: composerText,
-        category: composerCategory,
-        assets: composerAssets.map(a => ({
-          uri: a.uri,
-          fileName: a.fileName || `media_${Date.now()}`,
-          mimeType: a.mimeType || 'image/jpeg',
-          fileSize: a.fileSize || 0,
-        })),
-      });
-      setComposerText('');
-      setComposerCategory('general');
-      setComposerAssets([]);
-      setComposerStage(null);
+      await toggleLikeMutation.mutateAsync({ postId: post.id, currentlyLiked: post.likedByMe });
     } catch (error: any) {
-      setComposerStage(null);
-      Alert.alert('Post Failed', error?.message || 'Could not publish post.');
-    }
-  };
-
-  const handleLike = async (post: CommunityPostCard) => {
-    const target = posts.find((item) => item.id === post.id);
-    if (!target) return;
-    if (pendingLikePostIds[target.id]) return;
-
-    setPendingLikePostIds((prev) => ({ ...prev, [target.id]: true }));
-    try {
-      await toggleLikeMutation.mutateAsync({ postId: target.id, currentlyLiked: target.likedByMe });
-    } catch (error: any) {
-      Alert.alert('Like Failed', error?.message || 'Could not update like right now.');
+      showActionError(error);
     } finally {
-      setPendingLikePostIds((prev) => {
-        if (!prev[target.id]) return prev;
-        const next = { ...prev };
-        delete next[target.id];
-        return next;
-      });
+      pendingLikesRef.current.delete(post.id);
     }
-  };
+  });
 
-  const handleOpenLikes = (post: CommunityPostCard) => {
+  const handleFollow = useStableCallback(async (post: CommunityPostCard) => {
+    try {
+      await toggleFollow(post.author.id, !post.followedByMe);
+    } catch (error: any) {
+      showActionError(error);
+    }
+  });
+
+  const handleOpenLikes = useStableCallback((post: CommunityPostCard) => {
     setActiveLikesPostId(post.id);
     setLikesVisible(true);
-  };
+  });
 
-  const handleOpenComments = (post: CommunityPostCard) => {
-    const target = posts.find((item) => item.id === post.id);
-    if (!target) return;
-    setActivePost(target);
-    setCommentText('');
-    setReplyTo(null);
+  const handleOpenComments = useStableCallback((post: CommunityPostCard) => {
+    setCommentsPostId(post.id);
     setCommentsVisible(true);
-  };
+  });
 
-  const handleOpenAuthorProfile = (post: CommunityPostCard) => {
-    const authorId = post?.author?.id;
+  const openProfile = useStableCallback((authorId: string) => {
     if (!authorId) return;
-    router.push({ pathname: '/user/[id]', params: { id: authorId, source: 'community' } } as any);
-  };
-
-  const closeCommentsModal = React.useCallback(() => {
-    Keyboard.dismiss();
     setCommentsVisible(false);
-    setReplyTo(null);
-  }, []);
+    router.push({ pathname: '/user/[id]', params: { id: authorId, source: 'community' } } as any);
+  });
 
-  const handleSubmitComment = async () => {
-    if (!activePost) return;
+  const handleOpenAuthorProfile = useStableCallback((post: CommunityPostCard) => openProfile(post?.author?.id));
+
+  const closeComments = React.useCallback(() => setCommentsVisible(false), []);
+
+  const handleShare = useStableCallback(async (post: CommunityPostCard) => {
+    if (pendingSharesRef.current.has(post.id)) return;
+    pendingSharesRef.current.add(post.id);
     try {
-      await addCommentMutation.mutateAsync({
-        postId: activePost.id,
-        content: commentText,
-        parentId: replyTo?.id,
-      });
-      setCommentText('');
-      setReplyTo(null);
-    } catch (error: any) {
-      Alert.alert('Comment Failed', error?.message || 'Could not add comment.');
-    }
-  };
-
-  const handleShare = async (post: CommunityPostCard) => {
-    const target = posts.find((item) => item.id === post.id);
-    if (!target) return;
-    if (pendingSharePostIds[target.id]) return;
-
-    setPendingSharePostIds((prev) => ({ ...prev, [target.id]: true }));
-    try {
-      const deepLink = `${COMMUNITY_POST_DEEPLINK_PREFIX}/${target.id}`;
-      const webLink = `${COMMUNITY_POST_WEB_LINK_PREFIX}/${target.id}`;
+      const deepLink = `${COMMUNITY_POST_DEEPLINK_PREFIX}/${post.id}`;
+      const webLink = `${COMMUNITY_POST_WEB_LINK_PREFIX}/${post.id}`;
       const postPreview = clipShareText(post.content, 220);
       const startedAt = Date.now();
-      
+
       const result = await Share.share({
-        message: `${post.author.name}: ${postPreview}\n\n📲 Open in CD4 App (Internal):\n${deepLink}\n\n🌐 Web Link (Coming Soon):\n${webLink}`,
+        message: `${post.author.name}: ${postPreview}\n\nOpen in the CD4 app:\n${deepLink}\n\n${webLink}`,
       });
 
-      const elapsedMs = Date.now() - startedAt;
-      const isDismissed = result.action === Share.dismissedAction;
-      const isShared = result.action === Share.sharedAction;
-
-      if (isDismissed) {
-        return;
-      }
+      if (result.action === Share.dismissedAction) return;
 
       // Android share sheet often reports "shared" immediately on dismiss.
       // We treat extremely short sessions (< 700ms) as likely dismissals.
-      if (Platform.OS === 'android' && !isShared && elapsedMs < 700) {
-        return;
-      }
+      if (Platform.OS === 'android' && Date.now() - startedAt < 700) return;
 
-      trackShareMutation.mutate({ postId: target.id, platform: 'native' });
+      trackShareMutation.mutate({ postId: post.id, platform: 'native' });
     } catch (error: any) {
-      Alert.alert('Share Failed', error?.message || 'Could not share this post.');
+      showActionError(error);
     } finally {
-      setPendingSharePostIds((prev) => {
-        if (!prev[target.id]) return prev;
-        const next = { ...prev };
-        delete next[target.id];
-        return next;
-      });
+      pendingSharesRef.current.delete(post.id);
     }
-  };
+  });
 
   const handleManualRefresh = React.useCallback(async () => {
     if (isPullRefreshing) return;
@@ -415,9 +278,11 @@ export default function CommunityScreen() {
     }
   }, [isPullRefreshing, refetchFeed]);
 
+  // Opening the tab reloads only when the posts are old, so going back and forth stays instant.
+  const isFeedStale = feedQuery.isStale;
   const syncCommunityOnFocus = React.useCallback(async () => {
-    await refetchFeed();
-  }, [refetchFeed]);
+    if (isFeedStale) await refetchFeed({ cancelRefetch: false });
+  }, [isFeedStale, refetchFeed]);
   const shouldShowCommunityInitialLoading = React.useCallback(
     () => posts.length === 0,
     [posts.length]
@@ -449,13 +314,12 @@ export default function CommunityScreen() {
     try {
       const canOpen = await Linking.canOpenURL(ad.ctaUrl);
       if (!canOpen) {
-        Alert.alert('Invalid Link', 'Could not open this ad link.');
         return;
       }
       trackAdEventMutation.mutate({ adId: ad.id, eventType: 'click', source: 'community_feed' });
       await Linking.openURL(ad.ctaUrl);
     } catch {
-      Alert.alert('Link Error', 'Could not open this ad right now.');
+      showActionError(null);
     }
   };
 
@@ -482,9 +346,9 @@ export default function CommunityScreen() {
     try {
       await deletePostMutation.mutateAsync({ postId });
       hidePostFromFeed(postId);
-      Alert.alert('Post Deleted', 'Your post has been removed.');
+      Toast.show({ type: 'success', text1: t('community.deleted') });
     } catch (error: any) {
-      Alert.alert('Delete Failed', error?.message || 'Could not delete this post.');
+      showActionError(error);
     }
   };
 
@@ -505,22 +369,18 @@ export default function CommunityScreen() {
       setEditPostId(null);
       setEditPostText('');
       setEditPostAssets([]);
-      Alert.alert('Post Updated', 'Your post has been updated.');
+      Toast.show({ type: 'success', text1: t('community.updated') });
     } catch (error: any) {
-      Alert.alert('Edit Failed', error?.message || 'Could not update this post.');
+      showActionError(error);
     }
   };
 
-  const openPostActions = (post: CommunityPostCard) => {
+  const openPostActions = useStableCallback((post: CommunityPostCard) => {
     const target = posts.find((item) => item.id === post.id);
     if (!target) return;
     setPostActionsTarget(target);
     setPostActionsVisible(true);
-  };
-
-  const handleLongPressPost = (post: CommunityPostCard) => {
-    openPostActions(post);
-  };
+  });
 
   const postActionItems: PostActionItem[] = React.useMemo(() => {
     if (!postActionsTarget) return [];
@@ -528,11 +388,11 @@ export default function CommunityScreen() {
     const target = postActionsTarget;
     const isOwnPost = target.authorId === user?.id;
     const muteKeyword = deriveMuteKeywordFromPost(target.content);
-    const asCard = mapPostToCardModel(target);
+    const asCard = toPostCard(target);
     const items: PostActionItem[] = [
       {
         key: 'share',
-        label: 'Share',
+        label: t('community.share'),
         icon: Share2,
         onPress: () => {
           closePostActionsModal();
@@ -541,7 +401,7 @@ export default function CommunityScreen() {
       },
       {
         key: 'hide',
-        label: 'Hide Post',
+        label: t('community.hidePost'),
         icon: EyeOff,
         onPress: () => {
           hidePostFromFeed(target.id);
@@ -553,7 +413,7 @@ export default function CommunityScreen() {
     if (isOwnPost) {
       items.push({
         key: 'edit',
-        label: 'Edit Post',
+        label: t('community.editPost'),
         icon: Pencil,
         onPress: () => {
           setEditPostId(target.id);
@@ -565,28 +425,28 @@ export default function CommunityScreen() {
       });
       items.push({
         key: 'delete',
-        label: 'Delete Post',
+        label: t('community.deletePost'),
         icon: Trash2,
         danger: true,
         onPress: () => {
           closePostActionsModal();
-          Alert.alert('Delete Post', 'Are you sure you want to delete this post?', [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: () => {
-                void handleDeletePost(target.id);
-              },
-            },
-          ]);
+          // Alert does nothing in a browser, and this also keeps the wording in one place.
+          void confirmAction({
+            title: t('community.deleteTitle'),
+            message: t('community.deleteMessage'),
+            confirmText: t('community.delete'),
+            cancelText: t('community.cancel'),
+            destructive: true,
+          }).then((ok) => {
+            if (ok) void handleDeletePost(target.id);
+          });
         },
       });
     }
 
     items.push({
       key: 'report',
-      label: 'Report Post',
+      label: t('community.reportPost'),
       icon: Flag,
       danger: true,
       onPress: () => {
@@ -594,27 +454,37 @@ export default function CommunityScreen() {
         reportPostMutation.mutate(
           { postId: target.id, reason: 'abuse', details: 'Reported from community feed.' },
           {
-            onSuccess: () => Alert.alert('Reported', 'Thanks. This post has been reported for review.'),
-            onError: (error: any) => Alert.alert('Could not report', error?.message || 'Please try again.'),
+            onSuccess: () => Toast.show({ type: 'success', text1: t('community.reported') }),
+            onError: showActionError,
           }
         );
       },
     });
 
     if (target.authorId && target.authorId !== user?.id) {
+      const authorName = target.author.fullName;
       items.push({
         key: 'block-user',
-        label: 'Block User',
+        label: t('community.blockUser', { name: authorName }),
         icon: UserX,
         onPress: () => {
           closePostActionsModal();
-          blockUserMutation.mutate(
-            { blockedUserId: target.authorId },
-            {
-              onSuccess: () => Alert.alert('User Blocked', 'You will not see posts from this user anymore.'),
-              onError: (error: any) => Alert.alert('Could not block', error?.message || 'Please try again.'),
-            }
-          );
+          void confirmAction({
+            title: t('community.blockTitle', { name: authorName }),
+            message: t('community.blockMessage'),
+            confirmText: t('community.blockUser', { name: authorName }),
+            cancelText: t('community.cancel'),
+            destructive: true,
+          }).then((ok) => {
+            if (!ok) return;
+            blockUserMutation.mutate(
+              { blockedUserId: target.authorId },
+              {
+                onSuccess: () => Toast.show({ type: 'success', text1: t('community.blocked') }),
+                onError: showActionError,
+              }
+            );
+          });
         },
       });
     }
@@ -622,15 +492,15 @@ export default function CommunityScreen() {
     if (muteKeyword) {
       items.push({
         key: 'mute-keyword',
-        label: `Mute "${muteKeyword}"`,
+        label: t('community.muteWord', { word: muteKeyword }),
         icon: VolumeX,
         onPress: () => {
           closePostActionsModal();
           muteKeywordMutation.mutate(
             { keyword: muteKeyword },
             {
-              onSuccess: () => Alert.alert('Muted', `Posts containing "${muteKeyword}" will be hidden.`),
-              onError: (error: any) => Alert.alert('Could not mute', error?.message || 'Please try again.'),
+              onSuccess: () => Toast.show({ type: 'success', text1: t('community.muted', { word: muteKeyword }) }),
+              onError: showActionError,
             }
           );
         },
@@ -678,7 +548,7 @@ export default function CommunityScreen() {
           <View style={[styles.adIconWrap, { backgroundColor: theme.primarySoft }]}>
             <Megaphone size={16} color={theme.primary} />
           </View>
-          <Text style={[styles.adMeta, { color: theme.textSecondary }]}>Sponsored</Text>
+          <Text style={[styles.adMeta, { color: theme.textSecondary }]}>{t('community.sponsored')}</Text>
         </View>
         <Text style={[styles.adTitle, { color: theme.text }]}>{ad.title}</Text>
         {!!ad.body && <Text style={[styles.adBody, { color: theme.textSecondary }]}>{ad.body}</Text>}
@@ -695,150 +565,71 @@ export default function CommunityScreen() {
     );
   };
 
-  const headerComponent = (
-    <View>
-      <View style={styles.headerContainer}>
-        <View>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Community Circle</Text>
-          <Text style={[styles.headerSubtitle, { color: theme.textSecondary }]}>
-            Real stories, trusted guidance, and support for your health journey.
-          </Text>
+  const headerComponent = React.useMemo(
+    () => (
+      <View>
+        <View style={styles.headerContainer}>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>{t('community.title')}</Text>
+          <Text style={[styles.headerSubtitle, { color: theme.textSecondary }]}>{t('community.subtitle')}</Text>
         </View>
+
+        <CommunityComposer userId={user?.id || null} userName={viewerName} userAvatar={user?.profilePicture} />
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.filterListContent}
+        >
+          {FEED_FILTERS.map((item) => {
+            const selected = activeFilter === item.value;
+            return (
+              <TouchableOpacity
+                key={item.value}
+                accessibilityRole="tab"
+                accessibilityState={{ selected }}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: selected ? theme.buttonPrimary : theme.cardBackground,
+                    borderColor: selected ? theme.buttonPrimary : theme.borderColor,
+                  },
+                ]}
+                onPress={() => setActiveFilter(item.value)}
+              >
+                <Text style={[styles.filterText, { color: selected ? '#FFFFFF' : theme.textSecondary }]}>{t(item.labelKey)}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
+    ),
+    [activeFilter, t, theme, user?.id, user?.profilePicture, viewerName]
+  );
 
-      {/* Temporarily disabled static challenge card until dynamic challenge API is integrated. */}
-      {/* <View style={[styles.challengeCard, { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder }]}>
-        <View style={styles.challengeHeader}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={[styles.challengeIcon, { backgroundColor: theme.primary }]}>
-              <TrendingDown size={18} color="#fff" />
-            </View>
-            <View>
-              <Text style={[styles.challengeTitle, { color: theme.text }]}>Active Challenge</Text>
-              <Text style={[styles.challengeSubtitle, { color: theme.textSecondary }]}>Post-Meal Walk • Day 3/7</Text>
-            </View>
-          </View>
-          <Text style={[styles.challengeStatus, { color: theme.primary, backgroundColor: theme.background }]}>On Track</Text>
-        </View>
-        <View style={[styles.progressBarBg, { backgroundColor: theme.background }]}>
-          <View style={[styles.progressBarFill, { backgroundColor: theme.primary, width: '45%' }]} />
-        </View>
-        <Text style={[styles.challengeMotivational, { color: theme.textSecondary }]}>You are on a streak. Keep it up.</Text>
-      </View> */}
-
-      <View style={[styles.createPostCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-        <View style={styles.inputRow}>
-          <View style={[styles.currentUserAvatar, { backgroundColor: theme.borderColor }]}>
-            <Image
-              source={{
-                uri:
-                  user?.profilePicture?.trim() ||
-                  `https://ui-avatars.com/api/?name=${encodeURIComponent(`${user?.firstName || 'User'} ${user?.lastName || ''}`.trim())}`,
-              }}
-              style={styles.avatarImage}
-            />
-          </View>
-          <TextInput
-            value={composerText}
-            onChangeText={setComposerText}
-            placeholder="Share your reversal progress with the community..."
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.textInput, { color: theme.text }]}
-            multiline
-          />
-        </View>
-        {composerAssets.length > 0 ? (
-          <FlatList
-            data={composerAssets}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            keyExtractor={(item, index) => `${item.uri}-${index}`}
-            contentContainerStyle={styles.composerMediaList}
-            renderItem={({ item, index }) => (
-              <View style={styles.composerAssetWrap}>
-                <Image source={{ uri: item.uri }} style={styles.composerAssetPreview} />
-                {item.mimeType?.startsWith('video/') && (
-                  <View style={styles.videoBadge}>
-                    <Text style={styles.videoBadgeText}>VIDEO</Text>
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={[styles.composerAssetRemove, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
-                  onPress={() => removeComposerAsset(index)}
-                >
-                  <X size={12} color={theme.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            )}
-          />
-        ) : null}
-        <View style={[styles.postActions, { borderTopColor: theme.borderColor }]}>
-          <TouchableOpacity style={[styles.actionButton, { backgroundColor: theme.background }]} onPress={pickComposerAssets}>
-            <Camera size={16} color={theme.primary} />
-            <Text style={[styles.actionButtonText, { color: theme.textSecondary }]}>
-              {composerAssets.length > 0 ? `${composerAssets.length} Selected` : 'Media'}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: theme.background }]}
-            onPress={cycleComposerCategory}
-          >
-            <Tag size={16} color={theme.primary} />
-            <Text style={[styles.actionButtonText, { color: theme.textSecondary }]}>
-              {getComposerCategoryLabel(composerCategory)}
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.postButton, { backgroundColor: theme.primary, opacity: createPostMutation.isPending ? 0.7 : 1 }]}
-            disabled={createPostMutation.isPending}
-            onPress={handleCreatePost}
-          >
-            {createPostMutation.isPending ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text style={styles.postButtonText}>Post</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-        {createPostMutation.isPending && composerStage ? (
-          <Text style={[styles.composerStageText, { color: theme.textSecondary }]}>
-            {composerStage === 'uploading'
-              ? `Uploading ${composerAssets.length} item(s)...`
-              : composerStage === 'scanning'
-              ? 'Safety scan in progress...'
-              : 'Publishing your post...'}
-          </Text>
-        ) : null}
-      </View>
-
-      <FlatList
-        data={FEED_FILTERS}
-        horizontal
-        keyExtractor={(item) => item.value}
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.filterListContent}
-        renderItem={({ item }) => {
-          const selected = activeFilter === item.value;
-          return (
-            <TouchableOpacity
-              style={[
-                styles.filterChip,
-                {
-                  backgroundColor: selected ? theme.text : theme.cardBackground,
-                  borderColor: selected ? theme.text : theme.borderColor,
-                },
-              ]}
-              onPress={() => setActiveFilter(item.value)}
-            >
-              <Text style={[styles.filterText, { color: selected ? theme.background : theme.textSecondary }]}>
-                {item.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        }}
-      />
-    </View>
+  const renderFeedItem = React.useCallback(
+    ({ item }: { item: FeedItem }) => {
+      if (item.type === 'ad') {
+        return renderAdCard(item.ad);
+      }
+      const canFollow = item.post.author.role === 'doctor' && item.post.authorId !== user?.id;
+      return (
+        <PostCard
+          theme={theme}
+          post={toPostCard(item.post)}
+          onLongPress={openPostActions}
+          onPressMenu={openPostActions}
+          onPressLike={handleLike}
+          onPressLikeCount={handleOpenLikes}
+          onPressComment={handleOpenComments}
+          onPressShare={handleShare}
+          onPressAuthor={handleOpenAuthorProfile}
+          onPressFollow={canFollow ? handleFollow : undefined}
+        />
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [theme, user?.id]
   );
 
   return (
@@ -846,38 +637,31 @@ export default function CommunityScreen() {
       <FlatList
         data={showFeedSkeleton ? [] : feedItems}
         keyExtractor={(item) => item.id}
-        ListHeaderComponent={showFeedSkeleton ? undefined : headerComponent}
-        renderItem={({ item }) => {
-          if (item.type === 'ad') {
-            return renderAdCard(item.ad);
-          }
-          return (
-            <PostCard
-              theme={theme}
-              post={mapPostToCardModel(item.post)}
-              onLongPress={handleLongPressPost}
-              onPressMenu={openPostActions}
-              onPressLike={handleLike}
-              onPressLikeCount={handleOpenLikes}
-              onPressComment={handleOpenComments}
-              onPressShare={handleShare}
-              onPressAuthor={handleOpenAuthorProfile}
-              likeDisabled={Boolean(pendingLikePostIds[item.post.id])}
-              commentDisabled={false}
-              shareDisabled={Boolean(pendingSharePostIds[item.post.id])}
-              menuDisabled={deletePostMutation.isPending}
-            />
-          );
-        }}
+        ListHeaderComponent={headerComponent}
+        renderItem={renderFeedItem}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
           showFeedSkeleton || feedQuery.isLoading ? (
             <CommunityTabSkeleton theme={theme} />
+          ) : feedQuery.isError ? (
+            <View style={styles.emptyState}>
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>{t('community.loadFailed')}</Text>
+              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>{t('community.loadFailedHint')}</Text>
+              <TouchableOpacity style={[styles.retryButton, { backgroundColor: theme.buttonPrimary }]} onPress={() => refetchFeed()} accessibilityRole="button">
+                <Text style={styles.retryText}>{t('community.retry')}</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyTitle, { color: theme.text }]}>No posts yet</Text>
-              <Text style={[styles.emptyText, { color: theme.textSecondary }]}>
-                Be the first to share your health progress.
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>
+                {activeFilter === 'all' ? t('community.emptyTitle') : t('community.emptyFilter')}
               </Text>
+              {activeFilter === 'all' ? (
+                <Text style={[styles.emptyText, { color: theme.textSecondary }]}>{t('community.emptyHint')}</Text>
+              ) : null}
             </View>
           )
         }
@@ -946,7 +730,7 @@ export default function CommunityScreen() {
               style={[styles.actionSheetCancel, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
               onPress={closePostActionsModal}
             >
-              <Text style={[styles.actionSheetCancelText, { color: theme.textSecondary }]}>Cancel</Text>
+              <Text style={[styles.actionSheetCancelText, { color: theme.textSecondary }]}>{t('community.cancel')}</Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
@@ -967,7 +751,7 @@ export default function CommunityScreen() {
         >
           <View style={[styles.editCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
             <View style={[styles.modalHeader, { borderBottomColor: theme.borderColor }]}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>Edit Post</Text>
+              <Text style={[styles.modalTitle, { color: theme.text }]}>{t('community.editPost')}</Text>
               <TouchableOpacity onPress={() => setEditPostVisible(false)}>
                 <X size={20} color={theme.textSecondary} />
               </TouchableOpacity>
@@ -976,7 +760,7 @@ export default function CommunityScreen() {
               <TextInput
                 value={editPostText}
                 onChangeText={setEditPostText}
-                placeholder="Update your post..."
+                placeholder={t('community.editPlaceholder')}
                 placeholderTextColor={theme.textSecondary}
                 style={[
                   styles.editInput,
@@ -1022,14 +806,14 @@ export default function CommunityScreen() {
                     if (!result.canceled && result.assets?.length) {
                       setEditPostAssets(result.assets);
                     }
-                  } catch {
-                    Alert.alert('Error', 'Could not open media library.');
+                  } catch (error: any) {
+                    showActionError(error);
                   }
                 }}
               >
                 <Camera size={16} color={theme.primary} />
                 <Text style={[styles.actionButtonText, { color: theme.textSecondary }]}>
-                  {editPostAssets.length > 0 ? 'Replace Media' : 'Add/Change Media'}
+                  {t('community.changeMedia')}
                 </Text>
               </TouchableOpacity>
 
@@ -1038,7 +822,7 @@ export default function CommunityScreen() {
                   style={[styles.editCancelBtn, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
                   onPress={() => setEditPostVisible(false)}
                 >
-                  <Text style={[styles.editCancelText, { color: theme.textSecondary }]}>Cancel</Text>
+                  <Text style={[styles.editCancelText, { color: theme.textSecondary }]}>{t('community.cancel')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.editSaveBtn, { backgroundColor: theme.primary, opacity: editPostMutation.isPending ? 0.7 : 1 }]}
@@ -1048,7 +832,7 @@ export default function CommunityScreen() {
                   {editPostMutation.isPending ? (
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (
-                    <Text style={styles.editSaveText}>Save</Text>
+                    <Text style={styles.editSaveText}>{t('community.save')}</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -1057,158 +841,15 @@ export default function CommunityScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      <Modal visible={commentsVisible} transparent animationType="slide" onRequestClose={closeCommentsModal}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalWrap}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
-        >
-          <Pressable style={styles.modalTapCatch} onPress={closeCommentsModal} />
-          <View style={[styles.modalCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-            <View style={[styles.modalHeader, { borderBottomColor: theme.borderColor }]}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>Comments</Text>
-              <TouchableOpacity onPress={closeCommentsModal}>
-                <X size={20} color={theme.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              data={comments}
-              keyExtractor={(item) => item.id}
-              style={styles.commentsList}
-              contentContainerStyle={[
-                styles.commentsListContent,
-                comments.length === 0 && { flexGrow: 1, justifyContent: 'center' }
-              ]}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item, index }) => {
-                const parentComment = item.parentId ? comments.find(c => c.id === item.parentId) : null;
-                const nextItem = comments[index + 1];
-                const isEndOfThread = !nextItem || !nextItem.parentId;
-                const isLastItem = index === comments.length - 1;
-
-                return (
-                  <View style={[
-                    styles.commentRow, 
-                    { 
-                      borderBottomColor: theme.borderColor,
-                      borderBottomWidth: isEndOfThread ? StyleSheet.hairlineWidth : 0,
-                      paddingBottom: isLastItem ? 32 : (isEndOfThread ? 16 : 8),
-                      marginBottom: (isEndOfThread && !isLastItem) ? 12 : 0,
-                    },
-                    item.parentId ? { marginLeft: 38, paddingTop: 4 } : { paddingTop: 8 }
-                  ]}>
-                    {item.parentId && (
-                      <View style={{
-                        position: 'absolute',
-                        left: -18,
-                        top: -12,
-                        width: 16,
-                        height: 28,
-                        borderBottomLeftRadius: 10,
-                        borderLeftWidth: 1.5,
-                        borderBottomWidth: 1.5,
-                        borderColor: theme.borderColor,
-                      }} />
-                    )}
-                    <Image
-                      source={{
-                        uri:
-                          item.author.profilePicture?.trim() ||
-                          `https://ui-avatars.com/api/?name=${encodeURIComponent(item.author.fullName)}`,
-                      }}
-                      style={[styles.commentAvatar, { backgroundColor: theme.borderColor, width: item.parentId ? 28 : 32, height: item.parentId ? 28 : 32 }]}
-                    />
-                    <View style={styles.commentContentWrap}>
-                      <View style={styles.commentMetaRow}>
-                        <Text style={[styles.commentName, { color: theme.text, fontSize: item.parentId ? 12 : 13 }]}>{item.author.fullName}</Text>
-                        <Text style={[styles.commentTime, { color: theme.textSecondary }]}>{formatCommentTime(item.createdAt)}</Text>
-                      </View>
-                      
-                      {parentComment && (
-                        <Text style={{ fontSize: 11, color: theme.primary, marginBottom: 2, fontWeight: '600' }}>
-                          Replying to <Text style={{ color: theme.textSecondary }}>@{parentComment.author.fullName}</Text>
-                        </Text>
-                      )}
-
-                      <Text style={[styles.commentBody, { color: theme.textSecondary, fontSize: item.parentId ? 12 : 13 }]}>{item.content}</Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                        <TouchableOpacity 
-                          onPress={() => {
-                            setReplyTo(item);
-                            setTimeout(() => commentInputRef.current?.focus(), 100);
-                          }}
-                          style={{ marginRight: 16 }}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: '700', color: theme.textSecondary }}>Reply</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  </View>
-                );
-              }}
-              ListEmptyComponent={
-                commentsQuery.isLoading ? (
-                  <View style={styles.commentsLoadingWrap}>
-                    <ActivityIndicator color={theme.primary} />
-                  </View>
-                ) : (
-                  <View style={[styles.commentsLoadingWrap, { flex: 1 }]}>
-                    <MessageCircle size={44} color={theme.textSecondary} style={{ opacity: 0.2, marginBottom: 16 }} />
-                    <Text style={[styles.emptyTitle, { color: theme.text, fontSize: 16, fontWeight: '700' }]}>No comments yet</Text>
-                    <Text style={[styles.emptyText, { color: theme.textSecondary, textAlign: 'center', paddingHorizontal: 40 }]}>
-                      Be the first one to share your thoughts on this!
-                    </Text>
-                  </View>
-                )
-              }
-            />
-
-            {replyTo && (
-              <View style={{ 
-                flexDirection: 'row', 
-                alignItems: 'center', 
-                justifyContent: 'space-between',
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                backgroundColor: theme.background,
-                borderTopWidth: 1,
-                borderTopColor: theme.borderColor
-              }}>
-                <Text style={{ fontSize: 12, color: theme.textSecondary }}>
-                  Replying to <Text style={{ fontWeight: '700', color: theme.text }}>{replyTo.author.fullName}</Text>
-                </Text>
-                <TouchableOpacity onPress={() => setReplyTo(null)}>
-                  <X size={14} color={theme.textSecondary} />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <View style={[styles.commentComposer, { borderTopColor: theme.borderColor, paddingBottom: modalBottomInset }]}>
-              <TextInput
-                value={commentText}
-                onChangeText={setCommentText}
-                ref={commentInputRef}
-                placeholder={replyTo ? `Replying to ${replyTo.author.fullName}...` : "Write a comment..."}
-                placeholderTextColor={theme.textSecondary}
-                style={[styles.commentInput, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                multiline
-              />
-              <TouchableOpacity
-                style={[styles.commentSendBtn, { backgroundColor: theme.primary, opacity: addCommentMutation.isPending ? 0.7 : 1 }]}
-                disabled={addCommentMutation.isPending}
-                onPress={handleSubmitComment}
-              >
-                {addCommentMutation.isPending ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Send size={16} color="#fff" />
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+      <CommentsSheet
+        postId={commentsPostId}
+        visible={commentsVisible}
+        viewerId={user?.id || null}
+        viewerName={viewerName}
+        viewerAvatar={user?.profilePicture}
+        onClose={closeComments}
+        onOpenAuthor={openProfile}
+      />
     </View>
   );
 }
@@ -1224,53 +865,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 4 },
   headerSubtitle: { fontSize: 13 },
-  challengeCard: { borderRadius: 16, padding: 16, marginBottom: 20, borderWidth: 1 },
-  challengeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
-  challengeIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
-  challengeTitle: { fontSize: 14, fontWeight: 'bold' },
-  challengeSubtitle: { fontSize: 12 },
-  challengeStatus: { fontSize: 10, fontWeight: 'bold', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-  progressBarBg: { height: 6, borderRadius: 3, marginBottom: 8, overflow: 'hidden' },
-  progressBarFill: { height: '100%', borderRadius: 3 },
-  challengeMotivational: { fontSize: 11, fontStyle: 'italic' },
-  createPostCard: {
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 15 },
-  currentUserAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 12, overflow: 'hidden' },
-  avatarImage: { width: '100%', height: '100%' },
-  textInput: { flex: 1, fontSize: 14, minHeight: 38, maxHeight: 120, paddingTop: 4 },
-  composerImageWrap: {
-    width: '100%',
-    height: 164,
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginBottom: 14,
-    position: 'relative',
-  },
-  composerImagePreview: {
-    width: '100%',
-    height: '100%',
-  },
-  composerImageRemove: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   composerMediaList: {
     paddingVertical: 10,
     gap: 10,
@@ -1298,34 +892,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  videoBadge: {
-    position: 'absolute',
-    bottom: 4,
-    left: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  videoBadgeText: {
-    color: '#fff',
-    fontSize: 8,
-    fontWeight: '700',
-  },
-  postActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 12,
-    borderTopWidth: 1,
-  },
   actionButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
   actionButtonText: { fontSize: 12, marginLeft: 6, fontWeight: '600' },
-  postButton: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, minWidth: 68, alignItems: 'center' },
-  postButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
-  composerStageText: { marginTop: 8, fontSize: 12, fontStyle: 'italic' },
-  filterListContent: { paddingBottom: 20 },
-  filterChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, borderWidth: 1, marginRight: 10 },
+  filterListContent: { paddingBottom: 14, gap: 8 },
+  filterChip: { height: 36, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   filterText: { fontSize: 13, fontWeight: '600' },
   adCard: {
     borderRadius: 16,
@@ -1351,6 +921,8 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 36 },
   emptyTitle: { fontSize: 16, fontWeight: '700', marginBottom: 6 },
   emptyText: { fontSize: 13, textAlign: 'center' },
+  retryButton: { marginTop: 14, height: 42, paddingHorizontal: 20, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  retryText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   listFooterLoader: { paddingVertical: 18, alignItems: 'center', justifyContent: 'center' },
   listFooterSpace: { height: 18 },
   actionSheetBackdrop: {
@@ -1482,40 +1054,7 @@ const styles = StyleSheet.create({
   },
   commentsList: { flex: 1 },
   commentsListContent: { paddingHorizontal: 14, paddingBottom: 16 },
-  commentRow: {
-    flexDirection: 'row',
-  },
-  commentAvatar: { width: 32, height: 32, borderRadius: 16 },
-  commentContentWrap: { flex: 1, marginLeft: 10 },
-  commentMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  commentName: { fontSize: 13, fontWeight: '700' },
-  commentTime: { fontSize: 11 },
-  commentBody: { fontSize: 13, lineHeight: 18 },
   commentsLoadingWrap: { paddingVertical: 28, alignItems: 'center', justifyContent: 'center' },
-  commentComposer: {
-    borderTopWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-  },
-  commentInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 13,
-    maxHeight: 96,
-  },
-  commentSendBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    marginLeft: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   likerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1557,13 +1096,14 @@ function LikesUserListModal({ visible, onClose, postId, theme }: {
   theme: any;
 }) {
   const { data: likers, isLoading } = useCommunityPostLikes(postId);
+  const { t } = useAppLanguage();
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.modalWrap} onPress={onClose}>
         <Pressable style={[styles.modalCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
           <View style={[styles.modalHeader, { borderBottomColor: theme.borderColor }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>Likes</Text>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>{t('community.likes')}</Text>
             <TouchableOpacity onPress={onClose}>
               <X size={20} color={theme.textSecondary} />
             </TouchableOpacity>
@@ -1581,12 +1121,9 @@ function LikesUserListModal({ visible, onClose, postId, theme }: {
               contentContainerStyle={styles.commentsListContent}
               renderItem={({ item }) => (
                 <View style={[styles.likerRow, { borderBottomColor: theme.borderColor }]}>
-                  <Image 
-                    source={{ 
-                      uri: item.profilePicture || `https://ui-avatars.com/api/?name=${encodeURIComponent(item.fullName)}&background=random` 
-                    }} 
-                    style={styles.likerAvatar} 
-                  />
+                  <View style={styles.likerAvatar}>
+                    <CommunityAvatar name={item.fullName} uri={item.profilePicture} size={40} />
+                  </View>
                   <View style={styles.likerInfo}>
                     <Text style={[styles.likerName, { color: theme.text }]}>{item.fullName}</Text>
                     <Text style={[styles.likerRole, { color: theme.textSecondary }]}>
@@ -1598,7 +1135,7 @@ function LikesUserListModal({ visible, onClose, postId, theme }: {
               ListEmptyComponent={
                 <View style={styles.likesEmptyWrap}>
                   <Text style={[styles.likesEmptyText, { color: theme.textSecondary }]}>
-                    No likes yet. Be the first!
+                    {t('community.noLikes')}
                   </Text>
                 </View>
               }

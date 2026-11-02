@@ -9,7 +9,8 @@ import { useRouter } from 'expo-router';
 import { ensureE2EEIdentity } from '../src/lib/e2ee';
 
 const DEFAULT_CHANNEL_ID = 'default';
-const CALLS_CHANNEL_ID = 'calls_ringtone_v2';
+// Android never changes a channel's sound once created, so a new sound needs a new id.
+const CALLS_CHANNEL_ID = 'calls_ringtone_v3';
 const LEGACY_CALLS_CHANNEL_ID = 'calls';
 const LEGACY_CALLS_CHANNEL_V1_ID = 'calls_ringtone';
 const APPOINTMENTS_CHANNEL_ID = 'appointments';
@@ -85,9 +86,8 @@ Notifications.setNotificationHandler({
             };
         }
 
-        // We'll mirror incoming calls as local notifications while app is foregrounded
-        // to ensure action buttons are consistently visible.
-        if (notificationType === 'incoming_call' && !data?.localMirrored) {
+        // With the app open, the full-screen call screen and its ringtone handle the call. A notification would only add a second sound.
+        if (notificationType === 'incoming_call') {
             return {
                 shouldShowAlert: false,
                 shouldPlaySound: false,
@@ -184,14 +184,14 @@ export const usePushNotifications = () => {
             await Notifications.setNotificationCategoryAsync('incoming_call', [
                 {
                     identifier: 'accept',
-                    buttonTitle: 'Accept ✅',
+                    buttonTitle: 'Accept',
                     options: {
                         opensAppToForeground: true,
                     },
                 },
                 {
                     identifier: 'decline',
-                    buttonTitle: 'Decline ❌',
+                    buttonTitle: 'Decline',
                     options: {
                         // Keep true for reliability so action is always processed.
                         opensAppToForeground: true,
@@ -292,7 +292,7 @@ export const usePushNotifications = () => {
                     .update({ status: 'declined' });
 
                 if (callId) {
-                    query = query.eq('id', callId);
+                    query = query.eq('id', callId).eq('status', 'ringing');
                 } else {
                     query = query.eq('room_id', roomId).eq('status', 'ringing');
                 }
@@ -336,28 +336,6 @@ export const usePushNotifications = () => {
 
         notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
             if (__DEV__) console.log('[PushNotifications] Notification received:', notification);
-            const data = (notification?.request?.content?.data || {}) as any;
-            if (data?.type === 'incoming_call' && !data?.localMirrored) {
-                const mirroredContent: Notifications.NotificationContentInput = {
-                    title: notification.request.content.title || 'Incoming Call',
-                    body: notification.request.content.body || 'Tap to respond',
-                    sound: 'default',
-                    categoryIdentifier: 'incoming_call',
-                    data: {
-                        ...(data || {}),
-                        localMirrored: true,
-                    },
-                };
-
-                if (Platform.OS === 'android') {
-                    (mirroredContent as any).channelId = CALLS_CHANNEL_ID;
-                }
-
-                void Notifications.scheduleNotificationAsync({
-                    content: mirroredContent,
-                    trigger: null,
-                });
-            }
         });
 
         responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -548,7 +526,7 @@ async function configureAndroidNotificationChannelsAsync() {
         },
     });
 
-    const callsChannelConfig: Notifications.NotificationChannelInput = {
+    const legacyCallsChannelConfig: Notifications.NotificationChannelInput = {
         name: 'Calls',
         importance: Notifications.AndroidImportance.MAX,
         lightColor: '#FF231F7C',
@@ -562,12 +540,23 @@ async function configureAndroidNotificationChannelsAsync() {
         },
     };
 
-    // Dedicated channel for incoming calls using ringtone usage.
-    await Notifications.setNotificationChannelAsync(CALLS_CHANNEL_ID, callsChannelConfig);
+    // Dedicated channel for incoming calls, which rings with the CD4 ringtone when the app is closed.
+    await Notifications.setNotificationChannelAsync(CALLS_CHANNEL_ID, {
+        ...legacyCallsChannelConfig,
+        sound: 'call_ringtone.wav',
+        vibrationPattern: [0, 800, 1200, 800, 1200, 800, 1200, 800, 1200],
+    });
     // Backward compatibility for already-deployed payloads that may still target "calls".
-    await Notifications.setNotificationChannelAsync(LEGACY_CALLS_CHANNEL_ID, callsChannelConfig);
+    await Notifications.setNotificationChannelAsync(LEGACY_CALLS_CHANNEL_ID, legacyCallsChannelConfig);
     // Compatibility for old builds targeting first ringtone channel id.
-    await Notifications.setNotificationChannelAsync(LEGACY_CALLS_CHANNEL_V1_ID, callsChannelConfig);
+    await Notifications.setNotificationChannelAsync(LEGACY_CALLS_CHANNEL_V1_ID, legacyCallsChannelConfig);
+    // "Call in progress" reminder: it must not make a sound during the call.
+    await Notifications.setNotificationChannelAsync('ongoing_call', {
+        name: 'Call in progress',
+        importance: Notifications.AndroidImportance.LOW,
+        sound: null,
+        enableVibrate: false,
+    });
 
     // Dedicated channel for appointment updates/reminders
     await Notifications.setNotificationChannelAsync(APPOINTMENTS_CHANNEL_ID, {

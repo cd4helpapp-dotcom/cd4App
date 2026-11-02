@@ -14,11 +14,8 @@ export const APPOINTMENT_QUERY_KEYS = {
 const BOOKING_COOLDOWN_DAYS = 30;
 const BOOKING_COOLDOWN_WINDOW_MS = BOOKING_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 const BOOKING_COOLDOWN_STATUSES: Appointment['status'][] = ['pending', 'confirmed', 'completed'];
-const APPOINTMENT_NOTIFICATION_HISTORY_LIMIT = 20;
-const APPOINTMENT_NOTIFICATION_HISTORY_CHAR_LIMIT = 320;
-const CLINICAL_TRANSCRIPT_SIGNAL_PATTERN =
-    /\b(symptom|symptoms|when did|how long|since|kab se|severity|pain scale|1-10|fever|cough|cold|rash|itch|allergy|breath|breathing|pain|ache|vomit|nausea|diarrhea|constipation|period|pregnan|pcos|bp|blood pressure|sugar|diabet|thyroid|medicine|medication|tablet|dawai|dava|doctor|consult)\b/i;
-
+const APPOINTMENT_NOTIFICATION_HISTORY_LIMIT = 60;
+const APPOINTMENT_NOTIFICATION_HISTORY_CHAR_LIMIT = 1500;
 type AppointmentNotificationHistoryItem = {
     role: 'user' | 'assistant';
     content: string;
@@ -31,25 +28,6 @@ const clipText = (value: string, maxLength: number): string => {
     const text = (value || '').trim();
     if (!text) return '';
     return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
-};
-
-const isClinicalTranscriptLine = (item: AppointmentNotificationHistoryItem): boolean => {
-    const text = (item.content || '').trim();
-    if (!text) return false;
-
-    if (CLINICAL_TRANSCRIPT_SIGNAL_PATTERN.test(text)) {
-        return true;
-    }
-
-    if (item.role === 'assistant' && /\?/.test(text)) {
-        return true;
-    }
-
-    if (item.role === 'user' && text.split(/\s+/).length >= 6) {
-        return true;
-    }
-
-    return false;
 };
 
 const fetchConversationHistoryForNotification = async (args: {
@@ -66,14 +44,14 @@ const fetchConversationHistoryForNotification = async (args: {
         .select('sender, text')
         .eq('conversation_id', conversationId)
         .eq('user_id', args.userId)
-        .order('created_at', { ascending: true })
-        .limit(60);
+        .order('created_at', { ascending: false })
+        .limit(APPOINTMENT_NOTIFICATION_HISTORY_LIMIT);
 
     if (error || !Array.isArray(data)) {
         return [];
     }
 
-    const normalized = data
+    const normalized = [...data].reverse()
         .map((item: any): AppointmentNotificationHistoryItem => {
             const role: AppointmentNotificationHistoryItem['role'] = item?.sender === 'ai' ? 'assistant' : 'user';
             return {
@@ -83,13 +61,7 @@ const fetchConversationHistoryForNotification = async (args: {
         })
         .filter((item) => item.content.length > 0);
 
-    const clinicallyRelevant = normalized.filter(isClinicalTranscriptLine);
-    const finalHistory =
-        clinicallyRelevant.length >= 6
-            ? clinicallyRelevant
-            : normalized;
-
-    return finalHistory.slice(-APPOINTMENT_NOTIFICATION_HISTORY_LIMIT);
+    return normalized;
 };
 
 const buildDefaultDoctorRegistrationNumber = (userId: string) => `AUTO-${userId.replace(/-/g, '')}`;
@@ -343,7 +315,9 @@ export const useBookAppointment = () => {
             });
 
             if (verifyError || verifyData?.success === false) {
-                throw new Error(verifyData?.message || verifyError?.message || 'Payment verification failed.');
+                const failure: Error & { code?: string } = new Error(verifyData?.message || verifyError?.message || 'Payment verification failed.');
+                failure.code = verifyData?.code;
+                throw failure;
             }
 
             const appointment = { id: verifyData?.appointmentId };
@@ -408,7 +382,8 @@ export const useBookAppointment = () => {
 
             return appointment;
         },
-        onSuccess: (_, variables) => {
+        // Settled, not success: a failed verify can still end in a booking through the webhook.
+        onSettled: (_data, _error, variables) => {
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.myAppointments(session?.user?.id || '') });
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.availableSlots(variables.doctorId) });
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorAppointments(variables.doctorId) });
@@ -417,6 +392,45 @@ export const useBookAppointment = () => {
 };
 
 // --- Doctor Hooks ---
+
+const changeAppointment = async (body: Record<string, unknown>) => {
+    const { data, error } = await supabase.functions.invoke('manage-appointment-payment', { body });
+    if (error || data?.success === false) {
+        const failure: Error & { code?: string } = new Error(data?.message || error?.message || 'Could not change this appointment.');
+        failure.code = data?.code;
+        throw failure;
+    }
+    return data as { success: true; refund?: 'none' | 'started' | 'pending' };
+};
+
+export const useCancelAppointment = () => {
+    const queryClient = useQueryClient();
+    const { session } = useAuthContext();
+    return useMutation({
+        mutationFn: ({ appointmentId }: { appointmentId: string; doctorId: string }) =>
+            changeAppointment({ action: 'cancel_appointment', appointmentId }),
+        onSettled: (_data, _error, variables) => {
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.myAppointments(session?.user?.id || '') });
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.availableSlots(variables.doctorId) });
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorAppointments(variables.doctorId) });
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorSlots(variables.doctorId) });
+            queryClient.invalidateQueries({ queryKey: ['payments', 'history'] });
+        },
+    });
+};
+
+export const useRescheduleAppointment = () => {
+    const queryClient = useQueryClient();
+    const { session } = useAuthContext();
+    return useMutation({
+        mutationFn: ({ appointmentId, slotId }: { appointmentId: string; slotId: string; doctorId: string }) =>
+            changeAppointment({ action: 'reschedule_appointment', appointmentId, slotId }),
+        onSettled: (_data, _error, variables) => {
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.myAppointments(session?.user?.id || '') });
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.availableSlots(variables.doctorId) });
+        },
+    });
+};
 
 export const useDoctorSlots = () => {
     const { session } = useAuthContext();

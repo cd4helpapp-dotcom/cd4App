@@ -14,7 +14,18 @@
     "seed:test-slots": "node scripts/seed-test-slots.mjs",
     "security:check-edge-jwt": "node scripts/check-edge-jwt-policy.mjs",
     "seed:dummy-doctors": "node scripts/seed-dummy-doctors.mjs",
-    "seed:dummy-doctors:dry": "node scripts/seed-dummy-doctors.mjs --dry-run"
+    "seed:dummy-doctors:dry": "node scripts/seed-dummy-doctors.mjs --dry-run",
+    "check:edge": "node scripts/check-edge-functions.mjs",
+    "test:doctors": "node scripts/test-doctor-display.mjs && node scripts/test-voice-doctor-search.mjs",
+    "test:booking": "node scripts/test-booking-finalize.mjs",
+    "test:agent": "node scripts/test-cd4-agent.mjs",
+    "eval:agent": "node scripts/eval-cd4-ai.mjs",
+    "eval:report": "node scripts/eval-report-reading.mjs",
+    "ingest:knowledge": "node scripts/ingest-knowledge.mjs",
+    "knowledge:status": "node scripts/knowledge-status.mjs",
+    "knowledge:search": "node scripts/knowledge-status.mjs",
+    "tune:agent": "node scripts/tune-agent-thresholds.mjs",
+    "review:agent": "node scripts/export-doctor-review.mjs"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "15.0.2",
@@ -25,6 +36,7 @@
     "@supabase/supabase-js": "^2.98.0",
     "@tanstack/react-query": "^5.0.0",
     "axios": "^1.6.0",
+    "babel-preset-expo": "~58.0.0",
     "expo": "~58.0.22",
     "expo-application": "~58.1.2",
     "expo-asset": "~58.0.19",
@@ -50,6 +62,7 @@
     "expo-speech-recognition": "^58.0.1",
     "expo-splash-screen": "~58.0.12",
     "expo-status-bar": "~58.0.4",
+    "expo-system-ui": "~58.0.7",
     "expo-video": "~58.0.13",
     "expo-web-browser": "~58.0.7",
     "lucide-react-native": "^0.300.0",
@@ -76,7 +89,6 @@
     "@babel/core": "^7.29.7",
     "@types/node": "^25.2.2",
     "@types/react": "~19.3.0",
-    "expo-module-scripts": "^5.0.8",
     "typescript": "~6.0.3"
   },
   "private": true

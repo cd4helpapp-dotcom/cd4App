@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
+import { drawDoctorSignature, embedCd4Logo, loadDoctorSignature } from "../_shared/pdfBranding.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -641,6 +642,7 @@ const buildPrescriptionPdfBytes = async (args: {
   doctorRegistrationNumber: string;
   doctorRegistrationCouncil: string;
   doctorDegree: string;
+  doctorSignature: Uint8Array | null;
   patientName: string;
   consultationId: string;
   voiceText: string;
@@ -737,8 +739,9 @@ const buildPrescriptionPdfBytes = async (args: {
 
   // Header
   const indiaDateTime = formatIndiaDateTime();
-  drawText(APP_BRAND_NAME, 34, 807, 24, true, green);
-  drawText("Teleconsultation", 34, 792, 11, false, dark);
+  page.drawImage(await embedCd4Logo(pdf), { x: 28, y: 786, width: 38, height: 38 });
+  drawText(APP_BRAND_NAME, 74, 807, 18, true, green);
+  drawText("Teleconsultation", 74, 793, 10, false, dark);
   page.drawRectangle({ x: 212, y: 790, width: 170, height: 28, color: green });
   drawText("PRESCRIPTION", 255, 799, 13, true, white);
   drawText(`Date: ${indiaDateTime.date}`, 410, 807, 10, false, dark);
@@ -815,7 +818,8 @@ const buildPrescriptionPdfBytes = async (args: {
   }
 
   // Signature + declaration
-  drawText("This is a digital prescription and does not require physical signature.", 28, 208, 9, false, muted);
+  const hasSignature = await drawDoctorSignature(pdf, page, args.doctorSignature, { right: 565, bottom: 208, width: 135, height: 40 });
+  drawText(hasSignature ? "Digitally issued through CD4 and signed by the doctor named here." : "Digitally issued through CD4 by the doctor named here.", 28, 194, 9, false, muted);
   drawText(args.doctorName, 430, 194, 11, true, dark);
   drawText(args.doctorRegistrationNumber ? `Reg. No: ${args.doctorRegistrationNumber}` : "Consultant Physician", 430, 182, 9, false, muted);
 
@@ -882,7 +886,7 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
     const { data: doctorRecord } = await serviceClient
       .from("doctors")
-      .select("registration_number, registration_council, degree")
+      .select("registration_number, registration_council, degree, signature_path")
       .eq("id", user.id)
       .maybeSingle();
     const doctorName = `Dr. ${[doctorProfile?.first_name, doctorProfile?.last_name].filter(Boolean).join(" ").trim() || "Doctor"}`;
@@ -1051,6 +1055,7 @@ Deno.serve(async (req: Request) => {
       doctorRegistrationNumber,
       doctorRegistrationCouncil,
       doctorDegree,
+      doctorSignature: await loadDoctorSignature(serviceClient, doctorRecord?.signature_path),
       patientName,
       consultationId,
       voiceText: doctorText,

@@ -21,6 +21,7 @@ export const useCall = (_roomId: string) => {
         isVideoMuted: false,
         isRemoteVideoMuted: false,
         isSpeakerOn: false,
+        connectedAt: null as number | null,
         toggleAudio: () => { },
         toggleVideo: () => { },
         toggleSpeaker: () => { },

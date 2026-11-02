@@ -120,6 +120,7 @@ export default function AdminLayout() {
                 },
             }}
         >
+      {/* Tabs shown are chosen by visibleRouteNames. Do not use href: null here: expo-router 58 redirects away from such routes. */}
             <Tabs.Screen
                 name="dashboard"
                 options={{
@@ -153,7 +154,6 @@ export default function AdminLayout() {
             <Tabs.Screen
                 name="settings"
                 options={{
-                    href: null,
                     title: 'Settings',
                     tabBarLabel: 'Settings',
                     tabBarIcon: ({ color, focused }) => (
@@ -164,7 +164,6 @@ export default function AdminLayout() {
             <Tabs.Screen
                 name="profile"
                 options={{
-                    href: null,
                     title: 'Profile',
                 }}
             />
@@ -191,27 +190,24 @@ export default function AdminLayout() {
             <Tabs.Screen
                 name="ads"
                 options={{
-                    href: null,
                     title: 'Ads',
                 }}
             />
             <Tabs.Screen
                 name="doctor-profile"
                 options={{
-                    href: null,
                     title: 'Doctor Profile',
                 }}
             />
             <Tabs.Screen
                 name="support-tickets"
                 options={{
-                    href: null,
                     title: 'Support Tickets',
                 }}
             />
             <Tabs.Screen
                 name="doctor-revenue"
-                options={{ href: null, title: 'All Doctor Revenue' }}
+                options={{ title: 'All Doctor Revenue' }}
             />
         </Tabs>
     );

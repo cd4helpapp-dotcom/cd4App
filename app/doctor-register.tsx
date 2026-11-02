@@ -31,6 +31,7 @@ import {
 import { supabase, createRedirectUrl } from '../src/lib/supabase';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { pickSignatureImage, uploadDoctorSignature, type PickedSignature } from '../src/services/doctorSignature';
 import Colors from '../constants/Colors';
 import { DOCTOR_SPECIALIZATION_OPTIONS } from '../constants/DoctorOptions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -109,6 +110,7 @@ export default function DoctorRegisterScreen() {
   const [showSpecializationDropdown, setShowSpecializationDropdown] = useState(false);
   const [profileImage, setProfileImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [kycDocs, setKycDocs] = useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [signature, setSignature] = useState<PickedSignature | null>(null);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [successTitle, setSuccessTitle] = useState('Registration Submitted!');
@@ -140,6 +142,15 @@ export default function DoctorRegisterScreen() {
     }
 
     setKycDocs((prev) => [...prev, result.assets[0]]);
+  };
+
+  const chooseSignature = async () => {
+    try {
+      const picked = await pickSignatureImage();
+      if (picked) setSignature(picked);
+    } catch (error: any) {
+      showAlert('Signature', error?.message || 'Please choose a PNG or JPG image.');
+    }
   };
 
   const handleSubmit = async () => {
@@ -220,7 +231,7 @@ export default function DoctorRegisterScreen() {
       if (!hasActiveSession) {
         setSuccessTitle('Account Created');
         setSuccessSubText(
-          'Please verify your email first. After login, your account will open as doctor role automatically. Then complete doctor profile from the app.'
+          'Please verify your email first. After login, your account will open as doctor role automatically. Then complete your doctor profile, and add your signature in Settings.'
         );
         setSuccess(true);
         return;
@@ -310,6 +321,13 @@ export default function DoctorRegisterScreen() {
         }, { onConflict: 'id' });
 
       if (doctorError) throw doctorError;
+
+      // Optional, and it can be added later from Settings, so a failed upload must not fail the registration.
+      if (signature) {
+        await uploadDoctorSignature(userId, signature).catch((signatureError) => {
+          console.warn('Could not save doctor signature:', signatureError?.message);
+        });
+      }
 
       setSuccessTitle('Registration Submitted!');
       setSuccessSubText(
@@ -643,6 +661,18 @@ export default function DoctorRegisterScreen() {
             <TouchableOpacity style={styles.uploadButton} onPress={() => pickImage('kyc')} activeOpacity={0.8}>
               <Upload size={20} color={theme.textSecondary} />
               <Text style={styles.uploadBtnText}>Upload Document</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.inputWrapper}>
+            <Text style={styles.inputLabel}>Signature or Stamp (Optional)</Text>
+            <Text style={styles.helperText}>Shown on your prescriptions. Sign on plain white paper and upload a clear PNG or JPG. You can also add it later in Settings.</Text>
+            {signature ? (
+              <Image source={{ uri: signature.uri }} style={{ width: '100%', height: 90, borderRadius: 10, backgroundColor: '#FFFFFF' }} resizeMode="contain" accessibilityLabel="Your signature" />
+            ) : null}
+            <TouchableOpacity style={styles.uploadButton} onPress={chooseSignature} activeOpacity={0.8}>
+              <Upload size={20} color={theme.textSecondary} />
+              <Text style={styles.uploadBtnText}>{signature ? 'Change Signature' : 'Upload Signature'}</Text>
             </TouchableOpacity>
           </View>
 

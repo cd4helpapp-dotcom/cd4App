@@ -46,6 +46,8 @@ import { useNotificationsSystem } from '../../hooks/useNotificationsSystem';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { elevation, Radius, Spacing, Typography } from '../../constants/Design';
 import ClayIcon, { ArtBadge, iconForConcern, useClayTones, type IconComponent } from '../common/ClayIcon';
+import DoctorAvatar from '../common/DoctorAvatar';
+import { getNameInitials as getInitials } from '../../src/utils/doctors';
 
 // Kept for callers that pass a partial theme; the component reads the full palette from useAppTheme().
 type HomeTheme = {
@@ -155,29 +157,6 @@ const SHORT_DEPARTMENT_LABELS: Record<string, string> = {
 };
 const shortDepartmentLabel = (label: string) => SHORT_DEPARTMENT_LABELS[label.trim().toLowerCase()] || label;
 
-const getInitials = (name: string) =>
-    name
-        .replace(/^dr\.?\s+/i, '')
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((part) => part[0]?.toUpperCase())
-        .join('') || 'DR';
-
-// Photo when it loads, initials otherwise — including when the stored photo URL is expired or broken,
-// which previously left an empty box on the card.
-function DoctorAvatar({ uri, name, color, background }: { uri?: string | null; name: string; color: string; background: string }) {
-    const [failed, setFailed] = React.useState(false);
-    React.useEffect(() => setFailed(false), [uri]);
-    return (
-        <View style={[styles.doctorAvatar, styles.avatarFallback, { backgroundColor: background }]}>
-            <Text style={[Typography.subheading, { color }]}>{getInitials(name)}</Text>
-            {uri && !failed ? (
-                <Image source={{ uri }} style={[StyleSheet.absoluteFill, styles.doctorAvatar]} onError={() => setFailed(true)} />
-            ) : null}
-        </View>
-    );
-}
 
 function IconButton({ onPress, label, children }: { onPress: () => void; label: string; children: React.ReactNode }) {
     const { theme } = useAppTheme();
@@ -207,7 +186,7 @@ export function PatientHomeHeader({ locationCityLabel, onNotificationPress, onPr
                 <Image source={require('../../assets/images/cd4_logo.png')} style={styles.brandLogo} resizeMode="contain" />
                 <View style={styles.brandCopy}>
                     <Text style={[styles.brandName, { color: theme.text }]} numberOfLines={1}>
-                        CD4 Health
+                        CD4
                     </Text>
                     <View style={styles.locationRow}>
                         <View style={[styles.locationDot, { backgroundColor: theme.success }]} />
@@ -305,7 +284,7 @@ export function PatientHomeShowcase({
             ? promos
             : [
                   { id: 'best-doctors-fallback', tag: 'Best Doctors', title: 'Find the right specialist', description: 'Browse verified doctors and book a consultation.' },
-                  { id: 'ai-chat-fallback', tag: 'AI Assistant', title: 'Get guided health support', description: 'Share your concern and get the next best step.' },
+                  { id: 'ai-chat-fallback', tag: 'CD4 AI', title: 'Get guided health support', description: 'Share your concern and get the next best step.' },
                   { id: 'records-fallback', tag: 'Health Records', title: 'Keep your care organized', description: 'Access your reports and consultation history.' },
               ];
 
@@ -368,7 +347,7 @@ export function PatientHomeShowcase({
                     <View style={styles.heroTopRow}>
                         <View style={styles.onlinePill}>
                             <View style={styles.onlineDot} />
-                            <Text style={styles.onlinePillText}>AI health assistant</Text>
+                            <Text style={styles.onlinePillText}>CD4 AI</Text>
                         </View>
                         {isProUser ? (
                             <View style={styles.proPill}>
@@ -654,19 +633,21 @@ export function PatientHomeShowcase({
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bleed} contentContainerStyle={styles.hList} snapToInterval={272 + Spacing.md} decelerationRate="fast">
                         {doctors.slice(0, 6).map((doctor) => (
                             <View key={doctor.id} style={[styles.doctorCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
-                                <Pressable onPress={() => onDoctorProfile(doctor.id)} accessibilityRole="button" accessibilityLabel={`View ${doctor.name}'s profile`}>
+                                <Pressable style={styles.doctorMain} onPress={() => onDoctorProfile(doctor.id)} accessibilityRole="button" accessibilityLabel={`View ${doctor.name}'s profile`}>
                                     <View style={styles.doctorTop}>
-                                        <DoctorAvatar uri={doctor.image} name={doctor.name} color={theme.primary} background={theme.primarySoft} />
+                                        <DoctorAvatar uri={doctor.image} name={doctor.name} />
                                         <View style={styles.flexShrink}>
                                             <View style={styles.nameRow}>
-                                                <Text numberOfLines={1} style={[Typography.subheading, styles.flexShrink, { color: theme.text }]}>
+                                                <Text numberOfLines={2} style={[Typography.subheading, styles.flexShrink, { color: theme.text }]}>
                                                     {doctor.name}
                                                 </Text>
                                                 {doctor.isVerified ? <BadgeCheck size={16} color={theme.primary} accessibilityLabel="Verified doctor" /> : null}
                                             </View>
                                             <Text numberOfLines={1} style={[Typography.caption, { color: theme.textSecondary, marginTop: 2 }]}>
                                                 {doctor.specialization || 'Specialist'}
-                                                {doctor.experience ? ` · ${doctor.experience} yrs exp` : ''}{doctor.city ? ` · ${doctor.city}` : ''}
+                                            </Text>
+                                            <Text numberOfLines={1} style={[Typography.caption, { color: theme.textSecondary, marginTop: 1 }]}>
+                                                {[doctor.experience ? `${doctor.experience} yrs exp` : '', doctor.city || ''].filter(Boolean).join(' · ')}
                                             </Text>
                                             {/* A doctor without reviews shows "New", not a star that reads like a rating. */}
                                             {/^\d/.test(doctor.ratingLabel) ? (
@@ -885,8 +866,7 @@ const styles = StyleSheet.create({
 
     doctorCard: { width: 272, borderRadius: Radius.lg, borderWidth: 1, padding: Spacing.lg },
     doctorTop: { flexDirection: 'row', gap: Spacing.md },
-    doctorAvatar: { width: 60, height: 60, borderRadius: 16 },
-    avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+    doctorMain: { flexGrow: 1 },
     nameRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     ratingPill: {
         alignSelf: 'flex-start',

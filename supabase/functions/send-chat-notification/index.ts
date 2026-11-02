@@ -18,7 +18,7 @@ const clipText = (value: string, maxLength: number): string => {
 }
 
 const DEFAULT_CHANNEL_ID = "default"
-const CALLS_CHANNEL_ID = "calls_ringtone_v2"
+const CALLS_CHANNEL_ID = "calls_ringtone_v3"
 const parseEnvInt = (key: string, fallback: number): number => {
   const raw = Deno.env.get(key)
   const parsed = raw ? Number.parseInt(raw, 10) : NaN
@@ -284,7 +284,7 @@ Deno.serve(async (req: Request) => {
     let channelId = DEFAULT_CHANNEL_ID
 
     if (table === "call_sessions") {
-      if (record.status !== "ringing") {
+      if (record.status !== "ringing" && record.status !== "missed") {
         return jsonResponse({
           success: true,
           skipped: true,
@@ -292,12 +292,19 @@ Deno.serve(async (req: Request) => {
         })
       }
 
-      title = `📞 ${senderName}`
-      notificationBody = `Incoming ${record.type === "video" ? "Video" : "Voice"} Call...`
-      notificationData.type = "incoming_call"
+      const callLabel = record.type === "video" ? "video" : "voice"
       notificationData.callType = record.type
       notificationData.callId = record.id || null
-      channelId = CALLS_CHANNEL_ID
+      if (record.status === "missed") {
+        title = "Missed call"
+        notificationBody = `You missed a ${callLabel} call from ${senderName}`
+        notificationData.type = "missed_call"
+      } else {
+        title = senderName
+        notificationBody = `Incoming ${callLabel} call`
+        notificationData.type = "incoming_call"
+        channelId = CALLS_CHANNEL_ID
+      }
       if (!recipientPushEnabled) {
         return jsonResponse({
           success: true,
@@ -391,6 +398,8 @@ Deno.serve(async (req: Request) => {
     if (table === "call_sessions" && record.status === "ringing") {
       message.categoryId = "incoming_call"
       message.categoryIdentifier = "incoming_call"
+      // A call delivered after the phone comes back online would ring for a call that is long over.
+      message.ttl = 45
     }
 
     const expoResult = await sendExpoPush(message)

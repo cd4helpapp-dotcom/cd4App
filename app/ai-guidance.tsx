@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { DoctorCards, SlotCards, doctorDisplayName } from '../ui/ai/BookingCards';
 import { fetch as expoStreamingFetch } from 'expo/fetch';
 import TypingIndicator from '../ui/common/ThinkingIndicator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -234,6 +235,11 @@ interface BookingSlotOption {
   date?: string | null;
   startTime?: string | null;
   endTime?: string | null;
+  doctorId?: string;
+  doctorName?: string;
+  doctorSpecialization?: string;
+  doctorCity?: string;
+  doctorFee?: string;
 }
 
 type AgentToolStepStatus = 'success' | 'skipped' | 'error' | 'running';
@@ -652,9 +658,9 @@ const getInitialMessages = (concern: string, isAssistantMode: boolean, user?: an
   const capitalizedConcern = concern.charAt(0).toUpperCase() + concern.slice(1).toLowerCase();
 
   const assistantTemplates = [
-    `👋 Hello${name}! ${timeGreeting}. I am your **CD4 Health Assistant** 🩺. Please feel free to describe your symptoms or any health concerns you have today, and I will guide you step-by-step. Let me know how you are feeling! 😊`,
-    `🌸 Welcome${name}! ${timeGreeting}. I am your **CD4 Health Assistant** 🩺. Let's record your symptoms or discuss any health concerns you have today. Just type how you are feeling below to begin! 😊`,
-    `✨ Hi${name}! ${timeGreeting}. I'm your **CD4 Health Assistant** 🩺. I am here to help you note down your concerns and direct you to the right care. Please describe what is happening, and let's get started! 😊`
+    `👋 Hello${name}! ${timeGreeting}. I am your **CD4 AI** 🩺. Please feel free to describe your symptoms or any health concerns you have today, and I will guide you step-by-step. Let me know how you are feeling! 😊`,
+    `🌸 Welcome${name}! ${timeGreeting}. I am your **CD4 AI** 🩺. Let's record your symptoms or discuss any health concerns you have today. Just type how you are feeling below to begin! 😊`,
+    `✨ Hi${name}! ${timeGreeting}. I'm your **CD4 AI** 🩺. I am here to help you note down your concerns and direct you to the right care. Please describe what is happening, and let's get started! 😊`
   ];
 
   const concernTemplates = [
@@ -903,8 +909,11 @@ const formatAttachmentLabel = (attachment: PendingAttachment): string => {
   return `${attachment.name} (${sizeLabel})`;
 };
 
+const AI_ERROR_REPLY = 'I am having trouble generating a response right now. Please try again.';
+
 const buildHistoryForApi = (chatMessages: ChatMessage[], maxMessages: number = 20): AiChatHistoryMessage[] =>
   chatMessages
+    .filter((item) => item.text.trim() !== AI_ERROR_REPLY)
     .map((item) => {
       const payload: AiChatHistoryMessage & {
         doctorRecommendations?: RecommendedDoctor[];
@@ -1019,14 +1028,6 @@ const hasReadableStreamSupport = (): boolean => {
 };
 const isStreamUnsupportedError = (message: string): boolean =>
   /streaming reader is unavailable|stream unsupported|unsupported stream/i.test((message || '').toLowerCase());
-const shouldFallbackFromAgentWsToHttp = (message: string): boolean => {
-  const normalized = (message || '').toLowerCase();
-  if (!normalized) return true;
-  if (normalized.includes('mode disabled')) return true;
-  if (normalized.includes('endpoint is not configured')) return true;
-  return false;
-};
-
 const sleepFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const splitIntoReadableSegments = (text: string): string[] => {
@@ -1199,7 +1200,7 @@ export default function AiGuidanceScreen() {
   const messageCounterRef = useRef(0);
   const initialMessageKeyRef = useRef<string | null>(null);
   const draftMessageKeyRef = useRef<string | null>(null);
-  const screenTitle = isAssistantMode ? 'AI Assistant' : 'AI History & Guidance';
+  const screenTitle = 'CD4 AI';
   const screenSubTitle = isAssistantMode ? 'Describe your symptoms' : concern;
   const sessionSeed = `${concern}|${isAssistantMode ? 'assistant' : 'guided'}`;
 
@@ -1238,6 +1239,7 @@ export default function AiGuidanceScreen() {
   const conversationDrawerOffset = useRef(new Animated.Value(360)).current;
   const activeRequestTokenRef = useRef<string | null>(null);
   const streamAbortControllerRef = useRef<AbortController | null>(null);
+  const pendingRequestExtrasRef = useRef<Record<string, unknown>>({});
   const voiceAbortControllerRef = useRef<AbortController | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
   const streamCapabilityRef = useRef<'unknown' | 'supported' | 'unsupported'>('unknown');
@@ -2088,7 +2090,7 @@ export default function AiGuidanceScreen() {
   const buildConversationTitle = (seedText?: string): string => {
     const trimmedSeed = (seedText || '').trim();
     if (trimmedSeed) return trimmedSeed.slice(0, 70);
-    return isAssistantMode ? 'AI Assistant Chat' : `${concernKey} Guidance`;
+    return isAssistantMode ? 'CD4 AI Chat' : `${concernKey} Guidance`;
   };
 
   const createConversation = async (userId: string, seedText?: string): Promise<string> => {
@@ -2656,10 +2658,41 @@ export default function AiGuidanceScreen() {
           date: typeof item?.date === 'string' ? item.date : null,
           startTime: typeof item?.startTime === 'string' ? item.startTime : null,
           endTime: typeof item?.endTime === 'string' ? item.endTime : null,
+          doctorId: typeof item?.doctorId === 'string' ? item.doctorId : undefined,
+          doctorName: typeof item?.doctorName === 'string' ? item.doctorName : undefined,
+          doctorSpecialization: typeof item?.doctorSpecialization === 'string' ? item.doctorSpecialization : undefined,
+          doctorCity: typeof item?.doctorCity === 'string' ? item.doctorCity : undefined,
+          doctorFee: typeof item?.doctorFee === 'string' ? item.doctorFee : undefined,
         };
       })
       .filter((slot: BookingSlotOption | null): slot is BookingSlotOption => Boolean(slot))
-      .slice(0, 6);
+      .slice(0, 5);
+  };
+
+  const handleViewDoctorSlots = (doctor: RecommendedDoctor) => {
+    pendingRequestExtrasRef.current = { showSlotsForDoctorId: doctor.id };
+    void sendMessage(`Show available times for ${doctorDisplayName(doctor)}`);
+  };
+
+  // The payment screen checks the slot and the fee again on the server, so these only fill in what it shows first.
+  const handleSelectSlot = (slot: BookingSlotOption) => {
+    if (!slot.doctorId) return;
+    router.push({
+      pathname: '/confirm-consultation',
+      params: {
+        doctorId: slot.doctorId,
+        slotId: slot.id,
+        doctorName: slot.doctorName || 'Selected Doctor',
+        doctorSpecialization: slot.doctorSpecialization || '',
+        doctorCity: slot.doctorCity || '',
+        doctorFee: String(slot.doctorFee || '').replace(/[^0-9.]/g, ''),
+        concern: concern || '',
+        slotDate: slot.date || '',
+        slotStartTime: slot.startTime || '',
+        slotEndTime: slot.endTime || '',
+        conversationId: conversationIdRef.current || '',
+      },
+    });
   };
 
   const handleBookFromRecommendation = (doctor: RecommendedDoctor, departmentLabel?: string) => {
@@ -3002,6 +3035,8 @@ export default function AiGuidanceScreen() {
     historySource?: ChatMessage[],
     attachmentOverride?: PendingAttachment | null
   ) => {
+    const requestExtras = pendingRequestExtrasRef.current;
+    pendingRequestExtrasRef.current = {};
     const baseText = rawText.trim();
     const activeAttachment = attachmentOverride || null;
     if ((!baseText && !activeAttachment) || isLoadingConversation) {
@@ -3147,6 +3182,7 @@ export default function AiGuidanceScreen() {
             mode: isAssistantMode ? 'assistant' : 'guided',
             locationCity,
             searchAreaCity: locationCity,
+            ...requestExtras,
           },
         });
       };
@@ -3160,6 +3196,7 @@ export default function AiGuidanceScreen() {
         mode: isAssistantMode ? 'assistant' as const : 'guided' as const,
         locationCity,
         searchAreaCity: locationCity,
+            ...requestExtras,
       };
 
       const canUseAgentWebSocket = (): boolean => {
@@ -3570,15 +3607,9 @@ export default function AiGuidanceScreen() {
         } catch (wsError: any) {
           const wsMessage =
             typeof wsError?.message === 'string' ? wsError.message : 'AI websocket failed.';
-          const hadWsDraftOutput = Boolean(streamedMessageId || streamingMessageIdRef.current);
-          const allowTransportFallback =
-            !hadWsDraftOutput || shouldFallbackFromAgentWsToHttp(wsMessage);
-          console.warn(
-            allowTransportFallback
-              ? '[AI Chat] websocket failed, falling back to HTTP transport:'
-              : '[AI Chat] websocket failed, fallback suppressed to avoid duplicate AI calls:',
-            wsMessage
-          );
+          // The socket can close at any moment on a phone or when the platform recycles it. The draft is
+          // cleared below and the message is sent again over HTTP, so the patient never sees this as an error.
+          console.warn('[AI Chat] websocket failed, falling back to HTTP transport:', wsMessage);
           if (activeRequestTokenRef.current !== requestToken) {
             return;
           }
@@ -3601,9 +3632,6 @@ export default function AiGuidanceScreen() {
             }
           }
 
-          if (!responseContent && !allowTransportFallback) {
-            throw new Error(wsMessage);
-          }
         }
       }
 
@@ -3839,18 +3867,11 @@ export default function AiGuidanceScreen() {
       const errorReply: ChatMessage = {
         id: nextMessageId('a'),
         sender: 'ai',
-        text: 'I am having trouble generating a response right now. Please try again.',
+        text: AI_ERROR_REPLY,
         createdAt: nowIso(),
       };
       if (conversationIdRef.current === requestConversationId) {
         setMessages((prev) => [...prev, errorReply]);
-      }
-      if (requestConversationId) {
-        try {
-          await persistMessage(user.id, requestConversationId, errorReply);
-        } catch (persistError) {
-          console.error('Failed to persist AI error message:', persistError);
-        }
       }
     } finally {
       streamAbortControllerRef.current = null;
@@ -5028,7 +5049,11 @@ export default function AiGuidanceScreen() {
   const activeVoiceStageIndex =
     voiceLiveStage === 'idle' ? -1 : voiceStageIndexMap[voiceLiveStage as Exclude<VoiceLiveStage, 'idle'>];
 
+  const lastAiMessageId = [...messages].reverse().find((item) => item.sender === 'ai')?.id;
+
   const renderMessage = (msg: ChatMessage) => {
+    const hasSlots = msg.sender === 'ai' && Boolean(msg.bookingSlotOptions?.length);
+    const hasDoctors = msg.sender === 'ai' && !hasSlots && Boolean(msg.recommendedDoctors?.length);
     const isStreamingDraft =
       msg.sender === 'ai' &&
       isSending &&
@@ -5085,7 +5110,10 @@ export default function AiGuidanceScreen() {
         </View>
 
 
-        {msg.sender === 'ai' && msg.showConsultNow && (
+        {hasSlots ? <SlotCards slots={msg.bookingSlotOptions || []} onSelect={handleSelectSlot} /> : null}
+        {hasDoctors ? <DoctorCards doctors={msg.recommendedDoctors || []} disabled={isSending} onViewSlots={handleViewDoctorSlots} /> : null}
+
+        {msg.sender === 'ai' && msg.showConsultNow && msg.id === lastAiMessageId && !hasSlots && !hasDoctors && (
           <TouchableOpacity
             style={[
               styles.consultButton,

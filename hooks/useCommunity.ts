@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ImagePickerAsset } from 'expo-image-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../src/lib/supabase';
 import { normalizeStorageObjectPath, resolveStorageSignedUrlsByPath } from '../src/utils/storageSignedUrl';
 import { SUPABASE_PROFILE_MEDIA_BUCKET } from '../constants/Config';
@@ -21,6 +22,7 @@ export type CommunityPost = {
   isPinned: boolean;
   createdAt: string;
   likedByMe: boolean;
+  followedByMe: boolean;
   author: {
     id: string;
     fullName: string;
@@ -38,6 +40,7 @@ export type CommunityComment = {
   parentId?: string | null;
   content: string;
   createdAt: string;
+  isPending?: boolean;
   author: {
     id: string;
     fullName: string;
@@ -68,6 +71,7 @@ export const COMMUNITY_QUERY_KEYS = {
   comments: (postId: string | null) => [...COMMUNITY_QUERY_KEYS_ROOT, 'comments', postId || 'none'] as const,
   likes: (postId: string | null) => [...COMMUNITY_QUERY_KEYS_ROOT, 'post-likes', postId || 'none'] as const,
   post: (postId: string | null, userId: string | null) => [...COMMUNITY_QUERY_KEYS_ROOT, 'post', postId || 'none', userId || 'anon'] as const,
+  authorPosts: (authorId: string | null, userId: string | null) => [...COMMUNITY_QUERY_KEYS_ROOT, 'author-posts', authorId || 'none', userId || 'anon'] as const,
 };
 
 const FEED_PAGE_SIZE = 15;
@@ -126,6 +130,30 @@ const resolveCommunityMediaPath = (rawValue: unknown): { path: string | null; di
   }
 
   return { path: null, directUrl: value };
+};
+
+// Fetches every picture link on a feed page in one request. getCommunityMediaAccessUrl then finds them in the cache.
+const primeCommunitySignedUrls = async (values: unknown[]) => {
+  const now = Date.now();
+  const paths = Array.from(
+    new Set(
+      values
+        .map((value) => resolveCommunityMediaPath(value).path)
+        .filter((path): path is string => {
+          if (!path) return false;
+          const cached = communitySignedUrlCache.get(path);
+          return !(cached && cached.expiresAt - COMMUNITY_MEDIA_SIGNED_URL_RENEW_BUFFER_MS > now);
+        })
+    )
+  );
+  if (!paths.length) return;
+
+  const { data } = await supabase.storage.from(COMMUNITY_MEDIA_BUCKET).createSignedUrls(paths, COMMUNITY_MEDIA_SIGNED_URL_TTL_SECONDS);
+  (data || []).forEach((item) => {
+    if (item?.path && item?.signedUrl) {
+      communitySignedUrlCache.set(item.path, { url: item.signedUrl, expiresAt: now + COMMUNITY_MEDIA_SIGNED_URL_TTL_SECONDS * 1000 });
+    }
+  });
 };
 
 const getCommunityMediaAccessUrl = async (rawValue: unknown): Promise<string | null> => {
@@ -372,7 +400,9 @@ const resolveRoleSlug = (rolesValue: any): 'doctor' | 'patient' | 'admin' | 'unk
 };
 
 const formatFullName = (firstName: string | null | undefined, lastName: string | null | undefined): string => {
-  const fullName = `${firstName || ''} ${lastName || ''}`.trim();
+  // Some profiles have "-" saved as a last name.
+  const part = (value: string | null | undefined) => (/[\p{L}\p{N}]/u.test(value || '') ? String(value).trim() : '');
+  const fullName = `${part(firstName)} ${part(lastName)}`.trim();
   return fullName || 'Community Member';
 };
 
@@ -416,8 +446,9 @@ const mapCommunityPostRowToModel = async (args: {
   row: any;
   authorMap: Map<string, CommunityPost['author']>;
   likedSet: Set<string>;
+  followingSet?: Set<string>;
 }): Promise<CommunityPost> => {
-  const { row, authorMap, likedSet } = args;
+  const { row, authorMap, likedSet, followingSet } = args;
   const authorId = typeof row?.author_id === 'string' ? row.author_id : '';
   const fallbackAuthor: CommunityPost['author'] = {
     id: authorId,
@@ -447,6 +478,7 @@ const mapCommunityPostRowToModel = async (args: {
     isPinned: Boolean(row?.is_pinned),
     createdAt: typeof row?.created_at === 'string' ? row.created_at : new Date().toISOString(),
     likedByMe: likedSet.has(String(row.id)),
+    followedByMe: Boolean(followingSet?.has(authorId)),
     author: authorMap.get(authorId) || fallbackAuthor,
   };
 };
@@ -531,9 +563,39 @@ const fetchActiveCommunityAds = async (): Promise<CommunityAd[]> => {
   );
 };
 
+// The last feed is kept on the phone, so the tab shows posts at once and refreshes behind them, even on a slow connection.
+const FEED_DISK_KEY = (userId: string) => `cd4.community.feed.v1.${userId}`;
+const FEED_DISK_MEDIA_MAX_AGE_MS = COMMUNITY_MEDIA_SIGNED_URL_TTL_SECONDS * 1000 - 5 * 60 * 1000;
+
+const saveFeedToDisk = async (userId: string, page: CommunityFeedPage) => {
+  try {
+    await AsyncStorage.setItem(FEED_DISK_KEY(userId), JSON.stringify({ savedAt: Date.now(), page: { ...page, ads: [] } }));
+  } catch {
+    // The feed works without this.
+  }
+};
+
+export const hydrateCommunityFeedFromDisk = async (queryClient: ReturnType<typeof useQueryClient>, userId: string) => {
+  const queryKey = COMMUNITY_QUERY_KEYS.feed(userId);
+  if (queryClient.getQueryData(queryKey)) return;
+  try {
+    const raw = await AsyncStorage.getItem(FEED_DISK_KEY(userId));
+    if (!raw || queryClient.getQueryData(queryKey)) return;
+    const { savedAt, page } = JSON.parse(raw);
+    if (!Array.isArray(page?.posts)) return;
+    // Picture links stop working after a while, so old ones are dropped until the refresh brings new ones.
+    const linksExpired = Date.now() - Number(savedAt) > FEED_DISK_MEDIA_MAX_AGE_MS;
+    const posts = linksExpired ? page.posts.map((post: CommunityPost) => ({ ...post, imageUrl: null, media: undefined })) : page.posts;
+    queryClient.setQueryData(queryKey, { pages: [{ ...page, posts }], pageParams: [null] }, { updatedAt: Number(savedAt) || 0 });
+  } catch {
+    // The feed works without this.
+  }
+};
+
 const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCursor): Promise<CommunityFeedPage> => {
   const isFirstPage = !cursor;
-  const { blockedUserIds, mutedKeywords } = await loadCommunityUserPreferences(userId);
+  // A problem with an advert should not take the whole feed down.
+  const adsPromise: Promise<CommunityAd[]> = isFirstPage ? fetchActiveCommunityAds().catch(() => []) : Promise.resolve([]);
 
   let regularQuery = supabase
     .from('community_posts')
@@ -551,7 +613,8 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
     regularQuery = regularQuery.lt('created_at', cursor.createdAt);
   }
 
-  const [regularResult, pinnedResult] = await Promise.all([
+  const [{ blockedUserIds, mutedKeywords }, regularResult, pinnedResult] = await Promise.all([
+    loadCommunityUserPreferences(userId),
     regularQuery,
     isFirstPage
       ? supabase
@@ -592,27 +655,32 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
     new Set(combinedRows.map((row: any) => (typeof row?.author_id === 'string' ? row.author_id : '')).filter(Boolean))
   );
 
-  const authorMap = await loadAuthorMap(authorIds);
-
   const postIds = combinedRows
     .map((row: any) => row.id)
     .filter((id: unknown): id is string => typeof id === 'string');
-  const likedSet = new Set<string>();
-  if (postIds.length > 0) {
-    const { data: likeRows, error: likeError } = await supabase
-      .from('community_post_likes')
-      .select('post_id')
-      .eq('user_id', userId)
-      .in('post_id', postIds);
 
-    if (likeError) {
-      throw likeError;
-    }
+  const [authorMap, likeResult, followResult] = await Promise.all([
+    loadAuthorMap(authorIds),
+    postIds.length > 0
+      ? supabase.from('community_post_likes').select('post_id').eq('user_id', userId).in('post_id', postIds)
+      : Promise.resolve({ data: [], error: null }),
+    authorIds.length > 0
+      ? supabase.from('community_follows').select('following_id').eq('follower_id', userId).in('following_id', authorIds)
+      : Promise.resolve({ data: [], error: null }),
+    primeCommunitySignedUrls(combinedRows.map((row: any) => row?.image_url)),
+  ]);
 
-    (likeRows || []).forEach((row: any) => {
-      if (typeof row?.post_id === 'string') likedSet.add(row.post_id);
-    });
+  if (likeResult.error) {
+    throw likeResult.error;
   }
+
+  // A Follow button that is wrong should not stop people reading the feed.
+  const followingSet = new Set<string>(((followResult as any).data || []).map((row: any) => String(row?.following_id || '')));
+
+  const likedSet = new Set<string>();
+  (likeResult.data || []).forEach((row: any) => {
+    if (typeof row?.post_id === 'string') likedSet.add(row.post_id);
+  });
 
   const posts: CommunityPost[] = await Promise.all(
     combinedRows.map((row: any) =>
@@ -620,12 +688,15 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
         row,
         authorMap,
         likedSet,
+        followingSet,
       })
     )
   );
 
-  const ads = isFirstPage ? await fetchActiveCommunityAds() : [];
-  return { posts, ads, nextCursor };
+  const ads = await adsPromise;
+  const page = { posts, ads, nextCursor };
+  if (isFirstPage) void saveFeedToDisk(userId, page);
+  return page;
 };
 
 const fetchPostComments = async (postId: string): Promise<CommunityComment[]> => {
@@ -633,15 +704,16 @@ const fetchPostComments = async (postId: string): Promise<CommunityComment[]> =>
     data: { session },
   } = await supabase.auth.getSession();
   const activeUserId = session?.user?.id || null;
-  const preferences = activeUserId ? await loadCommunityUserPreferences(activeUserId) : null;
-
-  const { data: commentRows, error: commentError } = await supabase
-    .from('community_post_comments')
-    .select('id, post_id, author_id, parent_id, content, created_at')
-    .eq('post_id', postId)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: true })
-    .limit(200);
+  const [preferences, { data: commentRows, error: commentError }] = await Promise.all([
+    activeUserId ? loadCommunityUserPreferences(activeUserId) : null,
+    supabase
+      .from('community_post_comments')
+      .select('id, post_id, author_id, parent_id, content, created_at')
+      .eq('post_id', postId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(200),
+  ]);
 
   if (commentError) {
     throw commentError;
@@ -687,10 +759,13 @@ const fetchPostComments = async (postId: string): Promise<CommunityComment[]> =>
 const treeSortComments = (comments: CommunityComment[]): CommunityComment[] => {
   if (comments.length === 0) return [];
 
+  // A reply whose parent was deleted stays visible, as a normal comment.
+  const knownIds = new Set(comments.map((c) => c.id));
+
   // Group by parentId
   const childrenMap = new Map<string | null, CommunityComment[]>();
   comments.forEach((c) => {
-    const pid = c.parentId || null;
+    const pid = c.parentId && knownIds.has(c.parentId) ? c.parentId : null;
     if (!childrenMap.has(pid)) childrenMap.set(pid, []);
     childrenMap.get(pid)!.push(c);
   });
@@ -760,6 +835,33 @@ export const patchFeedPostsInCache = (
     if (changed) {
       queryClient.setQueryData(queryKey, { ...cache, pages: nextPages });
     }
+  });
+
+  // The same post can also be on a profile or its own screen.
+  queryClient.getQueriesData<CommunityPost[]>({ queryKey: ['community', 'author-posts'] }).forEach(([queryKey, cache]) => {
+    if (!Array.isArray(cache) || !cache.some((post) => post.id === postId)) return;
+    queryClient.setQueryData(queryKey, cache.map((post) => (post.id === postId ? updater(post) : post)));
+  });
+  queryClient.getQueriesData<CommunityPost>({ queryKey: ['community', 'post', postId] }).forEach(([queryKey, cache]) => {
+    if (cache) queryClient.setQueryData(queryKey, updater(cache));
+  });
+};
+
+export const patchAuthorFollowInCache = (
+  queryClient: ReturnType<typeof useQueryClient>,
+  authorId: string,
+  following: boolean
+) => {
+  const patch = (post: CommunityPost) => (post.authorId === authorId ? { ...post, followedByMe: following } : post);
+  queryClient.getQueriesData<any>({ queryKey: ['community', 'feed'] }).forEach(([queryKey, cache]) => {
+    if (!cache?.pages) return;
+    queryClient.setQueryData(queryKey, {
+      ...cache,
+      pages: cache.pages.map((page: any) => ({ ...page, posts: (page.posts || []).map(patch) })),
+    });
+  });
+  queryClient.getQueriesData<CommunityPost[]>({ queryKey: ['community', 'author-posts'] }).forEach(([queryKey, cache]) => {
+    if (Array.isArray(cache)) queryClient.setQueryData(queryKey, cache.map(patch));
   });
 };
 
@@ -834,6 +936,42 @@ const fetchCommunityPostById = async (postId: string, userId: string | null): Pr
   });
 };
 
+const fetchCommunityAuthorPosts = async (authorId: string, userId: string | null): Promise<CommunityPost[]> => {
+  const { data: rows, error } = await supabase
+    .from('community_posts')
+    .select(
+      'id, author_id, body, image_url, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
+    )
+    .eq('author_id', authorId)
+    .is('deleted_at', null)
+    .eq('status', 'published')
+    .order('created_at', { ascending: false })
+    .limit(20);
+  if (error) throw error;
+
+  const postRows = rows || [];
+  const postIds = postRows.map((row: any) => String(row.id));
+  const [authorMap, likeResult] = await Promise.all([
+    loadAuthorMap(postRows.length ? [authorId] : []),
+    userId && postIds.length
+      ? supabase.from('community_post_likes').select('post_id').eq('user_id', userId).in('post_id', postIds)
+      : Promise.resolve({ data: [], error: null }),
+    primeCommunitySignedUrls(postRows.map((row: any) => row?.image_url)),
+  ]);
+  if (likeResult.error) throw likeResult.error;
+
+  const likedSet = new Set<string>((likeResult.data || []).map((row: any) => String(row?.post_id || '')));
+  return Promise.all(postRows.map((row: any) => mapCommunityPostRowToModel({ row, authorMap, likedSet })));
+};
+
+export const useCommunityAuthorPosts = (authorId: string | null, userId: string | null) =>
+  useQuery({
+    queryKey: COMMUNITY_QUERY_KEYS.authorPosts(authorId, userId),
+    queryFn: () => fetchCommunityAuthorPosts(authorId as string, userId),
+    enabled: Boolean(authorId),
+    staleTime: 30 * 1000,
+  });
+
 export const useCommunityFeed = (userId: string | null) =>
   useInfiniteQuery({
     queryKey: COMMUNITY_QUERY_KEYS.feed(userId),
@@ -844,6 +982,17 @@ export const useCommunityFeed = (userId: string | null) =>
     staleTime: 30 * 1000,
   });
 
+// Loaded shortly after sign-in so the tab opens with posts already on screen.
+export const prefetchCommunityFeed = async (queryClient: ReturnType<typeof useQueryClient>, userId: string) => {
+  await hydrateCommunityFeedFromDisk(queryClient, userId);
+  await queryClient.prefetchInfiniteQuery({
+    queryKey: COMMUNITY_QUERY_KEYS.feed(userId),
+    queryFn: ({ pageParam }) => fetchCommunityFeedPage(userId, pageParam as CommunityFeedCursor),
+    initialPageParam: null as CommunityFeedCursor,
+    staleTime: 30 * 1000,
+  });
+};
+
 export const useCommunityPost = (postId: string | null, userId: string | null) =>
   useQuery({
     queryKey: COMMUNITY_QUERY_KEYS.post(postId, userId),
@@ -852,7 +1001,7 @@ export const useCommunityPost = (postId: string | null, userId: string | null) =
     staleTime: 30 * 1000,
   });
 
-export const useCommunityComments = (postId: string | null, enabled: boolean = true) => {
+export const useCommunityComments = (postId: string | null, enabled: boolean = true, viewerId: string | null = null) => {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -902,6 +1051,8 @@ export const useCommunityComments = (postId: string | null, enabled: boolean = t
 
           if (eventType === 'INSERT' && nextId) {
             const authorId = typeof nextRow?.author_id === 'string' ? nextRow.author_id : '';
+            // The viewer's own comment is already on screen and already counted.
+            if (viewerId && authorId === viewerId) return;
             const newComment: CommunityComment = {
               id: nextId,
               postId: typeof nextRow?.post_id === 'string' ? nextRow.post_id : postId,
@@ -918,11 +1069,9 @@ export const useCommunityComments = (postId: string | null, enabled: boolean = t
               },
             };
 
-            queryClient.setQueryData<CommunityComment[]>(COMMUNITY_QUERY_KEYS.comments(postId), (previous) => {
-              const list = Array.isArray(previous) ? previous : [];
-              if (list.some((item) => item.id === newComment.id)) return list;
-              return treeSortComments([...list, newComment]);
-            });
+            const existing = queryClient.getQueryData<CommunityComment[]>(COMMUNITY_QUERY_KEYS.comments(postId)) || [];
+            if (existing.some((item) => item.id === newComment.id)) return;
+            queryClient.setQueryData<CommunityComment[]>(COMMUNITY_QUERY_KEYS.comments(postId), treeSortComments([...existing, newComment]));
             bumpFeedCommentCountCache(queryClient, postId, 1);
             if (authorId) {
               pendingAuthorIds.add(authorId);
@@ -946,6 +1095,15 @@ export const useCommunityComments = (postId: string | null, enabled: boolean = t
           }
 
           if (eventType === 'UPDATE' && nextId) {
+            // Comments are deleted by marking them.
+            if (nextRow?.deleted_at) {
+              const list = queryClient.getQueryData<CommunityComment[]>(COMMUNITY_QUERY_KEYS.comments(postId)) || [];
+              if (list.some((item) => item.id === nextId)) {
+                queryClient.setQueryData<CommunityComment[]>(COMMUNITY_QUERY_KEYS.comments(postId), list.filter((item) => item.id !== nextId));
+                bumpFeedCommentCountCache(queryClient, postId, -1);
+              }
+              return;
+            }
             const updatedContent = typeof nextRow?.content === 'string' ? nextRow.content : null;
             if (updatedContent === null) return;
             queryClient.setQueryData<CommunityComment[]>(COMMUNITY_QUERY_KEYS.comments(postId), (previous) => {
@@ -976,7 +1134,7 @@ export const useCommunityComments = (postId: string | null, enabled: boolean = t
       }
       void supabase.removeChannel(channel);
     };
-  }, [postId, enabled, queryClient]);
+  }, [postId, enabled, queryClient, viewerId]);
 
   return useQuery({
     queryKey: COMMUNITY_QUERY_KEYS.comments(postId),
@@ -1009,31 +1167,28 @@ export const useToggleCommunityLike = (userId: string | null) => {
           post_id: payload.postId,
           user_id: userId,
         });
-        if (error) throw error;
+        // Already liked on another device: that is the state the person asked for.
+        if (error && (error as any).code !== '23505') throw error;
       }
 
       return true;
     },
-    onMutate: async (payload) => {
-      await queryClient.cancelQueries({ queryKey: ['community', 'feed'] });
-      const snapshots = captureFeedCacheSnapshots(queryClient);
-      const nextLiked = !payload.currentlyLiked;
-      const delta = payload.currentlyLiked ? -1 : 1;
-      patchFeedPostsInCache(queryClient, payload.postId, (post) => ({
-        ...post,
-        likedByMe: nextLiked,
-        likeCount: Math.max(0, Number(post.likeCount || 0) + delta),
-      }));
-      return { snapshots };
+    onMutate: (payload) => {
+      const setLiked = (liked: boolean) =>
+        patchFeedPostsInCache(queryClient, payload.postId, (post) => ({
+          ...post,
+          likedByMe: liked,
+          likeCount: Math.max(0, Number(post.likeCount || 0) + (liked ? 1 : -1)),
+        }));
+      setLiked(!payload.currentlyLiked);
+      return { undo: () => setLiked(payload.currentlyLiked) };
     },
+    // Only this tap is undone. Restoring a snapshot would also erase a like on another post made meanwhile.
     onError: (_error, _payload, context) => {
-      restoreFeedCacheSnapshots(queryClient, context?.snapshots);
+      context?.undo();
     },
-    onSettled: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: COMMUNITY_QUERY_KEYS.feed(userId),
-        refetchType: 'none',
-      });
+    onSettled: (_data, _error, payload) => {
+      queryClient.invalidateQueries({ queryKey: COMMUNITY_QUERY_KEYS.likes(payload.postId) });
     },
   });
 };
@@ -1074,7 +1229,12 @@ export const useCommunityPostLikes = (postId: string | null) => {
 export const useAddCommunityComment = (userId: string | null) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (payload: { postId: string; content: string; parentId?: string | null }) => {
+    mutationFn: async (payload: {
+      postId: string;
+      content: string;
+      parentId?: string | null;
+      author: CommunityComment['author'];
+    }) => {
       if (!userId) {
         throw new Error('Please login to comment.');
       }
@@ -1083,21 +1243,85 @@ export const useAddCommunityComment = (userId: string | null) => {
         throw new Error(validation.message || 'Comment validation failed.');
       }
 
-      const { error } = await supabase.from('community_post_comments').insert({
-        post_id: payload.postId,
-        author_id: userId,
-        parent_id: payload.parentId || null,
-        content: payload.content.trim(),
-      });
+      const { data, error } = await supabase
+        .from('community_post_comments')
+        .insert({
+          post_id: payload.postId,
+          author_id: userId,
+          parent_id: payload.parentId || null,
+          content: payload.content.trim(),
+        })
+        .select('id, created_at')
+        .single();
       if (error) throw error;
 
-      return true;
+      return { id: String(data.id), createdAt: String(data.created_at) };
     },
-    onSuccess: async (_, vars) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: COMMUNITY_QUERY_KEYS.feed(userId) }),
-        queryClient.invalidateQueries({ queryKey: COMMUNITY_QUERY_KEYS.comments(vars.postId) }),
-      ]);
+    // The comment appears at once. Only the row and the count change, so the feed does not reload for one comment.
+    onMutate: (payload) => {
+      const queryKey = COMMUNITY_QUERY_KEYS.comments(payload.postId);
+      const tempId = `pending-${Date.now()}`;
+      const list = queryClient.getQueryData<CommunityComment[]>(queryKey) || [];
+      queryClient.setQueryData<CommunityComment[]>(
+        queryKey,
+        treeSortComments([
+          ...list,
+          {
+            id: tempId,
+            postId: payload.postId,
+            authorId: userId || '',
+            parentId: payload.parentId || null,
+            content: payload.content.trim(),
+            createdAt: new Date().toISOString(),
+            isPending: true,
+            author: payload.author,
+          },
+        ])
+      );
+      bumpFeedCommentCountCache(queryClient, payload.postId, 1);
+      return { tempId };
+    },
+    onSuccess: (saved, payload, context) => {
+      const queryKey = COMMUNITY_QUERY_KEYS.comments(payload.postId);
+      const list = queryClient.getQueryData<CommunityComment[]>(queryKey) || [];
+      queryClient.setQueryData<CommunityComment[]>(
+        queryKey,
+        treeSortComments(
+          list.map((item) => (item.id === context?.tempId ? { ...item, id: saved.id, createdAt: saved.createdAt, isPending: false } : item))
+        )
+      );
+    },
+    onError: (_error, payload, context) => {
+      const queryKey = COMMUNITY_QUERY_KEYS.comments(payload.postId);
+      const list = queryClient.getQueryData<CommunityComment[]>(queryKey) || [];
+      queryClient.setQueryData<CommunityComment[]>(queryKey, treeSortComments(list.filter((item) => item.id !== context?.tempId)));
+      bumpFeedCommentCountCache(queryClient, payload.postId, -1);
+    },
+  });
+};
+
+export const useDeleteCommunityComment = (userId: string | null) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: { postId: string; commentId: string }) => {
+      if (!userId) throw new Error('Please login to delete comments.');
+      const { error } = await supabase
+        .from('community_post_comments')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', payload.commentId)
+        .eq('author_id', userId);
+      if (error) throw error;
+    },
+    onMutate: (payload) => {
+      const queryKey = COMMUNITY_QUERY_KEYS.comments(payload.postId);
+      const list = queryClient.getQueryData<CommunityComment[]>(queryKey) || [];
+      queryClient.setQueryData<CommunityComment[]>(queryKey, treeSortComments(list.filter((item) => item.id !== payload.commentId)));
+      bumpFeedCommentCountCache(queryClient, payload.postId, -1);
+      return { list };
+    },
+    onError: (_error, payload, context) => {
+      if (context?.list) queryClient.setQueryData(COMMUNITY_QUERY_KEYS.comments(payload.postId), context.list);
+      bumpFeedCommentCountCache(queryClient, payload.postId, 1);
     },
   });
 };

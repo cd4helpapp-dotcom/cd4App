@@ -5,6 +5,8 @@ declare const Deno: {
 };
 // @ts-ignore - resolved by Deno runtime/module resolver.
 import { createClient } from "npm:@supabase/supabase-js@2";
+// @ts-ignore - resolved by Deno runtime/module resolver.
+import { finalizePaidBooking, notifyAppointmentChange, refundPayment, SLOT_REFUNDED_MESSAGE } from "../_shared/appointmentBooking.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +16,12 @@ const corsHeaders = {
 const APPOINTMENT_FEE_INR = 500;
 const DOCTOR_SHARE_RATIO = 0.7;
 const PLATFORM_SHARE_RATIO = 0.3;
+const SLOT_HOLD_MINUTES = 5;
+
+const formatSlotForMessage = (date: string, startTime: string) => {
+  const start = new Date(`${date}T${String(startTime || "00:00:00").slice(0, 8)}+05:30`);
+  return start.toLocaleString("en-IN", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+};
 
 const jsonResponse = (payload: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -95,6 +103,12 @@ Deno.serve(async (req: Request) => {
       const appointmentType = String(body?.appointmentType || "consultation").trim() === "second_opinion"
         ? "second_opinion"
         : "consultation";
+      // Kept on the order so the webhook can prepare the doctor's PDF if the patient closes the app after paying.
+      const bookingContext = {
+        concern: String(body?.concern || "").trim().slice(0, 300) || undefined,
+        conversation_id: String(body?.conversationId || "").trim() || undefined,
+        ai_report_id: String(body?.aiReportId || "").trim() || undefined,
+      };
 
       // Guards before any money moves. These return HTTP 200 + success:false so the app can show the message.
       const { data: slotRow } = await serviceClient
@@ -128,6 +142,21 @@ Deno.serve(async (req: Request) => {
         const nextDate = new Date(new Date(recent.created_at).getTime() + 30 * 24 * 60 * 60 * 1000)
           .toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
         return jsonResponse({ success: false, code: "booking_cooldown", message: `You already booked this doctor in the last 30 days. You can book again on ${nextDate}.` });
+      }
+
+      // Hold the slot while another patient is on the payment screen. The refund in finalizePaidBooking covers the rest.
+      const holdSince = new Date(Date.now() - SLOT_HOLD_MINUTES * 60 * 1000).toISOString();
+      const { data: otherHold } = await serviceClient
+        .from("appointment_payments")
+        .select("id")
+        .eq("slot_id", slotId)
+        .eq("status", "created")
+        .neq("patient_id", patientId)
+        .gte("created_at", holdSince)
+        .limit(1)
+        .maybeSingle();
+      if (otherHold?.id) {
+        return jsonResponse({ success: false, code: "slot_on_hold", message: "Another patient is completing payment for this slot. Please choose another slot, or try again in a few minutes." });
       }
 
       // Fetch the doctor's fee from the doctors_public table
@@ -170,7 +199,7 @@ Deno.serve(async (req: Request) => {
           doctor_share: doctorShare,
           platform_commission: platformShare,
           currency: "INR",
-          metadata: { mode: IS_RAZORPAY_LIVE ? "live" : "test", action: "create_order", appointment_type: appointmentType },
+          metadata: { mode: IS_RAZORPAY_LIVE ? "live" : "test", action: "create_order", appointment_type: appointmentType, booking_context: bookingContext },
         })
         .select("id, order_id, gross_amount, doctor_share, platform_commission, currency")
         .single();
@@ -208,8 +237,11 @@ Deno.serve(async (req: Request) => {
         .maybeSingle();
 
       if (fetchError || !paymentRow) return jsonResponse({ success: false, message: "payment_not_found" }, 404);
-      if (String(paymentRow.status) === "paid" && paymentRow.appointment_id) {
+      if (paymentRow.appointment_id) {
         return jsonResponse({ success: true, alreadyBooked: true, appointmentId: paymentRow.appointment_id });
+      }
+      if (String(paymentRow.status) === "refunded") {
+        return jsonResponse({ success: false, code: "slot_taken_refunded", message: SLOT_REFUNDED_MESSAGE });
       }
       if (doctorId && doctorId !== String(paymentRow.doctor_id || "")) {
         return jsonResponse({ success: false, message: "doctor_mismatch_for_order" }, 400);
@@ -226,6 +258,9 @@ Deno.serve(async (req: Request) => {
         if (expected !== signature) {
           return jsonResponse({ success: false, message: "invalid_payment_signature" }, 400);
         }
+      } else if (paymentRow.metadata?.mode !== "test") {
+        // Only an order created without Razorpay keys has no signature to check.
+        return jsonResponse({ success: false, message: "invalid_payment_signature" }, 400);
       }
 
       const boundDoctorId = String(paymentRow.doctor_id || "");
@@ -234,29 +269,60 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, message: "payment_row_missing_bound_entities" }, 400);
       }
 
-      const { data: finalizeRows, error: finalizeError } = await serviceClient.rpc("finalize_appointment_payment", {
-        p_payment_id: paymentRow.id,
-        p_patient_id: patientId,
-        p_razorpay_payment_id: paymentId,
-        p_signature: signature,
-        p_ai_report_id: aiReportId,
-      });
-
-      if (finalizeError) {
-        return jsonResponse({ success: false, message: finalizeError.message || "finalize_payment_failed" }, 400);
-      }
-
-      const finalize = Array.isArray(finalizeRows) ? finalizeRows[0] : finalizeRows;
-      if (!finalize?.success) {
-        return jsonResponse({ success: false, message: finalize?.message || "finalize_payment_failed" }, 400);
+      const booking = await finalizePaidBooking({ serviceClient, paymentRow, razorpayPaymentId: paymentId, signature, aiReportId });
+      if (!booking.success) {
+        // Lost-slot outcomes use HTTP 200 so the app can read the code and show the refund message.
+        const isLostSlot = String(booking.code).startsWith("slot_taken");
+        return jsonResponse({ success: false, code: booking.code, message: booking.message }, isLostSlot ? 200 : 400);
       }
 
       return jsonResponse({
         success: true,
-        alreadyBooked: finalize?.message === "already_booked",
-        appointmentId: finalize?.appointment_id,
+        alreadyBooked: booking.alreadyBooked,
+        appointmentId: booking.appointmentId,
         paymentId,
       });
+    }
+
+    if (action === "cancel_appointment") {
+      const { data: result, error } = await serviceClient.rpc("cancel_appointment_booking", {
+        p_appointment_id: String(body?.appointmentId || "").trim(),
+        p_actor_id: patientId,
+      });
+      if (error) return jsonResponse({ success: false, message: error.message || "cancel_failed" }, 400);
+      if (!result?.success) return jsonResponse({ success: false, code: result?.message, message: result?.message });
+
+      let refund = "none";
+      if (result.payment_row_id && result.razorpay_payment_id) {
+        refund = (await refundPayment(serviceClient, result.payment_row_id, result.razorpay_payment_id, "appointment_cancelled")) ? "started" : "pending";
+      }
+      const when = formatSlotForMessage(result.date, result.start_time);
+      const appointmentData = { appointmentId: body?.appointmentId };
+      await Promise.all(
+        result.cancelled_by === "patient"
+          ? [notifyAppointmentChange({ serviceClient, userId: result.doctor_id, title: "Appointment cancelled", body: `The patient cancelled the consultation on ${when}. The slot is open again.`, data: appointmentData })]
+          : [notifyAppointmentChange({ serviceClient, userId: result.patient_id, title: "Appointment cancelled", body: `Your doctor cancelled the consultation on ${when}. You will get a full refund. Please book another slot.`, data: appointmentData })]
+      );
+      return jsonResponse({ success: true, refund });
+    }
+
+    if (action === "reschedule_appointment") {
+      const { data: result, error } = await serviceClient.rpc("reschedule_appointment_booking", {
+        p_appointment_id: String(body?.appointmentId || "").trim(),
+        p_patient_id: patientId,
+        p_new_slot_id: String(body?.slotId || "").trim(),
+      });
+      if (error) return jsonResponse({ success: false, message: error.message || "reschedule_failed" }, 400);
+      if (!result?.success) return jsonResponse({ success: false, code: result?.message, message: result?.message });
+
+      await notifyAppointmentChange({
+        serviceClient,
+        userId: result.doctor_id,
+        title: "Appointment rescheduled",
+        body: `A patient moved their consultation to ${formatSlotForMessage(result.date, result.start_time)}.`,
+        data: { appointmentId: body?.appointmentId },
+      });
+      return jsonResponse({ success: true });
     }
 
     return jsonResponse({ success: false, message: "unsupported_action" }, 400);

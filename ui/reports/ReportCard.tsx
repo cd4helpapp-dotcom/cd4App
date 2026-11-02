@@ -1,23 +1,25 @@
 import React from 'react';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { AlertTriangle, CheckCircle2, ChevronRight, Clock, FileText, FlaskConical, MessageCircle, Pill, RefreshCw, Trash2 } from 'lucide-react-native';
+import { AlertTriangle, CheckCircle2, ChevronRight, Clock, FileText, FlaskConical, MessageCircle, Pill, RefreshCw, Stethoscope, Trash2 } from 'lucide-react-native';
 import type { MedicalReport } from '../../hooks/useMedicalReports';
 import { getMedicalReportAnalysisErrorMessage } from '../../hooks/useMedicalReports';
 import { elevation, Radius, Spacing, Typography } from '../../constants/Design';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { useAppLanguage } from '../../context/AppLanguageContext';
 import {
   formatFileSize,
   formatShortDate,
   getAttentionCount,
+  getHeadline,
   getHighlights,
   getMedicineCount,
-  getPlainSummary,
   getReportDate,
   getReportKind,
   getReportState,
   getReportTitle,
   type ReportHighlight,
 } from '../../src/utils/reportInsights';
+import { RangeMeter } from './ReportVisuals';
 
 type Props = {
   report: MedicalReport;
@@ -48,6 +50,7 @@ function ScanBar({ color, track }: { color: string; track: string }) {
 
 // Live seconds counter so waiting feels honest ("14 s so far") instead of a bar that never says how long.
 function ElapsedLabel({ since, color }: { since: string; color: string }) {
+  const { t } = useAppLanguage();
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -55,28 +58,33 @@ function ElapsedLabel({ since, color }: { since: string; color: string }) {
   }, []);
   const start = new Date(since).getTime();
   const seconds = Number.isFinite(start) ? Math.max(0, Math.round((now - start) / 1000)) : 0;
-  return <Text style={[Typography.caption, { color }]}>{seconds}s so far · photos take about 15 s, long PDFs up to a minute</Text>;
+  return <Text style={[Typography.caption, { color }]}>{t('reports.elapsed', { seconds })}</Text>;
 }
 
 const flagArrow = (flag: ReportHighlight['flag']) => (flag === 'high' ? '↑' : flag === 'low' ? '↓' : '');
 
 export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onDelete }: Props) {
   const { theme } = useAppTheme();
+  const { t } = useAppLanguage();
   const kind = getReportKind(report);
   const state = getReportState(report, nowMs);
   const { date, isUploadDate } = getReportDate(report);
   const title = getReportTitle(report);
-  const KindIcon = kind === 'prescription' ? Pill : kind === 'lab' ? FlaskConical : FileText;
-  const kindLabel = kind === 'prescription' ? 'Prescription' : kind === 'lab' ? 'Lab report' : 'Document';
-  const attention = state === 'ready' && kind !== 'prescription' ? getAttentionCount(report) : 0;
-  const medicines = state === 'ready' && kind === 'prescription' ? getMedicineCount(report) : 0;
+  const KindIcon = kind === 'prescription' ? Pill : kind === 'lab' ? FlaskConical : kind === 'note' ? Stethoscope : FileText;
+  const kindLabel = kind === 'prescription' ? t('reports.kindPrescription') : kind === 'lab' ? t('reports.kindLab') : kind === 'note' ? t('reports.kindNote') : t('reports.kindDocument');
+  const attention = state === 'ready' && (kind === 'lab' || kind === 'other') ? getAttentionCount(report) : 0;
+  const medicines = state === 'ready' && (kind === 'prescription' || kind === 'note') ? getMedicineCount(report) : 0;
   const highlights = state === 'ready' && kind === 'lab' ? getHighlights(report, 3) : [];
-  const summary = state === 'ready' ? getPlainSummary(report, 190) : '';
+  const summary = state === 'ready' ? getHeadline(report) : '';
   const meta = [formatShortDate(date) + (isUploadDate ? '' : ''), kindLabel, formatFileSize(report.fileSizeBytes)].filter(Boolean).join(' · ');
 
   const tone =
     state === 'ready'
-      ? { fg: theme.primary, bg: theme.primarySoft }
+      ? kind === 'lab'
+        ? { fg: theme.accent, bg: theme.accentSoft }
+        : kind === 'note'
+          ? { fg: theme.warning, bg: theme.warningSoft }
+          : { fg: theme.primary, bg: theme.primarySoft }
       : state === 'failed' || state === 'stuck'
         ? { fg: theme.warning, bg: theme.warningSoft }
         : { fg: theme.accent, bg: theme.accentSoft };
@@ -84,6 +92,7 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
   return (
     // Header is the only card-wide tap target; action buttons below are siblings so web does not nest <button> in <button>.
     <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
+      <View style={[styles.edge, { backgroundColor: tone.fg }]} />
       <Pressable
         onPress={() => (state === 'ready' || state === 'scanning' ? onOpen(report) : undefined)}
         accessibilityRole="button"
@@ -103,25 +112,27 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
       {state === 'ready' ? (
         <>
           <View style={styles.chips}>
-            <View style={[styles.chip, { backgroundColor: theme.successLight }]}>
-              <CheckCircle2 size={13} color={theme.success} />
-              <Text style={[styles.chipText, { color: theme.success }]}>Ready</Text>
-            </View>
-            {kind === 'prescription' ? (
+            {attention === 0 && medicines === 0 && kind !== 'lab' ? (
+              <View style={[styles.chip, { backgroundColor: theme.successLight }]}>
+                <CheckCircle2 size={13} color={theme.success} />
+                <Text style={[styles.chipText, { color: theme.success }]}>{t('reports.ready')}</Text>
+              </View>
+            ) : null}
+            {kind === 'prescription' || kind === 'note' ? (
               medicines > 0 ? (
                 <View style={[styles.chip, { backgroundColor: theme.primarySoft }]}>
                   <Pill size={13} color={theme.primary} />
-                  <Text style={[styles.chipText, { color: theme.primary }]}>{medicines} medicine{medicines === 1 ? '' : 's'}</Text>
+                  <Text style={[styles.chipText, { color: theme.primary }]}>{medicines === 1 ? t('reports.medicineCountOne') : t('reports.medicineCount', { count: medicines })}</Text>
                 </View>
               ) : null
             ) : attention > 0 ? (
               <View style={[styles.chip, { backgroundColor: theme.dangerSoft }]}>
                 <AlertTriangle size={13} color={theme.danger} />
-                <Text style={[styles.chipText, { color: theme.danger }]}>{attention} need{attention === 1 ? 's' : ''} attention</Text>
+                <Text style={[styles.chipText, { color: theme.danger }]}>{attention === 1 ? t('reports.attentionCountOne') : t('reports.attentionCount', { count: attention })}</Text>
               </View>
             ) : kind === 'lab' ? (
               <View style={[styles.chip, { backgroundColor: theme.successLight }]}>
-                <Text style={[styles.chipText, { color: theme.success }]}>Nothing flagged</Text>
+                <Text style={[styles.chipText, { color: theme.success }]}>{t('reports.nothingFlagged')}</Text>
               </View>
             ) : null}
           </View>
@@ -135,15 +146,16 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
                 // Neutral tile like a printed lab report; only the value and a small High/Low tag carry colour.
                 return (
                   <View key={item.name} style={[styles.highlight, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>{item.name}</Text>
+                    <Text style={[Typography.caption, styles.valueName, { color: theme.textSecondary }]} numberOfLines={2}>{item.name}</Text>
                     <Text style={[styles.value, { color: bad ? theme.danger : theme.text }]} numberOfLines={1}>
                       {item.value}
                     </Text>
                     {item.unit ? <Text style={[styles.unit, { color: theme.textTertiary }]} numberOfLines={1}>{item.unit}</Text> : null}
+                    <RangeMeter item={item} />
                     {bad ? (
                       <View style={[styles.flagTag, { backgroundColor: theme.dangerSoft }]}>
                         <Text style={[styles.flagTagText, { color: theme.danger }]}>
-                          {flagArrow(item.flag)} {item.flag === 'high' ? 'High' : 'Low'}
+                          {flagArrow(item.flag)} {item.flag === 'high' ? t('reports.high') : t('reports.low')}
                         </Text>
                       </View>
                     ) : null}
@@ -152,13 +164,18 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
               })}
             </View>
           ) : null}
+          {attention > highlights.filter((item) => item.flag === 'high' || item.flag === 'low').length ? (
+            <Text style={[Typography.caption, { color: theme.textSecondary }]}>
+              {t('reports.moreInReport', { count: attention - highlights.filter((item) => item.flag === 'high' || item.flag === 'low').length })}
+            </Text>
+          ) : null}
 
           <View style={[styles.actions, { borderTopColor: theme.divider }]}>
             <Pressable onPress={() => onOpen(report)} accessibilityRole="button" style={({ pressed }) => [styles.primaryAction, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary }]}>
               <MessageCircle size={15} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>Read explanation & ask AI</Text>
+              <Text style={styles.primaryActionText}>{t('reports.readAndAsk')}</Text>
             </Pressable>
-            <Pressable onPress={() => onDelete(report)} accessibilityRole="button" accessibilityLabel="Delete report" hitSlop={8} style={[styles.iconAction, { backgroundColor: theme.dangerSoft }]}>
+            <Pressable onPress={() => onDelete(report)} accessibilityRole="button" accessibilityLabel={t('reports.delete')} hitSlop={8} style={[styles.iconAction, { backgroundColor: theme.dangerSoft }]}>
               <Trash2 size={16} color={theme.danger} />
             </Pressable>
           </View>
@@ -169,11 +186,11 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
         <View style={styles.statusBlock}>
           <View style={styles.statusRow}>
             <Clock size={14} color={theme.accent} />
-            <Text style={[Typography.bodyStrong, { color: theme.accent }]}>AI is reading your report</Text>
+            <Text style={[Typography.bodyStrong, { color: theme.accent }]}>{t('reports.aiReading')}</Text>
           </View>
           <ScanBar color={theme.accent} track={theme.accentSoft} />
           <ElapsedLabel since={report.updatedAt || report.createdAt} color={theme.textSecondary} />
-          <Text style={[Typography.caption, { color: theme.textTertiary }]}>You can leave this screen; it will be ready here.</Text>
+          <Text style={[Typography.caption, { color: theme.textTertiary }]}>{t('reports.canLeave')}</Text>
         </View>
       ) : null}
 
@@ -181,11 +198,11 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
         <View style={styles.statusBlock}>
           <View style={styles.statusRow}>
             <AlertTriangle size={14} color={theme.warning} />
-            <Text style={[Typography.bodyStrong, { color: theme.warning }]}>{state === 'stuck' ? 'This is taking longer than usual' : 'We could not read this report'}</Text>
+            <Text style={[Typography.bodyStrong, { color: theme.warning }]}>{state === 'stuck' ? t('reports.takingLonger') : t('reports.couldNotRead')}</Text>
           </View>
           <Text style={[Typography.caption, { color: theme.textSecondary }]}>
             {state === 'stuck'
-              ? 'The scan did not finish. Try again; your file is safe.'
+              ? t('reports.scanNotFinished')
               : getMedicalReportAnalysisErrorMessage(report.analysisError)}
           </Text>
           <View style={styles.actionsPlain}>
@@ -196,9 +213,9 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
               style={({ pressed }) => [styles.primaryAction, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary, opacity: isBusy ? 0.6 : 1 }]}
             >
               <RefreshCw size={15} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>{isBusy ? 'Trying…' : 'Try again'}</Text>
+              <Text style={styles.primaryActionText}>{isBusy ? t('reports.trying') : t('reports.tryAgain')}</Text>
             </Pressable>
-            <Pressable onPress={() => onDelete(report)} accessibilityRole="button" accessibilityLabel="Delete report" hitSlop={8} style={[styles.iconAction, { backgroundColor: theme.dangerSoft }]}>
+            <Pressable onPress={() => onDelete(report)} accessibilityRole="button" accessibilityLabel={t('reports.delete')} hitSlop={8} style={[styles.iconAction, { backgroundColor: theme.dangerSoft }]}>
               <Trash2 size={16} color={theme.danger} />
             </Pressable>
           </View>
@@ -210,7 +227,8 @@ export default function ReportCard({ report, nowMs, isBusy, onOpen, onRetry, onD
 
 const styles = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
-  card: { borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.lg, gap: Spacing.md },
+  card: { borderWidth: 1, borderRadius: Radius.xl + 2, padding: Spacing.lg, gap: Spacing.md, overflow: 'hidden' },
+  edge: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4 },
   top: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
   kindTile: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
@@ -218,6 +236,7 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, fontWeight: '700' },
   highlights: { flexDirection: 'row', gap: Spacing.sm },
   highlight: { flex: 1, borderRadius: Radius.md, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 8, gap: 3 },
+  valueName: { minHeight: 32 },
   value: { fontSize: 16, lineHeight: 21, fontWeight: '700' },
   unit: { fontSize: 11, fontWeight: '500' },
   flagTag: { alignSelf: 'flex-start', borderRadius: Radius.pill, paddingHorizontal: 7, paddingVertical: 1 },

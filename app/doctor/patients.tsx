@@ -1,20 +1,22 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, useColorScheme, TextInput } from 'react-native';
-import { Search, Users, MessageCircle, FileText, CalendarClock, X } from 'lucide-react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { CalendarClock, FileText, MessageCircle, Users } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import Colors from '../../constants/Colors';
+import Toast from 'react-native-toast-message';
+import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
+import { useAppTheme } from '../../hooks/useAppTheme';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
+import { PersonInitial, readableSummary, ScreenTitle, SearchBox } from '../../ui/doctor/DoctorUI';
 import { useDoctorAppointments } from '../../hooks/useAppointment';
 import { useChatRooms } from '../../hooks/useChat';
 import { buildDoctorInsights, DoctorPatientInsight } from '../../src/utils/doctorInsights';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
-import Toast from 'react-native-toast-message';
 import { downloadAiReport, openAiReport } from '../../src/utils/reportDownload';
 
 const formatDateShort = (value: string | null) => {
-    if (!value) return 'N/A';
+    if (!value) return '';
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'N/A';
+    if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
@@ -27,20 +29,14 @@ const sanitizeFileNamePart = (value: string) =>
 
 export default function DoctorPatientsScreen() {
     const router = useRouter();
-    const colorScheme = useColorScheme();
-    const theme = Colors[colorScheme ?? 'light'];
+    const { theme } = useAppTheme();
     const [searchQuery, setSearchQuery] = useState('');
     const tabSwipeHandlers = useTabSwipeNavigation('doctor-patients');
 
     const { data: appointments = [], isLoading } = useDoctorAppointments();
     const { data: chatRooms = [], isFetching } = useChatRooms();
 
-    const insights = useMemo(() => {
-        return buildDoctorInsights({
-            appointments,
-            chatRooms,
-        });
-    }, [appointments, chatRooms]);
+    const insights = useMemo(() => buildDoctorInsights({ appointments, chatRooms }), [appointments, chatRooms]);
 
     const filteredPatients = useMemo(() => {
         if (!searchQuery.trim()) return insights.patients;
@@ -52,355 +48,129 @@ export default function DoctorPatientsScreen() {
         });
     }, [insights.patients, searchQuery]);
 
+    const openPdf = (item: DoctorPatientInsight) => {
+        if (!item.latestAiPdfUrl) return;
+        void openAiReport(item.latestAiPdfUrl).catch((error) => {
+            console.warn('Failed to open patient AI report PDF:', error);
+            Toast.show({ type: 'error', text1: 'PDF unavailable', text2: 'Could not open the latest summary right now.' });
+        });
+    };
+
+    const downloadPdf = (item: DoctorPatientInsight) => {
+        if (!item.latestAiPdfUrl) return;
+        const fileName = `cd4-summary-${sanitizeFileNamePart(item.fullName)}-${sanitizeFileNamePart(formatDateShort(item.lastAppointmentAt || item.lastChatAt))}.pdf`;
+        void downloadAiReport(item.latestAiPdfUrl, fileName)
+            .then(() => Toast.show({ type: 'success', text1: 'Downloading PDF', text2: 'Latest summary download has started.' }))
+            .catch(() => Toast.show({ type: 'error', text1: 'Download failed', text2: 'Could not download the latest summary right now.' }));
+    };
+
     const renderPatient = ({ item }: { item: DoctorPatientInsight }) => {
-        const reportFileName = `cd4-ai-report-${sanitizeFileNamePart(item.fullName)}-${sanitizeFileNamePart(
-            formatDateShort(item.lastAppointmentAt || item.lastChatAt),
-        )}.pdf`;
+        const summary = readableSummary(item.latestAiSummary);
+        const next = formatDateShort(item.nextAppointmentAt);
+        const last = formatDateShort(item.lastAppointmentAt || item.lastChatAt);
+        const count = `${item.totalAppointments} appointment${item.totalAppointments === 1 ? '' : 's'}`;
 
         return (
-            <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                <View style={styles.cardTopRow}>
-                    <View style={[styles.avatar, { backgroundColor: theme.tint + '20' }]}>
-                        <Text style={[styles.avatarText, { color: theme.tint }]}>
-                            {item.firstName?.charAt(0)?.toUpperCase() || 'P'}
-                        </Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                        <Text style={[styles.patientName, { color: theme.text }]} numberOfLines={1}>
-                            {item.fullName || 'Patient'}
-                        </Text>
-                        <Text style={[styles.metaText, { color: theme.textSecondary }]}>
-                            {item.totalAppointments} appointments
-                            {item.unreadChatCount > 0 ? ` • ${item.unreadChatCount} unread chats` : ''}
+            <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
+                <View style={styles.top}>
+                    <PersonInitial name={item.firstName} />
+                    <View style={styles.flex}>
+                        <Text style={[Typography.subheading, { color: theme.text }]} numberOfLines={1}>{item.fullName || 'Patient'}</Text>
+                        <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>
+                            {count}{last ? ` · Last ${last}` : ''}{item.unreadChatCount > 0 ? ` · ${item.unreadChatCount} unread` : ''}
                         </Text>
                     </View>
                 </View>
 
-                <View style={styles.metaGrid}>
-                    <View style={[styles.metaPill, { borderColor: theme.borderColor, backgroundColor: theme.background }]}>
-                        <CalendarClock size={13} color={theme.tint} />
-                        <Text style={[styles.metaPillText, { color: theme.textSecondary }]}>
-                            Next: {formatDateShort(item.nextAppointmentAt)}
-                        </Text>
+                {next ? (
+                    <View style={[styles.next, { backgroundColor: theme.primarySoft }]}>
+                        <CalendarClock size={14} color={theme.primary} />
+                        <Text style={[Typography.label, { color: theme.primary }]}>Next: {next}</Text>
                     </View>
-                    <View style={[styles.metaPill, { borderColor: theme.borderColor, backgroundColor: theme.background }]}>
-                        <FileText size={13} color={theme.tint} />
-                        <Text style={[styles.metaPillText, { color: theme.textSecondary }]}>
-                            Last: {formatDateShort(item.lastAppointmentAt || item.lastChatAt)}
-                        </Text>
-                    </View>
-                </View>
+                ) : null}
 
-                {item.latestAiSummary ? (
-                    <Text numberOfLines={2} style={[styles.summaryText, { color: theme.textSecondary }]}>
-                        {item.latestAiSummary}
-                    </Text>
-                ) : (
-                    <Text numberOfLines={1} style={[styles.summaryText, { color: theme.textSecondary }]}>
-                        No AI triage summary linked yet.
-                    </Text>
-                )}
+                {summary ? <Text style={[Typography.body, { color: theme.textSecondary }]} numberOfLines={2}>{summary}</Text> : null}
 
-                <View style={styles.actionsRow}>
-                    <TouchableOpacity
-                        style={[styles.actionButton, { backgroundColor: theme.tint }]}
-                        onPress={() =>
-                            router.push({
-                                pathname: '/chat-detail',
-                                params: {
-                                    roomId: item.roomId || undefined,
-                                    otherId: item.patientId,
-                                    name: item.fullName,
-                                },
-                            })
-                        }
+                <View style={styles.actions}>
+                    <Pressable
+                        onPress={() => router.push({ pathname: '/chat-detail', params: { roomId: item.roomId || undefined, otherId: item.patientId, name: item.fullName } })}
+                        accessibilityRole="button"
+                        style={({ pressed }) => [styles.primary, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary }]}
                     >
-                        <MessageCircle size={14} color="#fff" />
-                        <Text style={styles.primaryActionText}>Open Chat</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={[
-                            styles.actionButtonSecondary,
-                            {
-                                borderColor: item.latestAiPdfUrl ? theme.tint : theme.borderColor,
-                                backgroundColor: item.latestAiPdfUrl ? theme.tint + '16' : theme.background,
-                            },
-                        ]}
-                        disabled={!item.latestAiPdfUrl}
-                        onPress={() => {
-                            if (!item.latestAiPdfUrl) return;
-                            void openAiReport(item.latestAiPdfUrl).catch((error) => {
-                                console.warn('Failed to open patient AI report PDF:', error);
-                                Toast.show({
-                                    type: 'error',
-                                    text1: 'PDF unavailable',
-                                    text2: 'Could not open the latest AI report right now.',
-                                });
-                            });
-                        }}
-                        onLongPress={() => {
-                            if (!item.latestAiPdfUrl) return;
-                            void downloadAiReport(item.latestAiPdfUrl, reportFileName).then(() => {
-                                Toast.show({
-                                    type: 'success',
-                                    text1: 'Downloading PDF',
-                                    text2: 'Latest AI report download has started.',
-                                });
-                            }).catch((error) => {
-                                console.warn('Failed to download patient AI report PDF:', error);
-                                Toast.show({
-                                    type: 'error',
-                                    text1: 'Download failed',
-                                    text2: 'Could not download the latest AI report right now.',
-                                });
-                            });
-                        }}
-                        delayLongPress={260}
-                    >
-                        <FileText size={14} color={item.latestAiPdfUrl ? theme.tint : theme.textSecondary} />
-                        <Text style={[styles.secondaryActionText, { color: item.latestAiPdfUrl ? theme.tint : theme.textSecondary }]}>
-                            {item.latestAiPdfUrl ? 'Latest PDF' : 'No PDF'}
-                        </Text>
-                    </TouchableOpacity>
+                        <MessageCircle size={15} color="#FFFFFF" />
+                        <Text style={styles.primaryText}>Open chat</Text>
+                    </Pressable>
+                    {item.latestAiPdfUrl ? (
+                        <Pressable
+                            onPress={() => openPdf(item)}
+                            onLongPress={() => downloadPdf(item)}
+                            delayLongPress={260}
+                            accessibilityRole="button"
+                            accessibilityHint="Long press to download"
+                            style={({ pressed }) => [styles.secondary, { borderColor: theme.primaryBorder, backgroundColor: pressed ? theme.primaryBorder : theme.primarySoft }]}
+                        >
+                            <FileText size={15} color={theme.primary} />
+                            <Text style={[Typography.label, { color: theme.primary }]}>Summary PDF</Text>
+                        </Pressable>
+                    ) : null}
                 </View>
             </View>
         );
     };
 
-    const showSyncingState = (isLoading || isFetching) && insights.patients.length === 0;
+    const isSyncing = (isLoading || isFetching) && insights.patients.length === 0;
 
     return (
         <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
-            <View style={styles.headerContainer}>
-                <Text style={[styles.headerTitle, { color: theme.text }]}>Patients</Text>
-                <Text style={[styles.headerSub, { color: theme.textSecondary }]}>
-                    Track consultations, open chats, and AI triage PDFs in one place.
-                </Text>
-            </View>
-
-            <View style={styles.metricsRow}>
-                <View style={[styles.metricMiniCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    <Text style={[styles.metricMiniValue, { color: theme.text }]}>{insights.metrics.totalPatients}</Text>
-                    <Text style={[styles.metricMiniLabel, { color: theme.textSecondary }]}>Total Patients</Text>
-                </View>
-                <View style={[styles.metricMiniCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    <Text style={[styles.metricMiniValue, { color: theme.text }]}>{insights.metrics.aiPdfCount}</Text>
-                    <Text style={[styles.metricMiniLabel, { color: theme.textSecondary }]}>AI PDFs</Text>
-                </View>
-                <View style={[styles.metricMiniCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    <Text style={[styles.metricMiniValue, { color: theme.text }]}>{insights.metrics.upcomingAppointments}</Text>
-                    <Text style={[styles.metricMiniLabel, { color: theme.textSecondary }]}>Upcoming</Text>
-                </View>
-            </View>
-
-            <View style={styles.searchContainer}>
-                <View style={[styles.searchBar, { backgroundColor: theme.cardBackground }]}>
-                    <Search size={18} color={theme.textSecondary} />
-                    <TextInput
-                        style={[styles.searchInput, { color: theme.text }]}
-                        placeholder="Search patient or AI summary"
-                        placeholderTextColor={theme.textSecondary}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        returnKeyType="search"
-                    />
-                    {searchQuery.length > 0 ? (
-                        <TouchableOpacity onPress={() => setSearchQuery('')}>
-                            <X size={16} color={theme.textSecondary} />
-                        </TouchableOpacity>
-                    ) : null}
-                </View>
-            </View>
-
-            {showSyncingState ? (
-                <View style={styles.centerState}>
-                    <Text style={{ color: theme.textSecondary }}>Syncing patients...</Text>
-                </View>
-            ) : filteredPatients.length === 0 ? (
-                <View style={styles.centerState}>
-                    <Users size={44} color={theme.textSecondary} />
-                    <Text style={[styles.emptyTitle, { color: theme.text }]}>
-                        {searchQuery.trim() ? 'No matching patients' : 'No patients yet'}
-                    </Text>
-                    <Text style={[styles.emptySub, { color: theme.textSecondary }]}>
-                        {searchQuery.trim()
-                            ? 'Try a different keyword'
-                            : 'Patients appear here after first appointment or chat.'}
-                    </Text>
-                </View>
-            ) : (
-                <FlatList
-                    data={filteredPatients}
-                    keyExtractor={(item) => item.patientId}
-                    renderItem={renderPatient}
-                    contentContainerStyle={styles.listContainer}
-                    showsVerticalScrollIndicator={false}
-                />
-            )}
+            <FlatList
+                data={filteredPatients}
+                keyExtractor={(item) => item.patientId}
+                renderItem={renderPatient}
+                contentContainerStyle={styles.list}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                ListHeaderComponent={
+                    <View style={styles.header}>
+                        <ScreenTitle
+                            title="Patients"
+                            subtitle={`${insights.metrics.totalPatients} patients · ${insights.metrics.upcomingAppointments} upcoming · ${insights.metrics.aiPdfCount} summaries`}
+                        />
+                        <SearchBox value={searchQuery} onChangeText={setSearchQuery} placeholder="Search by name or summary" />
+                    </View>
+                }
+                ListEmptyComponent={
+                    <View style={styles.empty}>
+                        {isSyncing ? (
+                            <Text style={[Typography.body, { color: theme.textSecondary }]}>Loading patients…</Text>
+                        ) : (
+                            <>
+                                <Users size={40} color={theme.textTertiary} />
+                                <Text style={[Typography.subheading, { color: theme.text }]}>
+                                    {searchQuery.trim() ? 'No matching patients' : 'No patients yet'}
+                                </Text>
+                                <Text style={[Typography.body, styles.emptyText, { color: theme.textSecondary }]}>
+                                    {searchQuery.trim() ? 'Try a different name or word.' : 'Patients appear here after their first appointment or chat.'}
+                                </Text>
+                            </>
+                        )}
+                    </View>
+                }
+            />
         </DoctorSafeScreen>
     );
 }
 
 const styles = StyleSheet.create({
-    headerContainer: {
-        paddingHorizontal: 20,
-        paddingTop: 16,
-        paddingBottom: 6,
-    },
-    headerTitle: {
-        fontSize: 28,
-        fontWeight: '800',
-    },
-    headerSub: {
-        marginTop: 6,
-        fontSize: 13,
-    },
-    metricsRow: {
-        paddingHorizontal: 16,
-        flexDirection: 'row',
-        gap: 8,
-        marginBottom: 10,
-    },
-    metricMiniCard: {
-        flex: 1,
-        borderWidth: 1,
-        borderRadius: 12,
-        paddingVertical: 10,
-        alignItems: 'center',
-    },
-    metricMiniValue: {
-        fontSize: 18,
-        fontWeight: '800',
-    },
-    metricMiniLabel: {
-        marginTop: 2,
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    searchContainer: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 14,
-        paddingVertical: 11,
-        borderRadius: 12,
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: 10,
-        fontSize: 14,
-        paddingVertical: 0,
-    },
-    listContainer: {
-        paddingHorizontal: 16,
-        paddingBottom: 28,
-    },
-    card: {
-        borderRadius: 14,
-        borderWidth: 1,
-        padding: 12,
-        marginBottom: 10,
-    },
-    cardTopRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-    },
-    avatar: {
-        width: 42,
-        height: 42,
-        borderRadius: 21,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 10,
-    },
-    avatarText: {
-        fontSize: 18,
-        fontWeight: '700',
-    },
-    patientName: {
-        fontSize: 16,
-        fontWeight: '700',
-    },
-    metaText: {
-        marginTop: 2,
-        fontSize: 12,
-    },
-    metaGrid: {
-        marginTop: 10,
-        flexDirection: 'row',
-        gap: 8,
-        flexWrap: 'wrap',
-    },
-    metaPill: {
-        borderWidth: 1,
-        borderRadius: 999,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    metaPillText: {
-        fontSize: 11,
-        fontWeight: '600',
-    },
-    summaryText: {
-        marginTop: 10,
-        fontSize: 12,
-        lineHeight: 17,
-    },
-    actionsRow: {
-        marginTop: 12,
-        flexDirection: 'row',
-        gap: 8,
-    },
-    actionButton: {
-        flex: 1,
-        borderRadius: 10,
-        paddingVertical: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'row',
-        gap: 6,
-    },
-    primaryActionText: {
-        color: '#fff',
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    actionButtonSecondary: {
-        minWidth: 110,
-        borderWidth: 1,
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-    },
-    secondaryActionText: {
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    centerState: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 30,
-    },
-    emptyTitle: {
-        marginTop: 12,
-        fontSize: 16,
-        fontWeight: '700',
-    },
-    emptySub: {
-        marginTop: 4,
-        fontSize: 13,
-        textAlign: 'center',
-    },
+    flex: { flex: 1, minWidth: 0 },
+    list: { paddingHorizontal: Layout.screenGutter, paddingBottom: Spacing.xxxl, gap: Spacing.md, width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center' },
+    header: { paddingTop: Spacing.lg, gap: Spacing.md },
+    card: { borderWidth: 1, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.md },
+    top: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+    next: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', borderRadius: Radius.pill, paddingHorizontal: Spacing.md, paddingVertical: 6 },
+    actions: { flexDirection: 'row', gap: Spacing.sm },
+    primary: { flex: 1, height: 44, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+    primaryText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+    secondary: { flex: 1, height: 44, borderRadius: Radius.md, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+    empty: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.huge },
+    emptyText: { textAlign: 'center' },
 });

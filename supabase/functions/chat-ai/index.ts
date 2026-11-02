@@ -6,6 +6,17 @@
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { CLINICAL_BRAIN_RULES } from "../_shared/clinicalBrain.ts"
 import { getAiQuota, recordAiUsage, quotaBlockedReply } from "../_shared/aiUsage.ts"
+import { CD4_AI_PERSONA, GROUNDING_RULES } from "../_shared/agent/persona.ts"
+import { detectPromptInjection, findUnsupportedValues, injectionReply, scrubDelta, scrubOutput, unsupportedValuesNote, wrapUntrusted } from "../_shared/agent/guards.ts"
+import { matchSmallTalk } from "../_shared/agent/smallTalk.ts"
+import { isCd4PolicyQuestion, routeModel } from "../_shared/agent/router.ts"
+import { embedText, formatKnowledge, retrieveKnowledge, retrieveReportChunks } from "../_shared/agent/knowledge.ts"
+import { cacheKeyFor, isCacheableQuestion, lookupExact, lookupSemantic, markHit, storeAnswer } from "../_shared/agent/cache.ts"
+import { can, loadOwnAppointments, resolveActor, wantsOwnAppointments, wantsOwnReports } from "../_shared/agent/access.ts"
+import { trackInBackground } from "../_shared/agent/telemetry.ts"
+import { completionLimits } from "../_shared/agent/openaiParams.ts"
+import { classifyMessage, isConfidentInjection, isConfidentInternalInfo } from "../_shared/agent/classifier.ts"
+import { correctionInstruction, verifyAnswer } from "../_shared/agent/verifier.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,7 +107,6 @@ const nonMedicalReply = (style: LanguageStyle): string => {
 
 // Greetings, thanks and "how do I use the app" questions must never hit the medical-scope refusal. The model is not
 // reliable about this (it set isMedical=false for a plain "hi"), so these are handled deterministically.
-const GREETING_PATTERN = /^\s*(hi+|hello+|hey+|hii+|hlo|namaste|namaskar|good\s*(morning|afternoon|evening|night)|thanks?|thank\s*you|thanku|dhanyavad|shukriya|ok(ay)?|bye|goodbye)[\s!.?,]*$/i
 // Plurals matter: "doctors in chandigarh" did not match \bdoctor\b and was refused as out of scope.
 const APP_QUESTION_PATTERN = /\b(book(ing)?|appointments?|slots?|consult(ation)?s?|doctors?|specialists?|reports?|subscriptions?|pro\s*plan|payments?|refunds?|cancel)\b/i
 
@@ -126,13 +136,6 @@ const internalInfoReply = (style: LanguageStyle): string => {
   return "Sorry, I can't share CD4's internal or business information (such as user numbers, revenue or system details). I can help with your health, medicines, reports, or finding a doctor."
 }
 
-const greetingReply = (style: LanguageStyle): string => {
-  if (style === "tamil") return "வணக்கம்! நான் உங்கள் CD4 சுகாதார உதவியாளர். அறிகுறிகள், மருந்துகள், ரிப்போர்ட், உணவு, மன நலம் மற்றும் மருத்துவரைத் தேட உதவ முடியும். நீங்கள் என்ன தெரிந்து கொள்ள விரும்புகிறீர்கள்?"
-  if (style === "devanagari_hindi") return "नमस्ते! मैं आपका CD4 हेल्थ असिस्टेंट हूँ। मैं symptoms, दवाइयों, रिपोर्ट, डाइट, मानसिक स्वास्थ्य और डॉक्टर ढूँढने में मदद कर सकता हूँ। आप क्या जानना चाहते हैं?"
-  if (style === "roman_hindi") return "Namaste! Main aapka CD4 health assistant hoon. Main symptoms, medicines, reports, diet, mental wellbeing aur doctor dhoondhne mein madad kar sakta hoon. Aap kya poochna chahte hain?"
-  return "Hello! I'm your CD4 health assistant. I can help with symptoms, medicines, reports, diet, mental wellbeing, and finding a doctor. What would you like to know?"
-}
-
 const appHelpReply = (style: LanguageStyle): string => {
   if (style === "tamil") return "CD4-இல் சரிபார்க்கப்பட்ட மருத்துவரை முன்பதிவு செய்ய, உங்கள் பிரச்சனை அல்லது நிபுணத்துவத்தைச் சொல்லுங்கள் (எ.கா. இதய மருத்துவர்). நான் மருத்துவர்களையும் கிடைக்கும் நேரங்களையும் காட்டுகிறேன். அல்லது Appointments டேபைத் திறக்கலாம்."
   if (style === "devanagari_hindi") return "CD4 में verified डॉक्टर बुक करने के लिए अपनी समस्या या specialty बताइए (जैसे cardiologist)। मैं डॉक्टर और उपलब्ध स्लॉट दिखा दूँगा। आप Appointments टैब भी खोल सकते हैं।"
@@ -149,22 +152,15 @@ const cleanHistory = (value: unknown): Array<{ role: "user" | "assistant"; conte
     .filter((item) => item.content.length > 0)
 }
 
-const buildSystemPrompt = (
-  concern: string,
-  style: LanguageStyle,
-  context: { intent: ConversationIntent; activeTopic: string; clinicalSummary: string },
-): string => `
-You are CD4 Health Assistant, a warm and clinically careful medical conversation assistant.
+// Static on purpose: providers discount a repeated prompt prefix, so anything that changes per turn goes in buildTurnContext.
+const STATIC_SYSTEM_PROMPT = `
+${CD4_AI_PERSONA}
 
 Brand and abbreviation rule:
 - CD4 is the product/assistant brand name. Do not expand it or say "CD4 stands for..." unless the patient explicitly asks what CD4 means.
 - Do not explain medical abbreviations merely because they appear in the conversation. Explain an abbreviation only when the patient asks or when it is necessary to safely answer the patient's medical question.
 
-The patient selected this concern: "${clip(concern || "General health", 120)}".
 Your job is to understand the patient's concern and collect a useful clinical history for a doctor.
-Current conversation intent: ${context.intent}
-Current active topic: ${clip(context.activeTopic || concern || "general health", 120)}
-Compact clinical context from recent turns: ${clip(context.clinicalSummary || "No previous clinical details captured yet.", 700)}
 
 ${CLINICAL_BRAIN_RULES}
 
@@ -178,13 +174,16 @@ Conversation behavior:
 - When the patient asks "what should I do?", do not reply with only a history question. Give a useful, evidence-aligned first-step plan for the named symptom, then ask one focused question. For common concerns such as gas/bloating, explain that it can have several causes without diagnosing, suggest practical low-risk steps (smaller meals, eating slowly, gentle movement, hydration, and avoiding personal triggers or carbonated drinks), say what to monitor, and clearly list warning signs such as severe or persistent pain, repeated vomiting, blood or black stool, fever, marked abdominal swelling, inability to pass stool/gas, chest pain, or breathing difficulty.
 - Make every answer specific to what the patient just asked. Match the depth to the question: a simple or factual question gets a short, direct answer; a worrying symptom gets a fuller answer. Include a brief likely explanation, what they can do now, what to avoid or monitor, and when to seek care only where those parts genuinely help. Avoid generic filler and never replace practical guidance with "please consult a doctor" alone.
 - Treat the selected concern as background context, but always prioritize the patient's latest clear medical question. If the latest message names another medical symptom or condition, answer that current question naturally; do not force the old concern into the answer. Connect it to the selected concern only when clinically relevant.
-- When the patient reports a personal symptom or asks what to do, conduct clinical history-taking: ask specific questions about onset, severity, associated symptoms, triggers, impact, medicines, allergies, and relevant history. Ask only one question at a time while information is incomplete.
+- When the patient reports a personal symptom, take the history step by step, like a doctor in a consultation. Ask exactly one question per turn, in this order, skipping anything already known: (1) when it started and how long it has lasted, (2) how severe it is and whether it is getting better or worse, (3) other symptoms that go with it, (4) medicines already taken and whether they helped, (5) allergies, existing conditions, and pregnancy when relevant.
+- Before asking, check clinicalSummary and the earlier turns. Never ask again for something the patient already told you. Keep clinicalSummary as a running record of what is known, so the next turn can continue from it.
+- Once history-taking has started, keep each turn short: one line acknowledging what they said, one line on what it means if that helps, then the next question. Give warning signs and self-care once, not on every turn. Repeat them only when something new makes them matter.
+- A short answer such as "2 days", "yes" or "mild" is the answer to your last question. Take it as that and move to the next step.
 - When the useful history is complete, stop asking symptom questions. Give a concise handoff summary, state the inferred department (for example, fever usually routes to General Physician/General Medicine), and ask only whether the patient wants you to search for a verified doctor and available slots. Do not ask another clinical question after this handoff unless the patient provides new information.
 - When the patient asks a direct educational question such as "what are the basic symptoms?", "symptoms of cough", or "symptoms of fever", you MUST answer the latest named condition first with a short Markdown bullet list. Add warning signs when relevant, then optionally ask one personal follow-up question. Never answer an educational question with only a request for the patient's own symptoms, and never say you are focusing on the old selected concern when the latest question is clear.
 - Understand ordinary spelling mistakes, missing words, phonetic typing, speech-to-text errors, Roman Hindi, and mixed language from context. Silently infer the most likely meaning; do not criticize or mention the typo. If two meanings are genuinely possible, state your best interpretation briefly and ask a gentle clarification.
 - Do not claim a confirmed diagnosis. Give general safety guidance only when appropriate.
 - MEDICINE INFORMATION: Patients may ask about any medicine. Explain what it is used for, how it is usually taken (standard labelled adult dose, spacing and the maximum per day), common side effects, important interactions, who should avoid it, and what to do about a missed or extra dose. Always check amount and timing when the patient says they already took something. Do not tell a specific patient to start, stop, switch or change the dose of a prescribed medicine, and do not set doses for children, pregnancy, elderly or kidney/liver disease: give the general information and tell them to confirm with their doctor or pharmacist.
-- Clearly recommend urgent/emergency care for red flags such as severe breathing difficulty, chest pressure, fainting, stroke-like symptoms, severe bleeding, confusion, or rapidly worsening condition.
+- Emergencies come before everything else. For chest pain or pressure, severe breathing difficulty, fainting, stroke-like symptoms, severe bleeding, confusion or a rapidly worsening condition, open by telling them to get emergency care now, in plain words, then ask at most one short question. Never answer these with a list of appointments.
 - Medical scope is broad. Treat ALL of these as medical (isMedical=true): symptoms, diseases, medicines and doses, overdose or wrong-dose worries, lab reports, mental health (stress, tension, anxiety, low mood, anger, sleep problems, burnout), diet and nutrition, weight, exercise and lifestyle for health, sexual and reproductive health, pregnancy, child and elderly care, first aid, addiction (smoking, alcohol), and questions about doctors or appointments. A question like "how do I reduce tension/stress?" is a mental-health question: answer it.
 - Also treat as isMedical=true: greetings, thanks and "what can you do" questions (reply warmly and say you can help with symptoms, medicines, reports, diet and mental wellbeing, and finding a doctor), and questions about using CD4 itself (finding or booking a doctor, appointments, consultations, reports, subscriptions). Answer app questions briefly and say the patient can ask you to find a verified doctor.
 - Set isMedical=false only for clearly unrelated requests such as entertainment, sport, coding, politics, finance, shopping, travel, cooking that is not about health or nutrition, or weather, and politely redirect to health. When unsure, treat the message as medical.
@@ -196,20 +195,34 @@ Conversation behavior:
 - Decide whether the patient should be encouraged to consult a doctor. Set consultRecommended=true for red flags, severe or rapidly worsening symptoms, concerning persistent symptoms, a likely need for examination/testing, or when the patient explicitly asks to see a doctor. Keep it false for routine low-risk education or simple history questions.
 - Set consultPriority to "immediate" for emergency warning signs, "soon" when timely doctor review is appropriate, or null when no consultation recommendation is needed. Set needsHumanReview=true only for urgent/high-risk situations.
 
-${languageInstruction(style)}
 Write like a calm, caring doctor chatting with the patient, not a template. Lead with the answer or a brief, specific acknowledgement, never with a question. Use short paragraphs; use compact Markdown bullets or a few **bold** key terms only when they make the answer easier to scan, and use headings such as **What you can do now** or **When to seek care** only for longer symptom answers. Ask at most one follow-up question, at the end. Use at most one gentle emoji and none in emergencies. Finish every sentence; never end mid-word or with a dangling phrase such as "and" or "because".
 
 Return only valid JSON in this exact shape and key order (the reply value may contain Markdown). Write "reply" immediately after "isMedical": the reply is shown to the patient word by word while you write it, so never put long fields before it.
 {"isMedical":true,"reply":"...","intent":"symptom_report","activeTopic":"cough","clinicalSummary":"Short factual summary under 700 characters","consultRecommended":false,"consultPriority":null,"needsHumanReview":false,"riskScore":0.1,"reviewReason":null}
 `
 
+const buildTurnContext = (
+  concern: string,
+  style: LanguageStyle,
+  context: { intent: ConversationIntent; activeTopic: string; clinicalSummary: string },
+): string => `
+The patient selected this concern: "${clip(concern || "General health", 120)}".
+Current conversation intent: ${context.intent}
+Current active topic: ${clip(context.activeTopic || concern || "general health", 120)}
+Compact clinical context from recent turns: ${clip(context.clinicalSummary || "No previous clinical details captured yet.", 700)}
+
+${languageInstruction(style)}
+`
+
 const extractOpenAiText = (payload: any): string =>
   String(payload?.choices?.[0]?.message?.content || payload?.choices?.[0]?.text || "").trim()
 
-const callOpenAI = async (apiKey: string, messages: Array<{ role: string; content: string }>): Promise<{ text: string; model: string }> => {
+const MODEL_TIMEOUT_MS = 30_000
+
+const callOpenAI = async (apiKey: string, messages: Array<{ role: string; content: string }>, routedModels?: string[]): Promise<{ text: string; model: string; usage: any }> => {
   // Keep deployed functions resilient if an old project secret contains a retired
   // or misspelled model name. The last candidates are known-compatible fallbacks.
-  const models = Array.from(new Set([
+  const models = routedModels?.length ? routedModels : Array.from(new Set([
     OPENAI_MODEL,
     OPENAI_FALLBACK_MODEL,
     "gpt-4o-mini",
@@ -217,15 +230,22 @@ const callOpenAI = async (apiKey: string, messages: Array<{ role: string; conten
   ].filter(Boolean)))
   let lastError = "OpenAI request failed"
   for (const model of models) {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages, temperature: 0.25, max_tokens: MAX_OUTPUT_TOKENS, response_format: { type: "json_object" } }),
-    })
+    let response: Response
+    try {
+      response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages, ...completionLimits(model, MAX_OUTPUT_TOKENS, 0.25), response_format: { type: "json_object" } }),
+      })
+    } catch (requestError) {
+      lastError = requestError instanceof Error ? requestError.message : "OpenAI request failed"
+      continue
+    }
     const payload = await response.json().catch(() => ({}))
     if (response.ok) {
       const text = extractOpenAiText(payload)
-      if (text) return { text, model }
+      if (text) return { text, model, usage: payload?.usage || null }
     }
     lastError = payload?.error?.message || `${response.status} ${response.statusText}`
   }
@@ -279,16 +299,28 @@ const callOpenAIStream = async (
   apiKey: string,
   messages: Array<{ role: string; content: string }>,
   onReplyDelta: (text: string) => void,
-): Promise<{ text: string; model: string }> => {
-  const models = Array.from(new Set([OPENAI_MODEL, OPENAI_FALLBACK_MODEL, "gpt-4o-mini", "gpt-4o"].filter(Boolean)))
+  routedModels?: string[],
+): Promise<{ text: string; model: string; usage: any }> => {
+  const models = routedModels?.length ? routedModels : Array.from(new Set([OPENAI_MODEL, OPENAI_FALLBACK_MODEL, "gpt-4o-mini", "gpt-4o"].filter(Boolean)))
   let lastError = "OpenAI request failed"
   for (const model of models) {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages, temperature: 0.25, max_tokens: MAX_OUTPUT_TOKENS, response_format: { type: "json_object" }, stream: true }),
-    })
+    const controller = new AbortController()
+    const firstByteTimer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS)
+    let response: Response
+    try {
+      response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, messages, ...completionLimits(model, MAX_OUTPUT_TOKENS, 0.25), response_format: { type: "json_object" }, stream: true, stream_options: { include_usage: true } }),
+      })
+    } catch (requestError) {
+      clearTimeout(firstByteTimer)
+      lastError = requestError instanceof Error ? requestError.message : "OpenAI request failed"
+      continue
+    }
     if (!response.ok || !response.body) {
+      clearTimeout(firstByteTimer)
       const payload = await response.json().catch(() => ({}))
       lastError = payload?.error?.message || `${response.status} ${response.statusText}`
       continue
@@ -298,9 +330,11 @@ const callOpenAIStream = async (
     const feed = createReplyStreamer(onReplyDelta)
     let pending = ""
     let text = ""
+    let usage: any = null
     try {
       while (true) {
         const { value, done } = await reader.read()
+        clearTimeout(firstByteTimer)
         if (done) break
         pending += decoder.decode(value, { stream: true })
         const lines = pending.split("\n")
@@ -311,7 +345,9 @@ const callOpenAIStream = async (
           const data = trimmed.slice(5).trim()
           if (!data || data === "[DONE]") continue
           try {
-            const delta = JSON.parse(data)?.choices?.[0]?.delta?.content
+            const frame = JSON.parse(data)
+            if (frame?.usage) usage = frame.usage
+            const delta = frame?.choices?.[0]?.delta?.content
             if (typeof delta === "string" && delta) {
               text += delta
               feed(delta)
@@ -327,7 +363,7 @@ const callOpenAIStream = async (
       lastError = streamError instanceof Error ? streamError.message : "OpenAI stream failed"
       continue
     }
-    if (text.trim()) return { text: text.trim(), model }
+    if (text.trim()) return { text: text.trim(), model, usage }
     lastError = "OpenAI returned an empty response"
   }
   throw new Error(lastError)
@@ -627,15 +663,16 @@ const formatSlotLabel = (slot: any): string => {
   return `${date}${start ? ` • ${start}${end ? `–${end}` : ""}` : ""}`.trim()
 }
 
-const loadDoctorRecommendations = async (admin: any, topic: string, requestedCity: string, requestedDoctorName = ""): Promise<any> => {
+const loadDoctorRecommendations = async (admin: any, topic: string, requestedCity: string, requestedDoctorName = "", requestedDoctorId = ""): Promise<any> => {
   const city = clip(requestedCity, 80)
   const specialtyTerms = resolveSpecialtySearchTerms(topic)
   const doctorTokens = requestedDoctorName.toLowerCase().split(/\s+/).filter(Boolean)
   const firstDoctorToken = doctorTokens[0] || ""
   const fields = "id,city,specialization,experience,fee,rating,first_name,last_name,profile_picture"
   let query = admin.from("doctors_public").select(fields).limit(6)
-  if (city) query = query.ilike("city", `%${city}%`)
-  if (specialtyTerms.length && !requestedDoctorName) {
+  if (requestedDoctorId) query = query.eq("id", requestedDoctorId)
+  else if (city) query = query.ilike("city", `%${city}%`)
+  if (specialtyTerms.length && !requestedDoctorName && !requestedDoctorId) {
     query = query.or(specialtyTerms.map((term) => `specialization.ilike.%${term}%`).join(","))
   }
   if (firstDoctorToken) {
@@ -643,7 +680,7 @@ const loadDoctorRecommendations = async (admin: any, topic: string, requestedCit
   }
   let { data: doctors } = await query
   // ilike %patna% also matches "Visakhapatnam"; keep only whole-word city matches.
-  if (city && Array.isArray(doctors)) doctors = doctors.filter((doctor: any) => isSameCity(doctor.city, city))
+  if (city && !requestedDoctorId && Array.isArray(doctors)) doctors = doctors.filter((doctor: any) => isSameCity(doctor.city, city))
   let mode = city ? "local" : "app"
 
   // Location is first priority, but do not leave the patient without an app doctor.
@@ -706,6 +743,7 @@ const loadDoctorRecommendations = async (admin: any, topic: string, requestedCit
       endTime: slot.end_time,
       doctorName: `${doctorById.get(String(slot.doctor_id))?.firstName || ""} ${doctorById.get(String(slot.doctor_id))?.lastName || ""}`.trim(),
       doctorSpecialization: doctorById.get(String(slot.doctor_id))?.specialization || "",
+      doctorFee: doctorById.get(String(slot.doctor_id))?.fee || "",
       doctorCity: doctorById.get(String(slot.doctor_id))?.city || "",
       label: `${`${doctorById.get(String(slot.doctor_id))?.firstName || ""} ${doctorById.get(String(slot.doctor_id))?.lastName || ""}`.trim() || "Doctor"} • ${formatSlotLabel(slot)}`,
     })).slice(0, 12)
@@ -713,34 +751,26 @@ const loadDoctorRecommendations = async (admin: any, topic: string, requestedCit
   return { doctors: normalizedDoctors, slotOptions, mode, city: city || null }
 }
 
-const bookSlotWithoutPayment = async (admin: any, userId: string, doctorId: string, slotId: string): Promise<any> => {
+const prepareSlotForPayment = async (admin: any, doctorId: string, slotId: string): Promise<any> => {
   if (!doctorId || !slotId) return null
-  const { data: claimedSlot, error: claimError } = await admin.from("slots")
-    .update({ is_booked: true })
-    .eq("id", slotId).eq("doctor_id", doctorId).eq("is_booked", false)
-    .select("id,doctor_id,date,start_time,end_time").maybeSingle()
-  if (claimError || !claimedSlot) return { status: "conflict", message: "That slot is no longer available. Please choose another slot." }
-  const { data: appointment, error } = await admin.from("appointments")
-    .insert({ patient_id: userId, doctor_id: doctorId, slot_id: slotId, status: "confirmed" })
-    .select("id").single()
-  if (error || !appointment) {
-    await admin.from("slots").update({ is_booked: false }).eq("id", slotId).eq("doctor_id", doctorId)
-    return { status: "error", message: "I could not confirm this slot. Please try again." }
-  }
-  await admin.from("slots").update({ appointment_id: appointment.id }).eq("id", slotId).eq("doctor_id", doctorId)
+  const { data: slot } = await admin.from("slots")
+    .select("id,doctor_id,date,start_time,end_time,is_booked")
+    .eq("id", slotId).eq("doctor_id", doctorId).maybeSingle()
+  if (!slot || slot.is_booked) return { status: "conflict", message: "That slot is no longer available. Please choose another slot." }
   const doctorResult = await admin.from("doctors_public").select("first_name,last_name,specialization,city,fee").eq("id", doctorId).maybeSingle()
   const doctor = doctorResult.data || {}
   return {
-    status: "confirmed",
-    appointmentId: appointment.id,
+    status: "payment_required",
+    doctorId,
+    slotId,
     doctorName: `${doctor.first_name || ""} ${doctor.last_name || ""}`.trim() || "your doctor",
     doctorSpecialization: doctor.specialization || "",
     doctorCity: doctor.city || "",
     doctorFee: doctor.fee || "",
-    slotDate: claimedSlot.date,
-    slotStartTime: claimedSlot.start_time,
-    slotEndTime: claimedSlot.end_time,
-    slotLabel: formatSlotLabel(claimedSlot),
+    slotDate: slot.date,
+    slotStartTime: slot.start_time,
+    slotEndTime: slot.end_time,
+    slotLabel: formatSlotLabel(slot),
   }
 }
 
@@ -828,21 +858,68 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return stream ? streamResponse(emptyPayload) : new Response(JSON.stringify(emptyPayload), { headers: jsonHeaders })
     }
 
-    if (INTERNAL_INFO_PATTERN.test(message)) {
-      const reply = internalInfoReply(language)
-      const internalPayload = { success: true, data: { reply, message: reply, source: "confidential_guard", intent: "educational", activeTopic: concern, clinicalSummary: previousSummary, model: null, selectedModel: null, transport: stream ? "sse" : "json" } }
-      return stream ? streamResponse(internalPayload) : new Response(JSON.stringify(internalPayload), { headers: jsonHeaders })
+    const startedAt = Date.now()
+    const isInternalCall = Boolean(serviceRoleKey) && request.headers.get("x-internal-key") === serviceRoleKey
+    const fixedPayload = (reply: string, source: string) => ({ success: true, data: { reply, message: reply, source, intent: "educational", activeTopic: concern, clinicalSummary: previousSummary, model: null, selectedModel: null, transport: stream ? "sse" : "json" } })
+    const respondFixed = (reply: string, source: string, event: any) => {
+      trackInBackground(admin, { surface: "chat", userId: userData.user.id, latencyMs: Date.now() - startedAt, ...event })
+      const payload = fixedPayload(reply, source)
+      return stream ? streamResponse(payload) : new Response(JSON.stringify(payload), { headers: jsonHeaders })
     }
 
-    if (GREETING_PATTERN.test(message)) {
-      const reply = greetingReply(language)
-      const greetingPayload = { success: true, data: { reply, message: reply, source: "greeting", intent: "educational", activeTopic: concern, clinicalSummary: previousSummary, model: null, selectedModel: null, transport: stream ? "sse" : "json" } }
-      return stream ? streamResponse(greetingPayload) : new Response(JSON.stringify(greetingPayload), { headers: jsonHeaders })
+    // These need no model: no cost, and they do not use up the patient's daily messages.
+    const smallTalk = matchSmallTalk(message, history.length > 0, language)
+    if (smallTalk) return respondFixed(smallTalk.reply, "small_talk", { route: "small_talk", routeReason: smallTalk.kind })
+
+    const actor = await resolveActor(admin, userData.user.id)
+    const audience = actor.role === "doctor" ? "doctor" : "patient"
+    const isGenericConcern = /general/i.test(concern)
+    const cacheable = isGenericConcern && !body?.showDoctors && !body?.bookDoctorId && !wantsDoctorOrBooking(message) && isCacheableQuestion(message, history.length > 0)
+    const worthRetrieving = message.trim().length >= 4
+    const cacheKey = cacheable ? await cacheKeyFor(message, language, audience) : null
+
+    if (cacheKey) {
+      const exact = await lookupExact(admin, cacheKey)
+      if (exact?.answer?.reply) {
+        void markHit(admin, exact)
+        return respondFixed(exact.answer.reply, "cache", { route: "cache", role: actor.role, cacheStatus: "hit_exact" })
+      }
+    }
+
+    // One embedding serves both the semantic cache and retrieval. The classifier runs beside it, so it adds little wait.
+    const [embedded, classified] = await Promise.all([
+      openAiKey && (cacheable || worthRetrieving) ? embedText(openAiKey, message) : null,
+      openAiKey && !isInternalCall ? classifyMessage(openAiKey, message, history) : null,
+    ])
+    if (classified) {
+      trackInBackground(admin, {
+        surface: "chat",
+        userId: actor.id,
+        role: actor.role,
+        route: "classifier",
+        model: classified.model,
+        inputTokens: classified.usage?.prompt_tokens || 0,
+        outputTokens: classified.usage?.completion_tokens || 0,
+      })
+    }
+    // The AI's reading decides. The keyword rules only stand in when it could not answer in time.
+    if (classified ? isConfidentInternalInfo(classified) : INTERNAL_INFO_PATTERN.test(message)) {
+      return respondFixed(internalInfoReply(language), "confidential_guard", { route: "guard", role: actor.role, guardFlags: ["internal_info"] })
+    }
+    const fallbackInjection = classified ? null : detectPromptInjection(message)
+    if (isConfidentInjection(classified) || fallbackInjection?.flagged) {
+      return respondFixed(injectionReply(language), "injection_guard", { route: "guard", role: actor.role, guardFlags: fallbackInjection?.rules || ["classifier_injection"] })
+    }
+    if (cacheKey && embedded) {
+      const similar = await lookupSemantic(admin, { embedding: embedded.embedding, language, audience })
+      if (similar?.answer?.reply) {
+        void markHit(admin, similar)
+        return respondFixed(similar.answer.reply, "cache", { route: "cache", role: actor.role, cacheStatus: "hit_semantic", embeddingTokens: embedded.tokens, topScore: similar.similarity })
+      }
     }
 
     // Free/Pro daily quota + burst limit. Counted before the model runs so parallel requests cannot bypass it.
     // Server-to-server calls (e.g. the voice doctor-search tool) carry the service key and are not patient messages.
-    const isInternalCall = Boolean(serviceRoleKey) && request.headers.get("x-internal-key") === serviceRoleKey
     let quota = await getAiQuota(admin, userData.user.id)
     if (quota.blocked && !isInternalCall) {
       const reply = quotaBlockedReply(quota)
@@ -857,21 +934,54 @@ Deno.serve(async (request: Request): Promise<Response> => {
       700,
     )
 
+    // Personal records load only when the question is about them, and only the signed-in patient's own.
+    const knowledge = embedded && can(actor, "knowledge.search") ? await retrieveKnowledge(admin, { query: message, embedding: embedded.embedding, audience }) : []
+    const ownAppointments = (classified ? classified.records === "appointments" : wantsOwnAppointments(message)) ? await loadOwnAppointments(admin, actor) : null
+    const ownReportChunks = embedded && (classified ? classified.records === "reports" : wantsOwnReports(message)) && can(actor, "records.own_reports")
+      ? await retrieveReportChunks(admin, { patientId: actor.id, query: message, embedding: embedded.embedding })
+      : []
+    const hasPersonalData = Boolean(ownAppointments) || ownReportChunks.length > 0
+    const groundingBlocks = [
+      knowledge.length ? formatKnowledge(knowledge) : "",
+      ownAppointments ? wrapUntrusted("patient appointments", ownAppointments) : "",
+      ownReportChunks.length ? wrapUntrusted("patient reports", ownReportChunks.map((row: any) => row.content).join("\n---\n"), 5000) : "",
+    ].filter(Boolean).join("\n")
+    const personalSource = [ownAppointments || "", ...ownReportChunks.map((row: any) => row.content)].join("\n")
+
+    const route = routeModel({ message, historyTurns: history.filter((item) => item.role === "user").length, emergencySignal, hasPersonalData, classifiedHighStakes: classified?.high_stakes })
+    // Records and CD4 rules are checked before the patient sees them, so they cannot stream word by word.
+    const needsStrictCheck = hasPersonalData || knowledge.some((chunk) => chunk.category === "app_help")
+
     const messages = [
-      { role: "system", content: buildSystemPrompt(concern, language, { intent: "symptom_report", activeTopic: concern, clinicalSummary: initialClinicalContext }) },
+      { role: "system", content: STATIC_SYSTEM_PROMPT },
+      { role: "system", content: buildTurnContext(concern, language, { intent: "symptom_report", activeTopic: concern, clinicalSummary: initialClinicalContext }) },
+      ...(groundingBlocks ? [{ role: "system", content: `${GROUNDING_RULES}\n\n${groundingBlocks}` }] : []),
       ...history,
       { role: "user", content: message },
     ]
-    const willOverrideReply = Boolean(
-      body?.showDoctors === true || wantsDoctorOrBooking(message) || hasDoctorSearchConfirmation(message, history) || (body?.bookDoctorId && body?.bookSlotId),
-    )
+    // A question about CD4's rules or the patient's own bookings wants an answer, not a list of doctors and slots.
+    const wantsDoctors = classified
+      ? classified.wants_doctors
+      : !isCd4PolicyQuestion(message) && !ownAppointments && (wantsDoctorOrBooking(message) || hasDoctorSearchConfirmation(message, history))
+    const slotsForDoctorId = /^[0-9a-f-]{36}$/i.test(String(body?.showSlotsForDoctorId || "")) ? String(body.showSlotsForDoctorId) : ""
+    // Describing chest pain gets emergency advice, not a booking list, unless they asked for a doctor in their own words.
+    const emergencyNow = detectEmergencySignal(message, [])
+    const askedForDoctorThemselves = body?.showDoctors === true || Boolean(slotsForDoctorId) || wantsDoctorOrBooking(message)
+    const showDoctorsNow = Boolean((wantsDoctors || askedForDoctorThemselves) && (!emergencyNow || askedForDoctorThemselves))
+    // The answer to "show me doctors" is the doctors. A model reply here was written, paid for and thrown away, at about 20 seconds a time.
+    const skipModel = showDoctorsNow && !emergencyNow && !(body?.bookDoctorId && body?.bookSlotId)
+    const willOverrideReply = Boolean(skipModel || (body?.bookDoctorId && body?.bookSlotId))
     // Live token streaming is only used when the reply goes to the patient unchanged.
-    const canStreamLive = stream && Boolean(openAiKey) && !willOverrideReply
+    const canStreamLive = stream && Boolean(openAiKey) && !willOverrideReply && !needsStrictCheck
     const produce = async (onReplyDelta?: (text: string) => void) => {
-    let generation: { text: string; model: string; source: string }
+    let generation: { text: string; model: string; source: string; usage?: any }
     try {
-      if (openAiKey) {
-        const result = onReplyDelta ? await callOpenAIStream(openAiKey, messages, onReplyDelta) : await callOpenAI(openAiKey, messages)
+      if (skipModel) {
+        generation = { text: JSON.stringify({ isMedical: true, reply: "", intent: "consult_request", activeTopic: concern, clinicalSummary: previousSummary }), model: "", source: "doctor_search" }
+      } else if (openAiKey) {
+        const result = onReplyDelta
+          ? await callOpenAIStream(openAiKey, messages, (delta) => onReplyDelta(scrubDelta(delta)), route.models)
+          : await callOpenAI(openAiKey, messages, route.models)
         generation = { ...result, source: "openai" }
       } else {
         const result = await callGemini(geminiKey, messages)
@@ -887,17 +997,74 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }
 
     const decision = parseAssistantDecision(generation.text)
-    if (!decision.isMedical && message.length <= 240 && APP_QUESTION_PATTERN.test(message)) {
+    if (skipModel) decision.reply = ""
+    const usage = generation.usage || {}
+    const baseEvent = {
+      surface: "chat" as const,
+      userId: actor.id,
+      role: actor.role,
+      tier: route.tier,
+      routeReason: route.reason,
+      model: generation.model,
+      inputTokens: usage.prompt_tokens || 0,
+      cachedTokens: usage.prompt_tokens_details?.cached_tokens || 0,
+      outputTokens: usage.completion_tokens || 0,
+      embeddingTokens: embedded?.tokens || 0,
+      cacheStatus: cacheable ? ("miss" as const) : ("skip" as const),
+      retrievedChunks: knowledge.length + ownReportChunks.length,
+      topScore: knowledge[0]?.score ?? ownReportChunks[0]?.score ?? null,
+    }
+    const isAboutCd4 = classified ? ["app_help", "find_doctor", "own_records"].includes(classified.intent) : message.length <= 240 && APP_QUESTION_PATTERN.test(message)
+    if (!decision.isMedical && isAboutCd4) {
       decision.isMedical = true
       decision.intent = "consult_request"
-      decision.reply = appHelpReply(language)
+      // With CD4's own documents retrieved, the model's answer is better than the generic booking hint.
+      if (!knowledge.some((chunk) => chunk.category === "app_help")) decision.reply = appHelpReply(language)
     }
     if (!decision.isMedical) {
+      trackInBackground(admin, { ...baseEvent, route: "out_of_scope", latencyMs: Date.now() - startedAt })
       const scopePayload = { success: true, data: { reply: nonMedicalReply(language), message: nonMedicalReply(language), source: "medical_scope_guard", intent: decision.intent, activeTopic: decision.activeTopic || concern, clinicalSummary: decision.clinicalSummary || previousSummary, model: generation.model, selectedModel: generation.model, rateLimit: quota } }
       return scopePayload
     }
+    const scrubbed = scrubOutput(decision.reply, nonMedicalReply(language))
+    decision.reply = scrubbed.text
+    const guardFlags = [...scrubbed.flags]
+    // Values in an answer about the patient's own records must come from those records.
+    const unsupported = personalSource ? findUnsupportedValues(decision.reply, personalSource) : []
+    if (unsupported.length) {
+      decision.reply += unsupportedValuesNote(language)
+      guardFlags.push("unsupported_values")
+    }
+    // One rewrite if a claim fails the check against the retrieved text. A second failure keeps the answer with a caution.
+    const verificationSource = [personalSource, ...knowledge.map((chunk) => chunk.content)].filter(Boolean).join("\n---\n")
+    if (groundingBlocks && openAiKey && !skipModel) {
+      const mode = needsStrictCheck ? "strict" : "contradiction"
+      const trackVerify = (verdict: any) => trackInBackground(admin, { surface: "chat", userId: actor.id, role: actor.role, route: "verifier", routeReason: mode, model: verdict.model, inputTokens: verdict.usage?.prompt_tokens || 0, outputTokens: verdict.usage?.completion_tokens || 0 })
+      const verdict = await verifyAnswer(openAiKey, { question: message, answer: decision.reply, source: verificationSource, mode })
+      if (verdict) trackVerify(verdict)
+      if (verdict && !verdict.supported) {
+        guardFlags.push("verifier_rewrite")
+        try {
+          const retry = await callOpenAI(openAiKey, [...messages, { role: "system", content: correctionInstruction(verdict.problems) }], route.models)
+          const rewritten = parseAssistantDecision(retry.text)
+          if (rewritten.reply) {
+            decision.reply = scrubOutput(rewritten.reply, nonMedicalReply(language)).text
+            const recheck = await verifyAnswer(openAiKey, { question: message, answer: decision.reply, source: verificationSource, mode })
+            if (recheck) trackVerify(recheck)
+            if (recheck && !recheck.supported) {
+              if (personalSource) decision.reply += unsupportedValuesNote(language)
+              guardFlags.push("verifier_failed")
+            }
+          }
+        } catch (rewriteError) {
+          console.warn("[chat-ai] rewrite after verification failed", rewriteError)
+          if (personalSource) decision.reply += unsupportedValuesNote(language)
+          guardFlags.push("verifier_failed")
+        }
+      }
+    }
     const clinicalSummary = decision.clinicalSummary || previousSummary || initialClinicalContext
-    const departmentSuggestion = inferDepartmentSuggestion(`${decision.activeTopic || ""} ${message} ${clinicalSummary}`)
+    const departmentSuggestion = inferDepartmentSuggestion(`${classified?.specialty || ""} ${decision.activeTopic || ""} ${message} ${clinicalSummary}`)
     if (emergencySignal) {
       decision.consultRecommended = true
       decision.consultPriority = "immediate"
@@ -905,19 +1072,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
       decision.riskScore = Math.max(decision.riskScore, 0.95)
       decision.reviewReason = "emergency_signal"
     }
-    const locationCity = clip(extractCityFromMessage(message) || body?.searchAreaCity || body?.preferredCity || body?.locationCity, 80)
-    const requestedDoctorName = extractRequestedDoctorName(message, history)
-    const shouldFindDoctors = Boolean(
-      body?.showDoctors === true ||
-      wantsDoctorOrBooking(message) ||
-      hasDoctorSearchConfirmation(message, history),
-    )
+    const locationCity = clip(classified?.city || (classified ? "" : extractCityFromMessage(message)) || body?.searchAreaCity || body?.preferredCity || body?.locationCity, 80)
+    const requestedDoctorName = classified ? classified.doctor_name : extractRequestedDoctorName(message, history)
+    const shouldFindDoctors = showDoctorsNow
     let doctorRecommendations: any[] = []
     let bookingPreparation: any = null
     let bookingConfirmation: any = null
     if (body?.bookDoctorId && body?.bookSlotId) {
       if (hasExplicitBookingConfirmation(message, history)) {
-        bookingConfirmation = await bookSlotWithoutPayment(admin, userData.user.id, String(body.bookDoctorId), String(body.bookSlotId))
+        bookingConfirmation = can(actor, "booking.start")
+          ? await prepareSlotForPayment(admin, String(body.bookDoctorId), String(body.bookSlotId))
+          : { status: "conflict", message: "Only patient accounts can book a consultation." }
       } else {
         bookingConfirmation = {
           status: "needs_confirmation",
@@ -926,48 +1091,66 @@ Deno.serve(async (request: Request): Promise<Response> => {
       }
     }
     if (shouldFindDoctors && !bookingConfirmation) {
-      const doctorSearch = await loadDoctorRecommendations(admin, `${decision.activeTopic || concern} ${message}`, locationCity, requestedDoctorName)
-      doctorRecommendations = doctorSearch.doctors
-      if (doctorSearch.slotOptions.length > 0) {
+      const doctorSearch = await loadDoctorRecommendations(admin, classified?.specialty || `${decision.activeTopic || concern} ${message}`, locationCity, requestedDoctorName, slotsForDoctorId)
+      doctorRecommendations = doctorSearch.doctors.slice(0, 5)
+      // In chat the patient picks a doctor first, then sees that doctor's next times. The voice tool still gets the full list.
+      const slotOptions = isInternalCall ? doctorSearch.slotOptions : requestedDoctorName || slotsForDoctorId ? doctorSearch.slotOptions.slice(0, 5) : []
+      if (slotOptions.length > 0) {
         bookingPreparation = {
-          slotOptions: doctorSearch.slotOptions,
+          slotOptions,
           doctorId: doctorSearch.doctors[0]?.id || null,
           searchCity: doctorSearch.city,
           source: doctorSearch.mode,
         }
       }
     }
-    if (bookingConfirmation?.status === "confirmed") {
+    if (bookingConfirmation?.status === "payment_required") {
       decision.consultRecommended = false
       decision.consultPriority = null
       decision.reply = language === "devanagari_hindi"
-        ? `✅ आपका appointment **${bookingConfirmation.doctorName}** के साथ **${bookingConfirmation.slotLabel}** पर confirm हो गया है। कोई payment नहीं लिया गया है।`
+        ? `**${bookingConfirmation.doctorName}** के साथ **${bookingConfirmation.slotLabel}** का स्लॉट तैयार है। बुकिंग पक्की करने के लिए कृपया भुगतान पूरा करें।`
         : language === "roman_hindi"
-          ? `✅ Aapka appointment **${bookingConfirmation.doctorName}** ke saath **${bookingConfirmation.slotLabel}** par confirm ho gaya hai. Koi payment nahi liya gaya hai.`
-          : `✅ Your appointment with **${bookingConfirmation.doctorName}** is confirmed for **${bookingConfirmation.slotLabel}**. No payment was taken.`
+          ? `**${bookingConfirmation.doctorName}** ke saath **${bookingConfirmation.slotLabel}** ka slot taiyaar hai. Booking pakki karne ke liye payment poora kijiye.`
+          : `Your slot with **${bookingConfirmation.doctorName}** on **${bookingConfirmation.slotLabel}** is ready. Please complete the payment to confirm the booking.`
     }
-    if (shouldFindDoctors && !bookingConfirmation) {
+    if (shouldFindDoctors && !bookingConfirmation && !emergencyNow) {
       const foundSlots = bookingPreparation?.slotOptions?.length > 0
       const foundDoctors = doctorRecommendations.length > 0
       if (foundSlots) {
-        const doctorLabel = requestedDoctorName || bookingPreparation?.slotOptions?.[0]?.doctorName || "the selected doctor"
+        const doctorLabel = bookingPreparation?.slotOptions?.[0]?.doctorName || requestedDoctorName || "the selected doctor"
         decision.reply = language === "devanagari_hindi"
-          ? `${doctorLabel} के उपलब्ध स्लॉट मिल गए हैं। कृपया एक स्लॉट चुनें।`
+          ? `${doctorLabel} के अगले उपलब्ध समय ये हैं। अपने लिए एक चुनें।`
           : language === "roman_hindi"
-            ? `${doctorLabel} ke available slots mil gaye hain. Kripya ek slot choose kijiye.`
-            : `I found ${doctorLabel}'s available slots. Please choose a slot.`
-      } else if (requestedDoctorName) {
+            ? `${doctorLabel} ke agle available time ye hain. Apne liye ek chuniye.`
+            : `Here are ${doctorLabel}'s next available times. Choose one that suits you.`
+      } else if (requestedDoctorName || slotsForDoctorId) {
+        const doctorLabel = requestedDoctorName || `${doctorRecommendations[0]?.firstName || ""} ${doctorRecommendations[0]?.lastName || ""}`.trim() || "this doctor"
         decision.reply = language === "devanagari_hindi"
-          ? `${requestedDoctorName} का अभी कोई खुला स्लॉट नहीं मिला।`
+          ? `${doctorLabel} का अभी कोई खुला समय नहीं है। आप कोई दूसरा डॉक्टर चुन सकते हैं।`
           : language === "roman_hindi"
-            ? `${requestedDoctorName} ka abhi koi open slot nahi mila.`
-            : `I could not find an open slot for ${requestedDoctorName} right now.`
+            ? `${doctorLabel} ka abhi koi open time nahi hai. Aap koi doosra doctor chun sakte hain.`
+            : `${doctorLabel} has no open times right now. You can choose another doctor.`
       } else if (foundDoctors) {
         decision.reply = language === "devanagari_hindi"
-          ? "मुझे verified doctors मिल गए हैं। पहले एक doctor चुनें, फिर मैं उसी के slots दिखाऊँगा।"
+          ? "ये verified डॉक्टर उपलब्ध हैं। उनके उपलब्ध समय देखने के लिए एक चुनें।"
           : language === "roman_hindi"
-            ? "Mujhe verified doctors mil gaye hain. Pehle ek doctor choose kijiye, phir main usi ke slots dikhaunga."
-            : "I found verified doctors. Please choose a doctor first, then I will show that doctor's slots."
+            ? "Ye verified doctors available hain. Unke available time dekhne ke liye ek chuniye."
+            : "Here are verified doctors. Choose one to see their available times."
+      } else {
+        decision.reply = language === "devanagari_hindi"
+          ? "अभी इसके लिए कोई डॉक्टर उपलब्ध नहीं मिला। कृपया थोड़ी देर बाद फिर कोशिश करें।"
+          : language === "roman_hindi"
+            ? "Abhi iske liye koi doctor available nahi mila. Kripya thodi der baad phir try kijiye."
+            : "I could not find an available doctor for this right now. Please try again a little later."
+      }
+      // They were warned about something serious a moment ago. Booking must not bury that.
+      if (emergencySignal) {
+        const reminder = language === "devanagari_hindi"
+          ? "अगर वह गंभीर लक्षण अभी भी है, तो कृपया तुरंत नज़दीकी इमरजेंसी में जाएँ।"
+          : language === "roman_hindi"
+            ? "Agar woh gambhir lakshan abhi bhi hai, to kripya turant nazdeeki emergency mein jaiye."
+            : "If that serious symptom is still there, please go to the nearest emergency department now."
+        decision.reply = `${reminder}\n\n${decision.reply}`
       }
     }
     if (bookingConfirmation?.status === "needs_confirmation") {
@@ -977,6 +1160,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
           ? "Is doctor aur isi slot ki booking ke liye please saaf taur par haan kahiye."
           : "Please clearly confirm this specific doctor and slot before I book it."
     }
+    // Only a general, low-risk answer that was not altered is safe to give to the next person who asks.
+    if (cacheKey && !skipModel && !guardFlags.length && !emergencySignal && !decision.consultRecommended && decision.riskScore < 0.3 && !knowledge.some((chunk) => chunk.category === "app_help")) {
+      await storeAnswer(admin, { key: cacheKey, question: message, language, audience, embedding: embedded?.embedding || null, answer: { reply: decision.reply } })
+    }
+    trackInBackground(admin, { ...baseEvent, route: "model", guardFlags, unsupportedValues: unsupported.length, latencyMs: Date.now() - startedAt })
+
     const payload = {
       success: true,
       data: {
@@ -992,8 +1181,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
         doctorRecommendations,
         bookingPreparation,
         bookingConfirmation,
-        bookingPrompt: bookingConfirmation?.status === "confirmed"
-          ? "Your appointment is confirmed. No payment was taken."
+        bookingPrompt: bookingConfirmation?.status === "payment_required"
+          ? "Complete the payment to confirm your appointment."
           : bookingConfirmation?.status === "needs_confirmation"
             ? bookingConfirmation.message
           : bookingPreparation?.slotOptions?.length

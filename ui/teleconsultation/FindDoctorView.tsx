@@ -279,6 +279,7 @@ import { HomeTabSkeleton } from '../common/TabLoadingSkeletons';
 import { getStoredLocationCity, syncLocationCityIfPermitted } from '../../services/locationPermission';
 import { DOCTOR_SPECIALIZATION_OPTIONS } from '../../constants/DoctorOptions';
 import { formatCityName, isCityMatch } from '../../src/utils/city';
+import { canonicalSpecialty, isPresentableDoctor } from '../../src/utils/doctors';
 import Colors from '../../constants/Colors';
 
 type IconComponent = React.ComponentType<{
@@ -916,7 +917,7 @@ const createInitialAgentMessages = (): AgentMessage[] => [
     {
         id: 'agent-welcome',
         role: 'ai',
-        text: 'Namaste. Main CD4 AI Voice Assistant hoon. Main aapki health concern ko analyze karne, sahi department aur verified specialist dhoondhne, aur doctor ke saath appointment book karne mein aapki madad kar sakta hoon. Aap Hindi, English ya apni pasand ki language mein bol sakte hain.',
+        text: 'Namaste. Main CD4 AI hoon. Main aapki health concern ko analyze karne, sahi department aur verified specialist dhoondhne, aur doctor ke saath appointment book karne mein aapki madad kar sakta hoon. Aap Hindi, English ya apni pasand ki language mein bol sakte hain.',
         createdAt: nowIso(),
     },
 ];
@@ -1945,7 +1946,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         realtimeVoiceRef.current?.setInputEnabled(false);
                         setIsListening(false);
                         setIsVoiceReplyPlaying(true);
-                        setVoiceStatusText('CD4 Assistant is speaking…');
+                        setVoiceStatusText('CD4 AI is speaking…');
                     } else {
                         armRealtimeListening(0);
                     }
@@ -1962,12 +1963,11 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     setIsVoiceReplyPlaying(false);
                     setVoiceStatusText('Thinking…');
                 } else if (status === 'speaking') {
-                    // Half-duplex: the mic is closed while the assistant talks (prevents self-interruption
-                    // on phones with weak echo cancellation). Tapping the mic interrupts instead.
+                    // The patient can speak over the assistant; tapping the mic also interrupts.
                     clearRealtimeTurnTimers();
                     setIsListening(false);
                     setIsVoiceReplyPlaying(true);
-                    setVoiceStatusText('CD4 Assistant is speaking… tap the mic to interrupt');
+                    setVoiceStatusText('CD4 AI is speaking… just speak to interrupt');
                 } else if (status === 'closed') {
                     clearRealtimeTurnTimers();
                     setIsVoiceSessionActive(false);
@@ -2867,13 +2867,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             ((doctor as any).isVerified || (doctor as any).is_verified ? 1000 : 0) +
             (Number(doctor.rating) || 0) * 10 +
             Math.min(parseExperienceYears(doctor.experience), 40) / 10;
-        // The home showcase is the app's shop window: skip test/incomplete profiles ("aaaaaa sssdsfsaf", no speciality).
-        // They still appear in full search results.
-        const isPresentable = (doctor: Doctor) => {
-            const name = `${doctor.firstName || ''} ${doctor.lastName || ''}`.replace(/^\s*dr\.?\s*/i, '').trim();
-            return Boolean(doctor.specialization) && /\p{L}{2,}/u.test(name) && !/(\p{L})\1{3,}/u.test(name);
-        };
-        const ranked = [...(doctorsData as Doctor[])].filter(isPresentable).sort((a, b) => score(b) - score(a));
+        const ranked = [...(doctorsData as Doctor[])].filter(isPresentableDoctor).sort((a, b) => score(b) - score(a));
         const local = city ? ranked.filter((doctor) => isCityMatch(doctor.city, city)) : [];
         const others = ranked.filter((doctor) => !local.includes(doctor));
         return { doctors: [...local, ...others].slice(0, 6), hasLocal: local.length > 0, allLocal: local.length >= 6, city };
@@ -3368,6 +3362,12 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
     const handleDepartmentSelect = (departmentId: string | null) => {
         setIsDepartmentListVisible(false);
         setSelectedDepartmentId(departmentId);
+        const department = allDepartments.find((item) => item.id === departmentId);
+        router.push({
+            pathname: '/(tabs)/appointments',
+            // departmentAt makes choosing the same department again count as a new request.
+            params: { department: department?.label || 'all', departmentAt: String(Date.now()) },
+        });
     };
 
     const handleCityFilterPress = (city: string | null) => {
@@ -5299,7 +5299,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                 // deduplicates this against its channel-open trigger.
                 realtimeVoiceRef.current.startAssistantResponse();
                 setIsVoiceReplyPlaying(true);
-                setVoiceStatusText('CD4 Assistant is speaking...');
+                setVoiceStatusText('CD4 AI is speaking...');
             } else {
                 // The welcome response completed during the handshake.
                 armRealtimeListening(0);
@@ -6086,7 +6086,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                     return {
                         id: String(doctor._id || `home-doctor-${index}`),
                         name: getDoctorDisplayName(doctor, { includePrefix: true, fallbackName: 'Specialist' }),
-                        specialization: doctor.specialization,
+                        specialization: canonicalSpecialty(doctor.specialization),
                         experience: parseExperienceYears(doctor.experience),
                         image: getImageUrl(doctor.image),
                         feeLabel,

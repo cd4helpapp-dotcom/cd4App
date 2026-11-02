@@ -92,15 +92,10 @@ export const resolveStorageSignedUrlsByPath = async (args: {
     return result;
   }
 
-  await Promise.all(
-    uniquePaths.map(async (path) => {
-      const { data, error } = await supabase.storage
-        .from(args.bucket)
-        .createSignedUrl(path, ttlSeconds);
-      if (error || !data?.signedUrl) return;
-      result.set(path, data.signedUrl);
-    })
-  );
+  const { data } = await supabase.storage.from(args.bucket).createSignedUrls(uniquePaths, ttlSeconds);
+  (data || []).forEach((item) => {
+    if (item?.path && item?.signedUrl && !item.error) result.set(item.path, item.signedUrl);
+  });
 
   return result;
 };

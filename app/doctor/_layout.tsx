@@ -155,6 +155,7 @@ export default function DoctorTabLayout() {
                 tabBarHideOnKeyboard: false, header: () => <GlobalHeader />, headerShown: true,
             }}
         >
+      {/* Tabs shown are chosen by visibleRouteNames. Do not use href: null here: expo-router 58 redirects away from such routes. */}
             <Tabs.Screen
                 name="dashboard"
                 options={{
@@ -178,7 +179,6 @@ export default function DoctorTabLayout() {
             <Tabs.Screen
                 name="chats"
                 options={{
-                    headerShown: false,
                     title: 'Chats',
                     tabBarLabel: 'Chats',
                     tabBarIcon: ({ color, focused }) => (
@@ -209,7 +209,6 @@ export default function DoctorTabLayout() {
             <Tabs.Screen
                 name="settings"
                 options={{
-                    href: null,
                     title: 'Settings',
                     tabBarLabel: 'Settings',
                     tabBarIcon: ({ color, focused }) => (
@@ -218,28 +217,27 @@ export default function DoctorTabLayout() {
                 }}
             />
             {/* Hidden screens */}
-            <Tabs.Screen name="help" options={{ href: null }} />
-            <Tabs.Screen name="appearance" options={{ href: null }} />
-            <Tabs.Screen name="language" options={{ href: null }} />
-            <Tabs.Screen name="notifications" options={{ href: null }} />
-            <Tabs.Screen name="profile-details" options={{ href: null }} />
-            <Tabs.Screen name="storage" options={{ href: null }} />
+            <Tabs.Screen name="help" />
+            <Tabs.Screen name="appearance" />
+            <Tabs.Screen name="language" />
+            <Tabs.Screen name="notifications" />
+            <Tabs.Screen name="profile-details" />
+            <Tabs.Screen name="storage" />
+            <Tabs.Screen name="transactions" />
             <Tabs.Screen
                 name="profile/fees"
                 options={{
-                    href: null,
                 }}
             />
+            <Tabs.Screen name="profile/signature" />
             <Tabs.Screen
                 name="profile/clinic"
                 options={{
-                    href: null,
                 }}
             />
             <Tabs.Screen
                 name="complete-profile"
                 options={{
-                    href: null,
                     tabBarStyle: { display: 'none' },
                 }}
             />

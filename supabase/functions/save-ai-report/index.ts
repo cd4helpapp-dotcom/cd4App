@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { createClient } from "npm:@supabase/supabase-js@2"
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1"
+import { briefToSummaryText, buildDoctorBrief, countPatientTurns, loadConversationForBrief, renderDoctorBriefPdf } from "../_shared/doctorBrief.ts"
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -640,52 +641,6 @@ const buildAiChatTimelineLines = (historyInput: TriageHistoryItem[], maxLines = 
     .slice(0, maxLines)
 }
 
-const buildGeminiSummary = async (geminiApiKey: string, history: TriageHistoryItem[]): Promise<string> => {
-  if (!geminiApiKey || history.length === 0) return ""
-
-  const historyText = history
-    .map((m) => `${m.role === "assistant" ? "AI" : "Patient"}: ${sanitizePdfText(m.content || "")}`)
-    .join("\n")
-
-  const prompt = `You are a clinical documentation assistant.
-Create a concise doctor-facing triage summary from the chat history.
-
-Output format (plain text only, professional English only):
-- Return concise bullet points, one clinical point per bullet.
-  - Include only the patient's captured answers and reported facts. Never print the AI's questions.
-  - Keep the summary as bullet points; do not invent answers or add a question-and-answer transcript.
-- Cover chief concern, onset/duration, severity, associated symptoms, triggers, functional impact, medicines/history/allergies, and why doctor review may be needed when present.
-- If one patient message contains several facts in one sentence, extract every fact separately; never discard the whole message because it also contains a doctor or booking request.
-- Adapt the summary to the condition actually reported. Include condition-specific facts when present (for example temperature for fever, glucose readings/medicines for diabetes, breathing severity for cough, pain location for pain, and bleeding/pregnancy details when relevant).
-
-Rules:
-- If data is missing, write "Not clearly stated".
-- Translate Hindi/Hinglish content into clear professional English.
-- Keep objective, no definitive diagnosis.
-- Never omit a clinically relevant captured detail just to make the summary shorter.
-- Maximum 220 words; if information is missing, write "Not clearly stated".
-
-Chat History:
-${historyText}`
-
-  const geminiModel = getGeminiModelName()
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiApiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 300,
-      },
-    }),
-  })
-
-  if (!response.ok) return ""
-  const aiData = await response.json()
-  return sanitizePdfText(aiData?.candidates?.[0]?.content?.parts?.[0]?.text || "")
-}
-
 const buildHeuristicSummary = (snapshot: TriageSnapshot): string => {
   const lines = [
     `Chief concern: ${toProfessionalEnglishAnswer(snapshot.chiefConcern)}`,
@@ -721,251 +676,6 @@ const extractPatientReportedFacts = (historyInput: TriageHistoryItem[]): string[
     if (facts.length >= 5) break
   }
   return facts
-}
-
-const buildReportPdfBytes = async (args: {
-  concern: string
-  summary: string
-  triageSnapshot: TriageSnapshot
-  qaSnapshotLines: string[]
-  aiChatTimelineLines: string[]
-  patientName?: string
-  patientEmail?: string
-}): Promise<Uint8Array> => {
-  const pdfDoc = await PDFDocument.create()
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica)
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold)
-  const page = pdfDoc.addPage([595, 842])
-
-  const green = rgb(0.04, 0.47, 0.37)
-  const border = rgb(0.86, 0.9, 0.9)
-  const dark = rgb(0.12, 0.16, 0.18)
-  const muted = rgb(0.36, 0.43, 0.46)
-  const white = rgb(1, 1, 1)
-
-  const generatedAt = new Date()
-  const generatedDate = generatedAt.toLocaleDateString("en-IN")
-  const generatedTime = generatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
-
-  const drawTextOnPage = (
-    targetPage: any,
-    text: string,
-    x: number,
-    textY: number,
-    size = 10,
-    useBold = false,
-    color = dark,
-  ) => {
-    targetPage.drawText(sanitizePdfText(text), {
-      x,
-      y: textY,
-      size,
-      font: useBold ? boldFont : font,
-      color,
-    })
-  }
-
-  const drawText = (text: string, x: number, textY: number, size = 10, useBold = false, color = dark) =>
-    drawTextOnPage(page, text, x, textY, size, useBold, color)
-
-  const wrap = (value: string, maxWidth: number, textSize = 10, useBold = false): string[] => {
-    const words = sanitizePdfText(value).split(/\s+/).filter(Boolean)
-    const lines: string[] = []
-    let current = ""
-    const activeFont = useBold ? boldFont : font
-
-    for (const word of words) {
-      const next = current ? `${current} ${word}` : word
-      if (activeFont.widthOfTextAtSize(next, textSize) > maxWidth && current) {
-        lines.push(current)
-        current = word
-      } else {
-        current = next
-      }
-    }
-
-    if (current) lines.push(current)
-    return lines.length ? lines : [""]
-  }
-
-  const fitText = (value: string, maxWidth: number, size = 9.5, useBold = false): string => {
-    const clean = sanitizePdfText(value || "")
-    if (!clean) return ""
-    const activeFont = useBold ? boldFont : font
-    if (activeFont.widthOfTextAtSize(clean, size) <= maxWidth) return clean
-
-    let output = clean
-    while (output.length > 2 && activeFont.widthOfTextAtSize(`${output}...`, size) > maxWidth) {
-      output = output.slice(0, -1)
-    }
-    return `${output}...`
-  }
-
-  const drawBox = (x: number, boxY: number, width: number, height: number, fill = white, stroke = border) => {
-    page.drawRectangle({ x, y: boxY, width, height, color: fill, borderColor: stroke, borderWidth: 1 })
-  }
-
-  const drawBullets = (
-    x: number,
-    startY: number,
-    width: number,
-    items: string[],
-    maxItems = 4,
-    size = 9,
-    color = dark,
-    minY = 0,
-  ) => {
-    let cursorY = startY
-    const rows = items.length ? items : ["Not clearly captured"]
-    for (const item of rows.slice(0, maxItems)) {
-      const wrapped = wrap(item, width - 10, size).slice(0, 2)
-      drawText(`- ${wrapped[0] || "Not clearly captured"}`, x, cursorY, size, false, color)
-      cursorY -= 13
-      if (wrapped[1] && cursorY > minY) {
-        drawText(`  ${wrapped[1]}`, x, cursorY, size, false, color)
-        cursorY -= 13
-      }
-      if (cursorY <= minY) break
-    }
-  }
-
-  const buildSnapshotSummaryLines = (value: string, maxLines = 4): string[] => {
-    const normalized = sanitizePdfText(value).replace(/\s+/g, " ").trim()
-    if (!normalized) return ["AI clinical summary could not be generated from the attached transcript."]
-
-    const chunks = normalized
-      .split(/[.!?]+\s+/)
-      .map((chunk) => clipText(chunk, 220))
-      .filter(Boolean)
-
-    return (chunks.length ? chunks : [clipText(normalized, 240)]).slice(0, maxLines)
-  }
-
-  const associatedSymptoms = args.triageSnapshot.associatedSymptoms.length
-    ? args.triageSnapshot.associatedSymptoms.join(", ")
-    : "Not clearly stated"
-  const missingPoints = args.triageSnapshot.missingDataPoints.length
-    ? args.triageSnapshot.missingDataPoints.join(", ")
-    : "None"
-
-  // One-page A4 layout matched to the prescription PDF visual language.
-  drawText("CD4", 34, 807, 24, true, green)
-  page.drawRectangle({ x: 202, y: 790, width: 190, height: 28, color: green })
-  drawText("AI SNAPSHOT", 257, 799, 13, true, white)
-  drawText(`Date: ${generatedDate}`, 410, 807, 10, false, dark)
-  drawText(`Time: ${generatedTime}`, 410, 793, 10, false, dark)
-
-  drawBox(28, 675, 539, 104, white, border)
-  drawText("PATIENT DETAILS", 40, 760, 11, true, green)
-  drawText(`Name: ${fitText(args.patientName || "Patient", 210, 11, true)}`, 40, 742, 11, true, dark)
-  drawText(`Email: ${fitText(args.patientEmail || "Not available", 210, 9.4)}`, 40, 726, 9.4, false, muted)
-  drawText("Source: AI chat / voice-guided triage", 40, 712, 9.4, false, muted)
-
-  drawText("SNAPSHOT DETAILS", 290, 760, 11, true, green)
-  drawText(`Concern: ${fitText(args.triageSnapshot.chiefConcern, 220, 10, true)}`, 290, 742, 10, true, dark)
-  drawText(`Capture: ${args.triageSnapshot.captureScore}/5 core items`, 290, 726, 9.4, false, muted)
-  drawText(`Generated: ${generatedDate} ${generatedTime}`, 290, 712, 9.4, false, muted)
-
-  drawBox(28, 535, 539, 128, white, border)
-  drawText("CHIEF CONCERN", 40, 645, 11, true, green)
-  drawBullets(
-    40,
-    627,
-    165,
-    [
-      args.triageSnapshot.chiefConcern,
-      `Duration: ${args.triageSnapshot.duration}`,
-      `Severity: ${args.triageSnapshot.severity}`,
-      `Temperature: ${args.triageSnapshot.temperature}`,
-    ],
-    4,
-    9,
-    dark,
-    548,
-  )
-  drawText("AI SUMMARY", 220, 645, 11, true, green)
-  drawBullets(220, 627, 185, buildSnapshotSummaryLines(args.summary, 4), 4, 8.7, dark, 548)
-  drawText("RISK / CONTEXT", 425, 645, 11, true, green)
-  drawBullets(
-    425,
-    627,
-    125,
-    [
-      "Doctor review required before diagnosis or treatment.",
-      `Missing: ${missingPoints}`,
-      `Data: ${args.triageSnapshot.captureScore}/5`,
-    ],
-    3,
-    8.1,
-    dark,
-    548,
-  )
-  drawText(`Concern: ${fitText(args.triageSnapshot.chiefConcern, 500, 9)}`, 40, 560, 9, true, dark)
-  drawText(`Symptoms: ${fitText(associatedSymptoms, 480, 9)}`, 40, 546, 9, false, dark)
-
-  drawText("DOCTOR QUICK REVIEW", 28, 515, 12, true, green)
-  // Six review rows need more vertical room than the previous fixed box.
-  // Keep the final note outside the table so it cannot overlap the last row.
-  drawBox(28, 326, 539, 180, white, border)
-  page.drawRectangle({ x: 29, y: 485, width: 537, height: 20, color: green })
-  drawText("Field", 38, 491, 9, true, white)
-  drawText("Captured Detail", 146, 491, 9, true, white)
-  drawText("Doctor Action", 382, 491, 9, true, white)
-
-  const reviewRows = [
-    ["Concern", args.triageSnapshot.chiefConcern, "Confirm history"],
-    ["Duration", args.triageSnapshot.duration, "Clarify onset"],
-    ["Severity", args.triageSnapshot.severity, "Assess vitals"],
-    ["Symptoms", associatedSymptoms, "Screen red flags"],
-    ["Medicine / Allergy", args.triageSnapshot.medicationContext, "Verify before Rx"],
-    ["Missing", missingPoints, "Ask follow-up"],
-  ]
-  let reviewRowY = 468
-  reviewRows.forEach((row, index) => {
-    if (index % 2 === 0) {
-      page.drawRectangle({ x: 29, y: reviewRowY - 13, width: 537, height: 22, color: rgb(0.98, 0.99, 0.99) })
-    }
-    drawText(fitText(row[0], 96, 8.8, true), 38, reviewRowY, 8.8, index === 0, dark)
-    drawText(fitText(row[1], 220, 8.8), 146, reviewRowY, 8.8, false, dark)
-    drawText(fitText(row[2], 150, 8.8), 382, reviewRowY, 8.8, false, dark)
-    reviewRowY -= 22
-  })
-  drawText("This AI snapshot supports clinical review and should be verified by the treating doctor.", 36, 334, 8.5, false, muted)
-
-  drawText("AI-assisted summary for doctor review only. Not a diagnosis or prescription.", 28, 208, 9, false, muted)
-  drawText("Reviewing Doctor", 430, 194, 11, true, dark)
-  drawText("Clinical verification required", 430, 182, 9, false, muted)
-
-  drawBox(28, 78, 539, 96, white, border)
-  drawText("DOCTOR HANDOFF NOTES", 40, 158, 10, true, green)
-  drawBullets(
-    40,
-    142,
-    500,
-    [
-      "Verify patient-reported symptoms, duration, vitals, medicines, allergies, and red flags directly.",
-      "Use this snapshot as a consultation aid before diagnosis, prescription, or referral.",
-      "If red flags are present, advise urgent in-person or emergency care as clinically appropriate.",
-    ],
-    4,
-    8.8,
-    dark,
-    88,
-  )
-
-  const allPages = pdfDoc.getPages()
-  allPages.forEach((targetPage: any, index: number) => {
-    targetPage.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green })
-    targetPage.drawText(`CD4 AI | Doctor review only | Page ${index + 1} of ${allPages.length}`, {
-      x: 34,
-      y: 8,
-      size: 8.5,
-      font,
-      color: white,
-    })
-  })
-
-  return await pdfDoc.save()
 }
 
 Deno.serve(async (req) => {
@@ -1036,43 +746,33 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: "empty_conversation", message: "Chat with the AI first, then save the report." }, 400)
     }
     const triageSnapshot = extractTriageSnapshot({ concern: safeConcern, history: compactHistory })
-    const qaSnapshotLines = buildVoiceChatQaSnapshotLines(compactHistory, safeConcern, 20)
-    const aiChatTimelineLines = buildAiChatTimelineLines(compactHistory, 4)
-
-    let summary = ""
-    try {
-      summary = await buildGeminiSummary(geminiApiKey, compactHistory)
-    } catch (err) {
-      console.error("Summary generation failed:", err)
-    }
-
-    const fallbackSummary = buildHeuristicSummary(triageSnapshot)
-    const patientFacts = extractPatientReportedFacts(compactHistory)
-    const patientFactsLine = patientFacts.length
-      ? `Patient-reported details: ${patientFacts.join("; ")}`
-      : ""
-    const temperatureLine = triageSnapshot.temperature !== "Not clearly stated"
-      ? `Temperature recorded: ${triageSnapshot.temperature}.`
-      : ""
-    const safeSummary = clipText(
-      [patientFactsLine, summary || fallbackSummary || "No summary generated.", temperatureLine].filter(Boolean).join(" "),
-      2000,
-    ) || "No summary generated."
-    const userMeta = user.user_metadata || user.raw_user_meta_data || {}
-    const patientFirstName = clipText(userMeta.first_name || userMeta.firstName || "", 60)
-    const patientLastName = clipText(userMeta.last_name || userMeta.lastName || "", 60)
-    const patientName = [patientFirstName, patientLastName].filter(Boolean).join(" ").trim() || clipText(user.email || "Patient", 100) || "Patient"
-    const patientEmail = clipText(user.email || userMeta.email || "", 120)
-
-    const pdfBytes = await buildReportPdfBytes({
-      concern: safeConcern,
-      summary: safeSummary,
-      triageSnapshot,
-      qaSnapshotLines,
-      aiChatTimelineLines,
-      patientName,
-      patientEmail,
+    // The AI reads the original words; compactHistory is cleaned for PDF text and has lost any Hindi.
+    const originalConversation = await loadConversationForBrief(supabase, {
+      userId: user.id,
+      conversationId: typeof conversationId === "string" && isUuid(conversationId.trim()) ? conversationId.trim() : null,
     })
+    const payloadOriginal = (Array.isArray(history) ? history : [])
+      .map((item: any) => ({ role: item?.role === "assistant" ? "assistant" : "user", content: String(item?.content || "").trim() }))
+      .filter((item: any) => item.content)
+    const briefHistory = [originalConversation, payloadOriginal, compactHistory]
+      .reduce((best: any[], candidate: any[]) => (countPatientTurns(candidate) > countPatientTurns(best) ? candidate : best), [])
+    const brief = await buildDoctorBrief({
+      concern: safeConcern,
+      history: briefHistory,
+      env: {
+        openAiKey: Deno.env.get("OPENAI_API_KEY") || "",
+        openAiModel: Deno.env.get("CHAT_AI_OPENAI_MODEL")?.trim() || "gpt-4o-mini",
+        geminiKey: geminiApiKey,
+      },
+    })
+    const safeSummary = briefToSummaryText(brief)
+    const userMeta = user.user_metadata || user.raw_user_meta_data || {}
+    const patientName = [clipText(userMeta.first_name || userMeta.firstName || "", 60), clipText(userMeta.last_name || userMeta.lastName || "", 60)]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || "Patient"
+
+    const pdfBytes = await renderDoctorBriefPdf({ PDFDocument, StandardFonts, rgb }, { brief, patient: { name: patientName } })
     const filePath = `${user.id}/report_${Date.now()}.pdf`
 
     const { error: uploadError } = await supabase.storage

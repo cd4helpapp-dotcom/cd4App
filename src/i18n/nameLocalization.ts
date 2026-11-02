@@ -212,6 +212,7 @@ const normalizeRawDoctorName = (firstName?: string | null, lastName?: string | n
     .map((part) => (typeof part === 'string' ? part.trim() : ''))
     .filter(Boolean)
     .join(' ')
+    .replace(/(^|\s)([a-z])/g, (_match, space, letter) => space + letter.toUpperCase())
     .trim();
 };
 

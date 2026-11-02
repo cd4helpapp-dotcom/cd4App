@@ -4,6 +4,7 @@ import { AlertTriangle, ChevronRight, Compass, ShieldCheck, Stethoscope } from '
 import type { MedicalReport } from '../../hooks/useMedicalReports';
 import { elevation, Radius, Spacing, Typography } from '../../constants/Design';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { useAppLanguage } from '../../context/AppLanguageContext';
 import {
   getAttentionCount,
   getFollowUps,
@@ -12,6 +13,7 @@ import {
   getReportState,
   getReportTitle,
 } from '../../src/utils/reportInsights';
+import { FadeInUp, RangeMeter } from './ReportVisuals';
 
 type Props = {
   reports: MedicalReport[];
@@ -23,10 +25,11 @@ type Props = {
 // Cross-report overview: what needs attention and what to do next, built only from reports AI has finished reading.
 export default function InsightsTab({ reports, nowMs, onOpen, onAddReport }: Props) {
   const { theme } = useAppTheme();
+  const { t } = useAppLanguage();
   const ready = reports.filter((report) => getReportState(report, nowMs) === 'ready');
 
   const flagged = ready
-    .filter((report) => getReportKind(report) !== 'prescription')
+    .filter((report) => getReportKind(report) === 'lab')
     .map((report) => ({ report, count: getAttentionCount(report), items: getHighlights(report, 6).filter((h) => h.flag === 'high' || h.flag === 'low') }))
     .filter((row) => row.count > 0);
 
@@ -38,12 +41,12 @@ export default function InsightsTab({ reports, nowMs, onOpen, onAddReport }: Pro
         <View style={[styles.emptyIcon, { backgroundColor: theme.primarySoft }]}>
           <Compass size={26} color={theme.primary} />
         </View>
-        <Text style={[Typography.heading, { color: theme.text, textAlign: 'center' }]}>Insights appear here</Text>
+        <Text style={[Typography.heading, { color: theme.text, textAlign: 'center' }]}>{t('reports.insightsEmptyTitle')}</Text>
         <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>
-          Once AI has read a report, we show what needs attention and what to do next, all in one place.
+          {t('reports.insightsEmptyBody')}
         </Text>
         <Pressable onPress={onAddReport} accessibilityRole="button" style={[styles.cta, { backgroundColor: theme.buttonPrimary }]}>
-          <Text style={styles.ctaText}>Add your first report</Text>
+          <Text style={styles.ctaText}>{t('reports.addFirst')}</Text>
         </Pressable>
       </View>
     );
@@ -54,25 +57,25 @@ export default function InsightsTab({ reports, nowMs, onOpen, onAddReport }: Pro
       <View style={styles.statRow}>
         <View style={[styles.stat, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
           <Text style={[Typography.title, { color: theme.text }]}>{ready.length}</Text>
-          <Text style={[Typography.caption, { color: theme.textSecondary }]}>Reports read</Text>
+          <Text style={[Typography.caption, { color: theme.textSecondary }]}>{t('reports.reportsRead')}</Text>
         </View>
         <View style={[styles.stat, { backgroundColor: flagged.length ? theme.dangerSoft : theme.successLight, borderColor: theme.borderColor }]}>
           <Text style={[Typography.title, { color: flagged.length ? theme.danger : theme.success }]}>{flagged.length}</Text>
-          <Text style={[Typography.caption, { color: theme.textSecondary }]}>{flagged.length === 1 ? 'Report to review' : 'Reports to review'}</Text>
+          <Text style={[Typography.caption, { color: theme.textSecondary }]}>{flagged.length === 1 ? t('reports.reportToReview') : t('reports.reportsToReview')}</Text>
         </View>
       </View>
 
       <View style={styles.section}>
-        <Text style={[Typography.overline, { color: theme.textTertiary }]}>NEEDS YOUR ATTENTION</Text>
+        <Text style={[Typography.overline, { color: theme.textTertiary }]}>{t('reports.needsAttentionCaps')}</Text>
         {flagged.length === 0 ? (
           <View style={[styles.card, { backgroundColor: theme.successLight, borderColor: theme.borderColor }]}>
             <ShieldCheck size={20} color={theme.success} />
-            <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>Nothing is flagged in your reports. Keep up regular check-ups.</Text>
+            <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{t('reports.nothingFlaggedLong')}</Text>
           </View>
         ) : (
-          flagged.map(({ report, count, items }) => (
+          flagged.map(({ report, count, items }, index) => (
+            <FadeInUp key={report.id} index={index}>
             <Pressable
-              key={report.id}
               onPress={() => onOpen(report)}
               accessibilityRole="button"
               style={[styles.card, styles.cardCol, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}
@@ -83,20 +86,24 @@ export default function InsightsTab({ reports, nowMs, onOpen, onAddReport }: Pro
                 <ChevronRight size={18} color={theme.textTertiary} />
               </View>
               {items.slice(0, 3).map((item) => (
-                <Text key={item.name} style={[Typography.body, { color: theme.textSecondary }]} numberOfLines={1}>
-                  {item.name}: <Text style={{ color: theme.danger, fontWeight: '700' }}>{item.value} {item.unit}</Text>
-                  {item.reference ? `  (normal ${item.reference})` : ''}
-                </Text>
+                <View key={item.name} style={styles.flagRow}>
+                  <Text style={[Typography.body, { color: theme.textSecondary }]} numberOfLines={1}>
+                    {item.name}: <Text style={{ color: theme.danger, fontWeight: '700' }}>{item.value} {item.unit}</Text>
+                    {item.reference ? `  (${t('reports.normalRange', { range: item.reference })})` : ''}
+                  </Text>
+                  <RangeMeter item={item} />
+                </View>
               ))}
-              {count > 3 ? <Text style={[Typography.caption, { color: theme.textTertiary }]}>+{count - 3} more in the full report</Text> : null}
+              {count > 3 ? <Text style={[Typography.caption, { color: theme.textTertiary }]}>{t('reports.moreInReport', { count: count - 3 })}</Text> : null}
             </Pressable>
+            </FadeInUp>
           ))
         )}
       </View>
 
       {followUps.length > 0 ? (
         <View style={styles.section}>
-          <Text style={[Typography.overline, { color: theme.textTertiary }]}>SUGGESTED NEXT STEPS</Text>
+          <Text style={[Typography.overline, { color: theme.textTertiary }]}>{t('reports.nextStepsCaps')}</Text>
           <View style={[styles.card, styles.cardCol, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
             {followUps.map((step) => (
               <View key={step} style={styles.step}>
@@ -111,7 +118,7 @@ export default function InsightsTab({ reports, nowMs, onOpen, onAddReport }: Pro
       <View style={[styles.card, { backgroundColor: theme.primarySoft, borderColor: theme.borderColor }]}>
         <Stethoscope size={20} color={theme.primary} />
         <Text style={[Typography.caption, { color: theme.textSecondary, flex: 1 }]}>
-          This is AI-generated help to understand your reports, not a diagnosis. Please show abnormal values to a doctor.
+          {t('reports.insightsDisclaimer')}
         </Text>
       </View>
     </View>
@@ -126,6 +133,7 @@ const styles = StyleSheet.create({
   card: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.lg },
   cardCol: { flexDirection: 'column', alignItems: 'stretch', gap: 6 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  flagRow: { gap: 2 },
   step: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
   dot: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
   empty: { borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md },

@@ -101,7 +101,20 @@ if (__DEV__) {
     }
 }
 
+const DATABASE_TIMEOUT_MS = 20000;
+
+const fetchWithDatabaseTimeout: typeof fetch = (input, init) => {
+    const target = typeof input === 'string' ? input : (input as any)?.url || String(input);
+    if (!target.includes('/rest/v1/')) return fetch(input, init);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), DATABASE_TIMEOUT_MS);
+    init?.signal?.addEventListener?.('abort', () => controller.abort());
+    return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+};
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    global: { fetch: fetchWithDatabaseTimeout },
     auth: {
         storage: secureAuthStorage,
         autoRefreshToken: true,

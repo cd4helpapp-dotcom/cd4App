@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
 import Toast from 'react-native-toast-message';
-import { AlertTriangle, ArrowLeft, ExternalLink, FileText, FlaskConical, Pill, RefreshCw, Send, ShieldAlert, Sparkles, Trash2 } from 'lucide-react-native';
+import { AlertTriangle, ArrowLeft, ExternalLink, FileText, FlaskConical, Pill, RefreshCw, Send, ShieldAlert, Sparkles, Stethoscope, Trash2 } from 'lucide-react-native';
 import {
   MedicalReport,
   getMedicalReportAnalysisErrorMessage,
@@ -16,21 +16,29 @@ import {
   useReanalyzeMedicalReport,
   useSoftDeleteMedicalReport,
 } from '../hooks/useMedicalReports';
+import { useAppLanguage } from '../context/AppLanguageContext';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { elevation, Layout, Radius, Spacing, Typography } from '../constants/Design';
 import { confirmAction } from '../src/utils/confirm';
 import ThinkingIndicator from '../ui/common/ThinkingIndicator';
+import { LinearGradient } from 'expo-linear-gradient';
 import AnalysisProgress from '../ui/reports/AnalysisProgress';
+import { FadeInUp, RangeMeter, SummaryPoint } from '../ui/reports/ReportVisuals';
 import {
   formatShortDate,
   getAttentionItems,
+  getDetailedExplanation,
+  getDocumentTranscript,
   getFollowUps,
+  getHeadline,
   getHighlights,
-  getPlainSummary,
+  getPlainPoints,
   getReportDate,
   getReportKind,
   getReportState,
   getReportTitle,
+  getUnreadItems,
+  getValueCounts,
 } from '../src/utils/reportInsights';
 
 const formatDate = (value?: string | null): string => {
@@ -783,23 +791,28 @@ const normalizeRouteParam = (value: string | string[] | undefined): string => {
   return value || '';
 };
 
-const SUGGESTIONS_REPORT = ['Explain this report in simple words', 'Which values are not normal?', 'What should I ask my doctor?'];
-const SUGGESTIONS_RX = ['How do I take these medicines?', 'What is each medicine for?', 'What should I avoid?'];
-
 function SectionTitle({ children, color }: { children: string; color: string }) {
   return <Text style={[Typography.overline, { color, marginBottom: 2 }]}>{children}</Text>;
 }
 
+type ReportTab = 'summary' | 'results' | 'document' | 'ask';
+
 export default function ReportAssistantScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { theme } = useAppTheme();
+  const { theme, isDark } = useAppTheme();
+  const { t } = useAppLanguage();
+  const SUGGESTIONS_REPORT = [t('detail.suggestExplain'), t('detail.suggestAbnormal'), t('detail.suggestDoctor')];
+  const SUGGESTIONS_RX = [t('detail.suggestTake'), t('detail.suggestFor'), t('detail.suggestAvoid')];
   const params = useLocalSearchParams<{ reportId?: string | string[]; mode?: string | string[] }>();
   const reportId = normalizeRouteParam(params.reportId);
 
   const [questionInput, setQuestionInput] = React.useState('');
   const [pendingQuestion, setPendingQuestion] = React.useState<string | null>(null);
   const [expanded, setExpanded] = React.useState(false);
+  const [onlyAttention, setOnlyAttention] = React.useState(false);
+  const [showAllNotes, setShowAllNotes] = React.useState(false);
+  const [activeTab, setActiveTab] = React.useState<ReportTab>('summary');
   const [keyboardHeight, setKeyboardHeight] = React.useState(0);
   const [nowMs, setNowMs] = React.useState(() => Date.now());
   const scrollRef = React.useRef<ScrollViewInstance | null>(null);
@@ -822,9 +835,13 @@ export default function ReportAssistantScreen() {
     return firstUser < 0 ? [] : all.slice(firstUser).slice(-30);
   }, [messagesQuery.data]);
   const lastCountRef = React.useRef(-1);
-  const rx = React.useMemo(() => (report && isRx && isReady ? extractPrescriptionData(report) : null), [report, isRx, isReady]);
+  const isNote = Boolean(report && !isRx && getReportKind(report) === 'note');
+  const rx = React.useMemo(() => (report && (isRx || isNote) && isReady ? extractPrescriptionData(report) : null), [report, isRx, isNote, isReady]);
 
-  React.useEffect(() => setExpanded(false), [reportId]);
+  React.useEffect(() => {
+    setExpanded(false);
+    setActiveTab('summary');
+  }, [reportId]);
 
   React.useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 15000);
@@ -866,7 +883,7 @@ export default function ReportAssistantScreen() {
       const url = await signedUrlMutation.mutateAsync({ filePath: report.filePath });
       await Linking.openURL(url);
     } catch {
-      Toast.show({ type: 'error', text1: 'Could not open the file', text2: 'Please try again.' });
+      Toast.show({ type: 'error', text1: t('detail.couldNotOpen'), text2: t('reports.tryAgainPlease') });
     }
   };
 
@@ -877,27 +894,33 @@ export default function ReportAssistantScreen() {
       {
         onSuccess: () => {
           setNowMs(Date.now());
-          Toast.show({ type: 'success', text1: 'Reading it again', text2: 'Updated results will appear here.' });
+          Toast.show({ type: 'success', text1: t('detail.readingAgain'), text2: t('detail.updatedResults') });
         },
-        onError: (err: any) => Toast.show({ type: 'error', text1: 'Could not retry', text2: getMedicalReportAnalysisErrorMessage(err?.message) }),
+        onError: (err: any) => Toast.show({ type: 'error', text1: t('reports.couldNotRetry'), text2: getMedicalReportAnalysisErrorMessage(err?.message) }),
       }
     );
   };
 
+  const handleReadAgain = async () => {
+    const ok = await confirmAction({ title: t('detail.readAgainTitle'), message: t('detail.readAgainBody'), confirmText: t('detail.readAgain'), cancelText: t('reports.cancel') });
+    if (ok) handleRetry();
+  };
+
   const handleDelete = async () => {
     if (!report || deleteMutation.isPending) return;
-    const ok = await confirmAction({ title: 'Delete this report?', message: 'It will be removed from your reports. This cannot be undone.', confirmText: 'Delete', destructive: true });
+    const ok = await confirmAction({ title: t('reports.deleteTitle'), message: t('reports.deleteMessage'), confirmText: t('reports.delete'), cancelText: t('reports.cancel'), destructive: true });
     if (!ok) return;
     try {
       await deleteMutation.mutateAsync({ reportId: report.id });
-      Toast.show({ type: 'success', text1: 'Report deleted' });
+      Toast.show({ type: 'success', text1: t('reports.deleted') });
       handleBack();
     } catch {
-      Toast.show({ type: 'error', text1: 'Could not delete', text2: 'Please try again.' });
+      Toast.show({ type: 'error', text1: t('reports.couldNotDelete'), text2: t('reports.tryAgainPlease') });
     }
   };
 
   const ask = async (text: string) => {
+    setActiveTab('ask');
     const question = text.trim();
     if (!question || !report?.id || askMutation.isPending) return;
     setQuestionInput('');
@@ -907,7 +930,7 @@ export default function ReportAssistantScreen() {
       await askMutation.mutateAsync({ reportId: report.id, question });
     } catch (error: any) {
       // The hook already turns server failures into a readable sentence.
-      Toast.show({ type: 'error', text1: 'Could not ask AI', text2: error?.message || 'Please try again in a moment.' });
+      Toast.show({ type: 'error', text1: t('detail.couldNotAsk'), text2: error?.message || t('reports.tryInMoment') });
       setQuestionInput(question);
     } finally {
       setPendingQuestion(null);
@@ -930,15 +953,33 @@ export default function ReportAssistantScreen() {
   );
 
   const kind = report ? getReportKind(report) : 'other';
-  const KindIcon = isRx ? Pill : kind === 'lab' ? FlaskConical : FileText;
+  const KindIcon = isRx ? Pill : kind === 'lab' ? FlaskConical : kind === 'note' ? Stethoscope : FileText;
   const title = report ? getReportTitle(report) : '';
   const { date, isUploadDate } = report ? getReportDate(report) : { date: null, isUploadDate: true };
   const identity: any = (report?.aiStructured as any)?.report_identity || {};
   const labName = String(identity.lab_name || '').trim();
-  const fullSummary = report ? getPlainSummary(report, 4000) : '';
-  const shortSummary = report ? getPlainSummary(report, 320) : '';
-  const canExpand = fullSummary.length > shortSummary.length + 20;
+  const headline = report ? getHeadline(report) : '';
+  const plainPoints = report ? getPlainPoints(report) : [];
+  const detailedExplanation = report ? getDetailedExplanation(report) : [];
   const values = report && isReady && !isRx ? getHighlights(report, 40) : [];
+  const counts = report && isReady && !isRx ? getValueCounts(report) : { normal: 0, attention: 0 };
+  const shownValues = onlyAttention ? values.filter((item) => item.flag === 'high' || item.flag === 'low') : values;
+  const transcript = report && isReady ? getDocumentTranscript(report) : null;
+  const unread = report && isReady ? getUnreadItems(report) : [];
+  const medicineCount = rx?.medicines.length || 0;
+  const hasResultsTab = values.length > 0 || medicineCount > 0;
+  const hasDocumentTab = Boolean(transcript || rx);
+  const tabs: { key: ReportTab; label: string }[] = isReady
+    ? [
+        { key: 'summary', label: t('detail.tabSummary') },
+        ...(hasResultsTab ? [{ key: 'results' as const, label: values.length ? t('detail.tabResults') : t('detail.tabMedicines') }] : []),
+        ...(hasDocumentTab ? [{ key: 'document' as const, label: t('detail.tabDocument') }] : []),
+        { key: 'ask', label: t('detail.tabAsk') },
+      ]
+    : [];
+  // A report still being read has one view, so everything it has stays on screen.
+  const show = (tab: ReportTab) => !isReady || activeTab === tab;
+  const heroGradient = (isDark ? ['#065F46', '#073B2C', '#062A22'] : ['#047857', '#059669', '#10B981']) as [string, string, string];
   const attention = report && isReady && !isRx ? getAttentionItems(report, 8) : [];
   const followUps = report && isReady ? getFollowUps(report, 5) : [];
   const canChat = isReady;
@@ -947,9 +988,9 @@ export default function ReportAssistantScreen() {
 
   const flagStyle = (flag: string) =>
     flag === 'high' || flag === 'low'
-      ? { bg: theme.dangerSoft, fg: theme.danger, label: flag === 'high' ? 'High' : 'Low' }
+      ? { bg: theme.dangerSoft, fg: theme.danger, label: flag === 'high' ? t('reports.high') : t('reports.low') }
       : flag === 'normal'
-        ? { bg: theme.successLight, fg: theme.success, label: 'Normal' }
+        ? { bg: theme.successLight, fg: theme.success, label: t('reports.normal') }
         : { bg: theme.surfaceMuted, fg: theme.textSecondary, label: '' };
 
   const Wrapper: any = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
@@ -962,7 +1003,7 @@ export default function ReportAssistantScreen() {
           <ArrowLeft size={20} color={theme.text} />
         </Pressable>
         <View style={styles.flex}>
-          <Text style={[Typography.heading, { color: theme.text }]} numberOfLines={1}>{report ? (isRx ? 'Prescription' : 'Report explained') : 'Report'}</Text>
+          <Text style={[Typography.heading, { color: theme.text }]} numberOfLines={1}>{report ? (isRx ? t('detail.headerRx') : t('detail.headerReport')) : t('detail.headerLoading')}</Text>
         </View>
       </View>
 
@@ -975,29 +1016,72 @@ export default function ReportAssistantScreen() {
           <View style={[styles.emptyIcon, { backgroundColor: theme.surfaceMuted }]}>
             <AlertTriangle size={26} color={theme.textSecondary} />
           </View>
-          <Text style={[Typography.heading, { color: theme.text }]}>Report not found</Text>
-          <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>It may have been deleted.</Text>
+          <Text style={[Typography.heading, { color: theme.text }]}>{t('detail.notFound')}</Text>
+          <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>{t('detail.maybeDeleted')}</Text>
           <Pressable onPress={handleBack} accessibilityRole="button" style={[styles.cta, { backgroundColor: theme.buttonPrimary }]}>
-            <Text style={styles.ctaText}>Back to Reports</Text>
+            <Text style={styles.ctaText}>{t('detail.backToReports')}</Text>
           </Pressable>
         </View>
       ) : (
         <>
           <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
             <View style={styles.inner}>
-              <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
-                <View style={styles.titleRow}>
-                  <View style={[styles.kindTile, { backgroundColor: theme.primarySoft }]}>
-                    <KindIcon size={22} color={theme.primary} />
+              <FadeInUp>
+                <LinearGradient colors={heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+                  <View style={styles.heroIcon}>
+                    <KindIcon size={24} color="#FFFFFF" />
                   </View>
                   <View style={styles.flex}>
-                    <Text style={[Typography.subheading, { color: theme.text }]} numberOfLines={2}>{title}</Text>
-                    <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={2}>
-                      {[formatShortDate(date) ? `${isUploadDate ? 'Added ' : ''}${formatShortDate(date)}` : '', labName].filter(Boolean).join(' · ')}
+                    <Text style={styles.heroTitle} numberOfLines={2}>{title}</Text>
+                    <Text style={styles.heroMeta} numberOfLines={2}>
+                      {[formatShortDate(date) ? (isUploadDate ? t('detail.added', { date: formatShortDate(date) }) : formatShortDate(date)) : '', labName].filter(Boolean).join(' · ')}
                     </Text>
                   </View>
-                </View>
+                </LinearGradient>
+              </FadeInUp>
 
+              {isReady && (values.length > 0 || medicineCount > 0) ? (
+                <FadeInUp index={1} style={styles.statRow}>
+                  {[
+                    ...(values.length ? [{ label: t('detail.statResults'), value: values.length, color: theme.primary, tab: 'results' as const }] : []),
+                    ...(counts.attention ? [{ label: t('detail.statReview'), value: counts.attention, color: theme.danger, tab: 'results' as const }] : []),
+                    ...(medicineCount ? [{ label: t('detail.statMedicines'), value: medicineCount, color: theme.accent, tab: 'results' as const }] : []),
+                  ].map((stat) => (
+                    <Pressable
+                      key={stat.label}
+                      onPress={() => setActiveTab(stat.tab)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${stat.value} ${stat.label}`}
+                      style={[styles.statTile, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
+                    >
+                      <Text style={[styles.statValue, { color: stat.color }]}>{stat.value}</Text>
+                      <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>{stat.label}</Text>
+                    </Pressable>
+                  ))}
+                </FadeInUp>
+              ) : null}
+
+              {tabs.length > 1 ? (
+                <View style={[styles.tabBar, { backgroundColor: theme.surfaceMuted }]} accessibilityRole="tablist">
+                  {tabs.map(({ key, label }) => {
+                    const active = activeTab === key;
+                    return (
+                      <Pressable
+                        key={key}
+                        onPress={() => setActiveTab(key)}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected: active }}
+                        style={[styles.tabItem, active && { backgroundColor: theme.cardBackground }, active && elevation(1)]}
+                      >
+                        <Text style={[styles.tabText, { color: active ? theme.primary : theme.textSecondary }]} numberOfLines={1}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+
+              {show('summary') ? (
+              <FadeInUp index={1} style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
                 {state === 'scanning' ? (
                   <AnalysisProgress
                     since={report.updatedAt || report.createdAt}
@@ -1010,36 +1094,52 @@ export default function ReportAssistantScreen() {
                   <View style={[styles.notice, styles.noticeCol, { backgroundColor: theme.warningSoft }]}>
                     <View style={styles.noticeRow}>
                       <AlertTriangle size={18} color={theme.warning} />
-                      <Text style={[Typography.bodyStrong, { color: theme.warning }]}>{state === 'stuck' ? 'This is taking longer than usual' : 'We could not read this report'}</Text>
+                      <Text style={[Typography.bodyStrong, { color: theme.warning }]}>{state === 'stuck' ? t('reports.takingLonger') : t('reports.couldNotRead')}</Text>
                     </View>
                     <Text style={[Typography.body, { color: theme.textSecondary }]}>
-                      {state === 'stuck' ? 'The scan did not finish. Try again; your file is safe.' : getMedicalReportAnalysisErrorMessage(report.analysisError)}
+                      {state === 'stuck' ? t('reports.scanNotFinished') : getMedicalReportAnalysisErrorMessage(report.analysisError)}
                     </Text>
                     <Pressable onPress={handleRetry} disabled={reanalyzeMutation.isPending} accessibilityRole="button" style={[styles.retry, { backgroundColor: theme.buttonPrimary, opacity: reanalyzeMutation.isPending ? 0.6 : 1 }]}>
                       <RefreshCw size={15} color="#FFFFFF" />
-                      <Text style={styles.ctaText}>{reanalyzeMutation.isPending ? 'Trying…' : 'Try again'}</Text>
+                      <Text style={styles.ctaText}>{reanalyzeMutation.isPending ? t('reports.trying') : t('reports.tryAgain')}</Text>
                     </Pressable>
                   </View>
                 ) : null}
 
-                {isReady && fullSummary ? (
+                {isReady && headline ? (
                   <View style={styles.summaryBlock}>
-                    <SectionTitle color={theme.textTertiary}>IN SIMPLE WORDS</SectionTitle>
-                    <Text style={[Typography.body, { color: theme.text }]}>{expanded ? fullSummary : shortSummary}</Text>
-                    {canExpand ? (
-                      <Pressable onPress={() => setExpanded((prev) => !prev)} accessibilityRole="button" hitSlop={8}>
-                        <Text style={[Typography.label, { color: theme.primary }]}>{expanded ? 'Show less' : 'Read more'}</Text>
-                      </Pressable>
+                    <View style={styles.noticeRow}>
+                      <Sparkles size={15} color={theme.primary} />
+                      <SectionTitle color={theme.primary}>{t('detail.inSimpleWords')}</SectionTitle>
+                    </View>
+                    <Text style={[styles.headline, { color: theme.text }]}>{headline}</Text>
+                    {plainPoints.map((point, index) => (
+                      <SummaryPoint key={`${point.detail}-${index}`} point={point} />
+                    ))}
+                    {detailedExplanation.length > 0 ? (
+                      <>
+                        {expanded ? (
+                          <View style={[styles.explanation, { borderTopColor: theme.divider }]}>
+                            {detailedExplanation.map((paragraph) => (
+                              <Text key={paragraph} style={[Typography.body, { color: theme.textSecondary }]}>{paragraph}</Text>
+                            ))}
+                          </View>
+                        ) : null}
+                        <Pressable onPress={() => setExpanded((prev) => !prev)} accessibilityRole="button" hitSlop={8}>
+                          <Text style={[Typography.label, { color: theme.primary }]}>{expanded ? t('detail.showLess') : t('detail.readMore')}</Text>
+                        </Pressable>
+                      </>
                     ) : null}
                   </View>
                 ) : null}
-              </View>
+              </FadeInUp>
+              ) : null}
 
-              {attention.length > 0 && values.length === 0 ? (
+              {show('summary') && attention.length > 0 && (values.length === 0 || isNote) ? (
                 <View style={[styles.card, { backgroundColor: theme.dangerSoft, borderColor: theme.borderColor }]}>
                   <View style={styles.noticeRow}>
                     <AlertTriangle size={18} color={theme.danger} />
-                    <Text style={[Typography.subheading, { color: theme.danger }]}>Needs your attention</Text>
+                    <Text style={[Typography.subheading, { color: theme.danger }]}>{t('detail.needsAttention')}</Text>
                   </View>
                   {attention.map((line) => (
                     <View key={line} style={styles.bulletRow}>
@@ -1050,17 +1150,39 @@ export default function ReportAssistantScreen() {
                 </View>
               ) : null}
 
-              {values.length > 0 ? (
+              {show('results') && values.length > 0 ? (
                 <View style={styles.section}>
-                  <SectionTitle color={theme.textTertiary}>YOUR VALUES</SectionTitle>
+                  <SectionTitle color={theme.textTertiary}>{t('detail.yourValues')}</SectionTitle>
+                  {counts.attention > 0 && counts.attention < values.length ? (
+                    <View style={styles.chips}>
+                      {[
+                        { key: false, label: t('detail.filterAll') },
+                        { key: true, label: t('detail.filterAttention') },
+                      ].map(({ key, label }) => {
+                        const active = onlyAttention === key;
+                        return (
+                          <Pressable
+                            key={label}
+                            onPress={() => setOnlyAttention(key)}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: active }}
+                            style={[styles.filter, { backgroundColor: active ? theme.buttonPrimary : theme.cardBackground, borderColor: active ? theme.buttonPrimary : theme.borderColor }]}
+                          >
+                            <Text style={[styles.filterText, { color: active ? '#FFFFFF' : theme.textSecondary }]}>{label}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                   <View style={[styles.card, styles.tableCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    {values.map((item, index) => {
+                    {shownValues.map((item, index) => {
                       const flag = flagStyle(item.flag);
                       return (
                         <View key={`${item.name}-${index}`} style={[styles.valueRow, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth * 2, borderTopColor: theme.divider }]}>
                           <View style={styles.flex}>
                             <Text style={[Typography.bodyStrong, { color: theme.text }]}>{item.name}</Text>
-                            {item.reference ? <Text style={[Typography.caption, { color: theme.textSecondary }]}>Normal: {item.reference} {item.unit}</Text> : null}
+                            {item.reference ? <Text style={[Typography.caption, { color: theme.textSecondary }]}>{t('detail.normalPrefix', { range: `${item.reference}${item.unit ? ` ${item.unit}` : ''}` })}</Text> : null}
+                            <RangeMeter item={item} />
                           </View>
                           <View style={styles.valueRight}>
                             <Text style={[Typography.bodyStrong, { color: item.flag === 'high' || item.flag === 'low' ? theme.danger : theme.text }]}>
@@ -1079,9 +1201,9 @@ export default function ReportAssistantScreen() {
                 </View>
               ) : null}
 
-              {rx && rx.medicines.length > 0 ? (
+              {show('results') && rx && rx.medicines.length > 0 ? (
                 <View style={styles.section}>
-                  <SectionTitle color={theme.textTertiary}>{`MEDICINES (${rx.medicines.length})`}</SectionTitle>
+                  <SectionTitle color={theme.textTertiary}>{isNote ? t('detail.medicinesOnPaper', { count: rx.medicines.length }) : t('detail.medicines', { count: rx.medicines.length })}</SectionTitle>
                   {rx.medicines.map((med, index) => (
                     <View key={`${med.name}-${index}`} style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
                       <View style={styles.titleRow}>
@@ -1106,17 +1228,61 @@ export default function ReportAssistantScreen() {
                 </View>
               ) : null}
 
-              {rx ? (
+              {show('document') && transcript ? (
+                <View style={styles.section}>
+                  <SectionTitle color={theme.textTertiary}>{t('detail.onPaper')}</SectionTitle>
+                  <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                    {(showAllNotes ? transcript.notes : transcript.notes.slice(0, 6)).map((note, index) => (
+                      <View key={`${note.written}-${index}`} style={[styles.noteRow, { borderLeftColor: theme.primaryBorder }]}>
+                        <Text style={[Typography.bodyStrong, { color: theme.text }]}>{note.written}</Text>
+                        {note.meaning ? <Text style={[Typography.body, { color: theme.textSecondary }]}>{note.meaning}</Text> : null}
+                      </View>
+                    ))}
+                    {!showAllNotes && transcript.notes.length > 6 ? (
+                      <Pressable onPress={() => setShowAllNotes(true)} accessibilityRole="button" hitSlop={8}>
+                        <Text style={[Typography.label, { color: theme.primary }]}>{t('detail.showAll', { count: transcript.notes.length })}</Text>
+                      </Pressable>
+                    ) : null}
+                    {transcript.crossedOut.length > 0 ? (
+                      <View style={styles.crossedBlock}>
+                        <Text style={[Typography.caption, { color: theme.textTertiary }]}>{t('detail.crossedOut')}</Text>
+                        {transcript.crossedOut.map((line) => (
+                          <Text key={line} style={[Typography.body, styles.crossed, { color: theme.textTertiary }]}>{line}</Text>
+                        ))}
+                      </View>
+                    ) : null}
+                    <Text style={[Typography.caption, { color: theme.textTertiary }]}>{t('detail.onPaperHint')}</Text>
+                  </View>
+                </View>
+              ) : null}
+
+              {show('summary') && unread.length > 0 ? (
+                <View style={[styles.card, { backgroundColor: theme.warningSoft, borderColor: theme.warningBorder }]}>
+                  <View style={styles.noticeRow}>
+                    <AlertTriangle size={18} color={theme.warning} />
+                    <Text style={[Typography.subheading, { color: theme.warning }]}>{t('detail.couldNotReadTitle')}</Text>
+                  </View>
+                  <Text style={[Typography.caption, { color: theme.textSecondary }]}>{t('detail.couldNotReadHint')}</Text>
+                  {unread.map((line) => (
+                    <View key={line} style={styles.bulletRow}>
+                      <View style={[styles.dot, { backgroundColor: theme.warning }]} />
+                      <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{line}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
+              {show('document') && rx ? (
                 <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                  <SectionTitle color={theme.textTertiary}>PRESCRIPTION DETAILS</SectionTitle>
+                  <SectionTitle color={theme.textTertiary}>{isNote ? t('detail.noteDetails') : t('detail.rxDetails')}</SectionTitle>
                   {[
-                    ['Doctor', rx.doctorName || rx.followupPhysician],
-                    ['Patient', [rx.patientName, [rx.age, rx.sex].filter(Boolean).join(' / ')].filter(Boolean).join(' · ')],
-                    ['Date', rx.prescribedOn || rx.date],
-                    ['Diagnosis', rx.diagnosis],
-                    ['Allergies', rx.allergies],
-                    ['Diet', rx.dietToFollow],
-                    ['Follow-up', rx.followupDate],
+                    [t('detail.doctor'), rx.doctorName || rx.followupPhysician],
+                    [t('detail.patient'), [rx.patientName, [rx.age, rx.sex].filter(Boolean).join(' / ')].filter(Boolean).join(' · ')],
+                    [t('detail.date'), rx.prescribedOn || rx.date],
+                    [t('detail.diagnosis'), rx.diagnosis],
+                    [t('detail.allergies'), rx.allergies],
+                    [t('detail.diet'), rx.dietToFollow],
+                    [t('detail.followUp'), rx.followupDate],
                   ]
                     .filter(([, value]) => value && value.trim())
                     .map(([label, value]) => (
@@ -1129,11 +1295,11 @@ export default function ReportAssistantScreen() {
                 </View>
               ) : null}
 
-              {rx && rx.redFlags.length > 0 ? (
+              {show('summary') && rx && rx.redFlags.length > 0 ? (
                 <View style={[styles.card, { backgroundColor: theme.dangerSoft, borderColor: theme.borderColor }]}>
                   <View style={styles.noticeRow}>
                     <ShieldAlert size={18} color={theme.danger} />
-                    <Text style={[Typography.subheading, { color: theme.danger }]}>Get urgent help if</Text>
+                    <Text style={[Typography.subheading, { color: theme.danger }]}>{t('detail.urgentHelp')}</Text>
                   </View>
                   {rx.redFlags.map((line) => (
                     <View key={line} style={styles.bulletRow}>
@@ -1144,13 +1310,15 @@ export default function ReportAssistantScreen() {
                 </View>
               ) : null}
 
-              {(rx ? [...rx.generalInstructions, ...rx.precautions] : followUps).length > 0 ? (
+              {show('summary') && (rx ? [...rx.generalInstructions, ...rx.precautions] : followUps).length > 0 ? (
                 <View style={styles.section}>
-                  <SectionTitle color={theme.textTertiary}>{rx ? 'HOW TO FOLLOW THIS' : 'SUGGESTED NEXT STEPS'}</SectionTitle>
+                  <SectionTitle color={theme.textTertiary}>{rx ? t('detail.howToFollow') : t('reports.nextStepsCaps')}</SectionTitle>
                   <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                    {(rx ? [...rx.generalInstructions, ...rx.precautions] : followUps).map((line) => (
+                    {(rx ? [...rx.generalInstructions, ...rx.precautions] : followUps).map((line, index) => (
                       <View key={line} style={styles.bulletRow}>
-                        <View style={[styles.dot, { backgroundColor: theme.primary }]} />
+                        <View style={[styles.stepNumber, { backgroundColor: theme.primarySoft }]}>
+                          <Text style={[styles.stepNumberText, { color: theme.primary }]}>{index + 1}</Text>
+                        </View>
                         <Text style={[Typography.body, { color: theme.text, flex: 1 }]}>{line}</Text>
                       </View>
                     ))}
@@ -1158,29 +1326,38 @@ export default function ReportAssistantScreen() {
                 </View>
               ) : null}
 
-              {isReady ? (
+              {isReady && activeTab === 'summary' ? (
                 <View style={[styles.disclaimer, { backgroundColor: theme.primarySoft }]}>
                   <ShieldAlert size={16} color={theme.primary} />
                   <Text style={[Typography.caption, { color: theme.textSecondary, flex: 1 }]}>
-                    AI can make mistakes reading a photo. Check names, doses and values against your original, and talk to your doctor before changing any medicine.
+                    {t('detail.disclaimer')}
                   </Text>
                 </View>
               ) : null}
 
+              {show(hasDocumentTab ? 'document' : 'summary') ? (
               <View style={styles.actionsRow}>
                 <Pressable onPress={handleOpenOriginal} disabled={busy} accessibilityRole="button" style={[styles.action, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}>
                   {signedUrlMutation.isPending ? <ActivityIndicator size="small" color={theme.primary} /> : <ExternalLink size={15} color={theme.text} />}
-                  <Text style={[styles.actionText, { color: theme.text }]}>Open original</Text>
+                  <Text style={[styles.actionText, { color: theme.text }]}>{t('detail.openOriginal')}</Text>
                 </Pressable>
-                <Pressable onPress={handleDelete} disabled={busy} accessibilityRole="button" accessibilityLabel="Delete report" style={[styles.action, { borderColor: theme.dangerSoft, backgroundColor: theme.dangerSoft }]}>
+                {isReady ? (
+                  <Pressable onPress={handleReadAgain} disabled={busy || reanalyzeMutation.isPending} accessibilityRole="button" style={[styles.action, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}>
+                    <RefreshCw size={15} color={theme.text} />
+                    <Text style={[styles.actionText, { color: theme.text }]}>{t('detail.readAgain')}</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable onPress={handleDelete} disabled={busy} accessibilityRole="button" accessibilityLabel={t('reports.delete')} style={[styles.action, { borderColor: theme.dangerSoft, backgroundColor: theme.dangerSoft }]}>
                   <Trash2 size={15} color={theme.danger} />
-                  <Text style={[styles.actionText, { color: theme.danger }]}>Delete</Text>
+                  <Text style={[styles.actionText, { color: theme.danger }]}>{t('reports.delete')}</Text>
                 </Pressable>
               </View>
 
-              {canChat ? (
+              ) : null}
+
+              {canChat && activeTab === 'ask' ? (
                 <View style={styles.section}>
-                  <SectionTitle color={theme.textTertiary}>{`ASK AI ABOUT THIS ${isRx ? 'PRESCRIPTION' : 'REPORT'}`}</SectionTitle>
+                  <SectionTitle color={theme.textTertiary}>{isRx ? t('detail.askRx') : t('detail.askReport')}</SectionTitle>
                   {messages.length === 0 && !askMutation.isPending ? (
                     <View style={styles.chips}>
                       {suggestions.map((text) => (
@@ -1235,9 +1412,10 @@ export default function ReportAssistantScreen() {
                   style={[styles.input, { color: theme.text, borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
                   value={questionInput}
                   onChangeText={setQuestionInput}
-                  placeholder="Ask a question about this report"
+                  placeholder={t('detail.askPlaceholder')}
                   placeholderTextColor={theme.textTertiary}
                   editable={!askMutation.isPending}
+                  onFocus={() => setActiveTab('ask')}
                   onSubmitEditing={() => ask(questionInput)}
                   returnKeyType="send"
                   multiline
@@ -1276,11 +1454,30 @@ const styles = StyleSheet.create({
   section: { gap: Spacing.sm },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
   kindTile: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  hero: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.xl + 2, padding: Spacing.lg },
+  heroIcon: { width: 48, height: 48, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+  heroTitle: { color: '#FFFFFF', fontSize: 18, lineHeight: 24, fontWeight: '800' },
+  heroMeta: { color: 'rgba(255,255,255,0.88)', fontSize: 13, lineHeight: 18, marginTop: 2 },
+  statRow: { flexDirection: 'row', gap: Spacing.sm },
+  statTile: { flex: 1, minWidth: 0, borderWidth: 1, borderRadius: Radius.lg, paddingVertical: Spacing.md, paddingHorizontal: Spacing.md, gap: 2 },
+  statValue: { fontSize: 24, lineHeight: 29, fontWeight: '800' },
+  tabBar: { flexDirection: 'row', borderRadius: Radius.lg, padding: 4, gap: 2 },
+  tabItem: { flex: 1, minWidth: 0, height: 38, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  tabText: { fontSize: 13, fontWeight: '700' },
+  filter: { height: 34, paddingHorizontal: 12, borderRadius: Radius.pill, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  filterText: { fontSize: 13, fontWeight: '700' },
+  noteRow: { borderLeftWidth: 3, paddingLeft: Spacing.md, gap: 2 },
+  crossedBlock: { gap: 2 },
+  crossed: { textDecorationLine: 'line-through' },
+  stepNumber: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  stepNumberText: { fontSize: 12, fontWeight: '800' },
   notice: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.md, padding: Spacing.md },
   noticeCol: { flexDirection: 'column', alignItems: 'stretch' },
   noticeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   retry: { height: 42, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  summaryBlock: { gap: Spacing.sm },
+  summaryBlock: { gap: Spacing.md },
+  headline: { fontSize: 18, lineHeight: 25, fontWeight: '700' },
+  explanation: { borderTopWidth: StyleSheet.hairlineWidth * 2, paddingTop: Spacing.md, gap: Spacing.sm },
   bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
   dot: { width: 6, height: 6, borderRadius: 3, marginTop: 8 },
   valueRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.md },

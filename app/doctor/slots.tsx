@@ -10,6 +10,8 @@ import { confirmAction } from '../../src/utils/confirm';
 import { Slot } from '../../src/types';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
+import { ScreenTitle } from '../../ui/doctor/DoctorUI';
+import { formatClock, slotMoment, toMinutes } from '../../src/utils/slotTime';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 
 // Time slot options for dropdown (every 30 minutes)
@@ -33,34 +35,6 @@ function getEndTime(startTime: string): string {
     }
     // Last slot wraps to next day midnight
     return '12:00 AM';
-}
-
-// Slot times arrive from the database as "07:00:00" but the picker stores "07:00 AM"; accept both.
-function toMinutes(value: string): number {
-    const text = String(value || '').trim();
-    const pm = /pm/i.test(text);
-    const am = /am/i.test(text);
-    const [h = '0', m = '0'] = text.replace(/(am|pm)/i, '').trim().split(':');
-    let hours = parseInt(h, 10) || 0;
-    if (pm && hours !== 12) hours += 12;
-    if (am && hours === 12) hours = 0;
-    return hours * 60 + (parseInt(m, 10) || 0);
-}
-
-function formatClock(value: string): string {
-    const total = toMinutes(value);
-    const h24 = Math.floor(total / 60) % 24;
-    const minutes = total % 60;
-    const suffix = h24 >= 12 ? 'PM' : 'AM';
-    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-    return `${h12}:${String(minutes).padStart(2, '0')} ${suffix}`;
-}
-
-function slotMoment(date: string, time: string): number {
-    const [y, m, d] = String(date || '').slice(0, 10).split('-').map(Number);
-    if (!y) return 0;
-    const total = toMinutes(time);
-    return new Date(y, m - 1, d, Math.floor(total / 60), total % 60).getTime();
 }
 
 export default function DoctorSlots() {
@@ -211,10 +185,13 @@ export default function DoctorSlots() {
 
     const renderSlotCard = ({ item }: { item: Slot }) => {
         const hasEnded = slotMoment(item.date, item.endTime || item.startTime) < Date.now();
-        const state: 'booked' | 'passed' | 'available' = item.isBooked ? 'booked' : hasEnded ? 'passed' : 'available';
+        // A slot whose consultation the doctor cancelled stays taken with no appointment on it.
+        const isClosed = item.isBooked && !(item as any).appointment;
+        const state: 'booked' | 'passed' | 'available' | 'closed' = isClosed ? 'closed' : item.isBooked ? 'booked' : hasEnded ? 'passed' : 'available';
         const palette = {
             booked: { fg: theme.warning, bg: theme.warningSoft, label: 'Booked' },
             passed: { fg: theme.textSecondary, bg: theme.surfaceMuted, label: 'Passed' },
+            closed: { fg: theme.textSecondary, bg: theme.surfaceMuted, label: 'Closed' },
             available: { fg: theme.success, bg: theme.successLight, label: 'Available' },
         }[state];
 
@@ -222,7 +199,7 @@ export default function DoctorSlots() {
             <View style={[
                 styles.slotCard,
                 { backgroundColor: theme.cardBackground, borderColor: theme.borderColor },
-                state === 'passed' && { opacity: 0.7 },
+                (state === 'passed' || state === 'closed') && { opacity: 0.7 },
             ]}>
                 <View style={[styles.slotBorderLeft, { backgroundColor: palette.fg }]} />
 
@@ -276,43 +253,42 @@ export default function DoctorSlots() {
         <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
             <View style={styles.page}>
             <View style={styles.header}>
-                <View>
-                    <Text style={[styles.headerTitle, { color: theme.text }]}>Manage Slots</Text>
-                    <Text style={[styles.headerSubtitle, { color: theme.textSecondary }]}>Organize your availability easily</Text>
-                </View>
-
-                {filterMode === 'upcoming' && (
-                    <TouchableOpacity
-                        style={[styles.addButton, { backgroundColor: theme.tint }]}
-                        onPress={() => setIsAddModalVisible(true)}
-                        activeOpacity={0.8}
-                    >
-                        <Plus size={18} color="#fff" />
-                        <Text style={styles.addButtonText}>Add Slot</Text>
-                    </TouchableOpacity>
-                )}
+                <ScreenTitle
+                    title="Slots"
+                    subtitle="When patients can book you"
+                    right={filterMode === 'upcoming' ? (
+                        <TouchableOpacity
+                            style={[styles.addButton, { backgroundColor: theme.buttonPrimary }]}
+                            onPress={() => setIsAddModalVisible(true)}
+                            activeOpacity={0.8}
+                        >
+                            <Plus size={18} color="#fff" />
+                            <Text style={styles.addButtonText}>Add slot</Text>
+                        </TouchableOpacity>
+                    ) : null}
+                />
             </View>
 
             {/* Filter Toggle */}
             <View style={styles.segmentContainer}>
-                <View style={[styles.segmentWrapper, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                <View style={[styles.segmentWrapper, { backgroundColor: theme.surfaceMuted, borderColor: theme.surfaceMuted }]}>
                     <TouchableOpacity
-                        style={[styles.segmentButton, filterMode === 'upcoming' && { backgroundColor: theme.tint }]}
+                        style={[styles.segmentButton, filterMode === 'upcoming' && { backgroundColor: theme.cardBackground }]}
                         onPress={() => setFilterMode('upcoming')}
                         activeOpacity={0.8}
                     >
-                        <ListFilter size={14} color={filterMode === 'upcoming' ? '#fff' : theme.textSecondary} style={{ marginRight: 6 }} />
-                        <Text style={[styles.segmentText, { color: filterMode === 'upcoming' ? '#fff' : theme.textSecondary }]}>
+                        <ListFilter size={14} color={filterMode === 'upcoming' ? theme.text : theme.textSecondary} style={{ marginRight: 6 }} />
+                        <Text style={[styles.segmentText, { color: filterMode === 'upcoming' ? theme.text : theme.textSecondary }]}>
                             Upcoming
                         </Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                        style={[styles.segmentButton, filterMode === 'past' && { backgroundColor: theme.tint }]}
+                        style={[styles.segmentButton, filterMode === 'past' && { backgroundColor: theme.cardBackground }]}
                         onPress={() => setFilterMode('past')}
                         activeOpacity={0.8}
                     >
-                        <Archive size={14} color={filterMode === 'past' ? '#fff' : theme.textSecondary} style={{ marginRight: 6 }} />
-                        <Text style={[styles.segmentText, { color: filterMode === 'past' ? '#fff' : theme.textSecondary }]}>
+                        <Archive size={14} color={filterMode === 'past' ? theme.text : theme.textSecondary} style={{ marginRight: 6 }} />
+                        <Text style={[styles.segmentText, { color: filterMode === 'past' ? theme.text : theme.textSecondary }]}>
                             Previous
                         </Text>
                     </TouchableOpacity>
@@ -513,9 +489,6 @@ const styles = StyleSheet.create({
     rightGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     deleteButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
     header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
         paddingHorizontal: 20,
         paddingTop: 8,
         paddingBottom: 16,

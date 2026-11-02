@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../src/lib/supabase';
+import { patchAuthorFollowInCache } from './useCommunity';
 
 type FollowStats = {
   followersCount: number;
@@ -56,34 +57,55 @@ export const useCommunityFollowStats = (viewerId?: string | null, profileId?: st
     },
   });
 
-export const useToggleCommunityFollow = (viewerId?: string | null, profileId?: string | null) => {
+const statsKey = (viewerId?: string | null, profileId?: string | null) => ['community-follow-stats', viewerId || 'anon', profileId || 'none'];
+
+// A second tap while a follow is still being saved is ignored, per person.
+const followsInFlight = new Set<string>();
+
+export const useToggleCommunityFollow = (viewerId?: string | null) => {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: async (nextFollow: boolean) => {
-      if (!viewerId || !profileId) return;
-      if (viewerId === profileId) return;
+  const apply = (authorId: string, following: boolean) => {
+    patchAuthorFollowInCache(queryClient, authorId, following);
+    queryClient.setQueryData<FollowStats>(statsKey(viewerId, authorId), (stats) =>
+      stats && stats.isFollowing !== following
+        ? { ...stats, isFollowing: following, followersCount: Math.max(0, stats.followersCount + (following ? 1 : -1)) }
+        : stats
+    );
+  };
 
-      if (nextFollow) {
+  const mutation = useMutation({
+    mutationFn: async ({ authorId, follow }: { authorId: string; follow: boolean }) => {
+      if (!viewerId || viewerId === authorId) return;
+
+      if (follow) {
         const { error } = await supabase.from('community_follows').insert({
           follower_id: viewerId,
-          following_id: profileId,
+          following_id: authorId,
         });
-        if (error) throw error;
+        // Already following from another device: that is the state the person asked for.
+        if (error && (error as any).code !== '23505') throw error;
       } else {
         const { error } = await supabase
           .from('community_follows')
           .delete()
           .eq('follower_id', viewerId)
-          .eq('following_id', profileId);
+          .eq('following_id', authorId);
         if (error) throw error;
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ['community-follow-stats', viewerId || 'anon', profileId || 'none'],
-      });
+    onMutate: ({ authorId, follow }) => apply(authorId, follow),
+    onError: (_error, { authorId, follow }) => apply(authorId, !follow),
+    onSettled: (_data, _error, { authorId }) => {
+      followsInFlight.delete(`${viewerId}:${authorId}`);
+      queryClient.invalidateQueries({ queryKey: statsKey(viewerId, authorId) });
     },
   });
-};
 
+  return (authorId: string, follow: boolean): Promise<void> => {
+    const key = `${viewerId}:${authorId}`;
+    if (followsInFlight.has(key)) return Promise.resolve();
+    followsInFlight.add(key);
+    return mutation.mutateAsync({ authorId, follow });
+  };
+};

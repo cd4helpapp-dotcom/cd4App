@@ -15,7 +15,7 @@ We collect only the information necessary to provide you with telemedicine, doct
 
 #### a. Personal Information
 * **Account Details:** Name, email address, phone number, age, gender, and profile photo when you sign up or log in.
-* **Authentication Data:** Firebase / Google Sign-In authentication tokens and session identifiers.
+* **Authentication Data:** Google Sign-In authentication tokens and session identifiers.
 
 #### b. Health & Medical Data
 * **User-Provided Symptoms & Queries:** Information you enter or speak regarding your health concerns, symptoms, and medical history.
@@ -64,7 +64,7 @@ We share data with trusted third-party providers strictly to operate our service
 * **Teleconsultation & Real-Time Communication:** Agora / WebRTC (encrypted video and audio call transmission).
 * **AI & Natural Language Processing:** OpenAI / Realtime API (processing queries and generating speech responses).
 * **Payment Processing:** Razorpay (PCI-DSS compliant payment processing).
-* **Authentication & Notifications:** Firebase / Google Sign-In (secure authentication and push notifications).
+* **Authentication & Notifications:** Google Sign-In and Expo (secure authentication and push notifications).
 
 We **do NOT sell, rent, or trade** your personal or health data to advertisers or third-party brokers.
 

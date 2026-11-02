@@ -166,7 +166,7 @@ export default function PublicProfileScreen() {
 
   const { data: profile, isLoading, error } = usePublicProfile(profileId);
   const { data: followStats } = useCommunityFollowStats(currentUser?.id, profileId);
-  const toggleFollowMutation = useToggleCommunityFollow(currentUser?.id, profileId);
+  const toggleFollow = useToggleCommunityFollow(currentUser?.id);
 
   const handleBack = () => router.back();
 
@@ -659,9 +659,9 @@ export default function PublicProfileScreen() {
                         },
                       ]}
                       onPress={() => {
-                        void toggleFollowMutation.mutateAsync(!Boolean(followStats?.isFollowing));
+                        // A failed save puts the button back by itself.
+                        toggleFollow(profileId as string, !followStats?.isFollowing).catch(() => {});
                       }}
-                      disabled={toggleFollowMutation.isPending}
                     >
                       <Text
                         style={[

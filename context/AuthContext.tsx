@@ -4,6 +4,7 @@ import { supabase } from '../src/lib/supabase';
 import { User } from '../src/types';
 import { router } from 'expo-router';
 import * as Linking from 'expo-linking';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureE2EEIdentity } from '../src/lib/e2ee';
 import { resolveStorageSignedUrl } from '../src/utils/storageSignedUrl';
 import { SUPABASE_PROFILE_MEDIA_BUCKET } from '../constants/Config';
@@ -232,6 +233,31 @@ const fetchUserProfileUncached = async (userId: string, retries = 3): Promise<Us
   return null;
 };
 
+// Just enough to open the right screens at once on the next launch. Health details such as weight and blood pressure
+// stay out of it and arrive with the fresh profile a moment later.
+const PROFILE_CACHE_KEY = 'cd4.profile-snapshot.v1';
+
+const readProfileSnapshot = async (userId: string): Promise<Partial<User> | null> => {
+  try {
+    const saved = JSON.parse((await AsyncStorage.getItem(PROFILE_CACHE_KEY)) || 'null');
+    return saved?.id === userId ? saved : null;
+  } catch {
+    return null;
+  }
+};
+
+const saveProfileSnapshot = (profile: User) => {
+  const { id, _id, firstName, lastName, email, role, isVerified, settings, subscription, profileSetupCompleted } = profile as any;
+  void AsyncStorage.setItem(
+    PROFILE_CACHE_KEY,
+    JSON.stringify({ id, _id, firstName, lastName, email, role, isVerified, settings, subscription, profileSetupCompleted })
+  ).catch(() => {});
+};
+
+const clearProfileSnapshot = () => {
+  void AsyncStorage.removeItem(PROFILE_CACHE_KEY).catch(() => {});
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -241,6 +267,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     let isMounted = true;
+    let loadedUserId: string | null = null;
 
     const handleDeepLink = async (url: string | null) => {
       if (!url) return;
@@ -274,16 +301,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        // Keep navigation blocked until the database role is resolved.
-        // Otherwise doctor/admin users can briefly see the patient tab shell.
+        loadedUserId = initialSession.user.id;
+        // Without a saved role, navigation stays blocked until the database answers. Otherwise doctor/admin users can
+        // briefly see the patient tab shell. With one, the app opens at once and refreshes behind the scenes.
         const fallbackUser = buildFallbackUserFromSession(initialSession.user);
-        setUser(fallbackUser);
+        const snapshot = await readProfileSnapshot(initialSession.user.id);
+        if (!isMounted) return;
+        setUser(snapshot ? ({ ...fallbackUser, ...snapshot } as User) : fallbackUser);
+        if (snapshot?.role) {
+          setIsProfileResolved(true);
+          setIsLoading(false);
+        }
 
         const profile = await fetchUserProfile(initialSession.user.id);
         if (!isMounted) return;
         if (profile) {
           setUser(profile);
           setIsProfileLoadedFromDb(true);
+          saveProfileSnapshot(profile);
         }
         setIsProfileResolved(true);
         void bootstrapE2EE(initialSession.user.id);
@@ -311,15 +346,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           router.push('/auth/reset-password');
         }
 
-        const isMajorChange = _event === 'SIGNED_IN' || _event === 'SIGNED_OUT';
-        const shouldSyncProfile = _event === 'SIGNED_IN' || _event === 'USER_UPDATED';
+        // Supabase also sends SIGNED_IN when a browser tab regains focus. For the same person that is not a new login, and must not show the loader again.
+        const isRepeatSignIn = _event === 'SIGNED_IN' && Boolean(nextSession?.user?.id) && nextSession?.user?.id === loadedUserId;
+        const isMajorChange = (_event === 'SIGNED_IN' && !isRepeatSignIn) || _event === 'SIGNED_OUT';
+        const shouldSyncProfile = (_event === 'SIGNED_IN' && !isRepeatSignIn) || _event === 'USER_UPDATED';
 
         if (isMajorChange) setIsLoading(true);
 
         try {
           setSession(nextSession);
+          loadedUserId = nextSession?.user?.id || null;
 
           if (!nextSession?.user) {
+            clearProfileSnapshot();
             setUser(null);
             setIsProfileResolved(true);
             setIsProfileLoadedFromDb(false);
@@ -342,6 +381,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (profile) {
             setUser(profile);
             setIsProfileLoadedFromDb(true);
+            saveProfileSnapshot(profile);
           }
           setIsProfileResolved(true);
           void bootstrapE2EE(nextSession.user.id);

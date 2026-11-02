@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, useColorScheme, TextInput, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, useColorScheme, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import Colors from '../../constants/Colors';
 import { getImageUrl } from '../../constants/Config';
-import { MessageCircle, Search, X } from 'lucide-react-native';
+import { MessageCircle } from 'lucide-react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useChatRooms, prefetchChatMessages } from '../../hooks/useChat';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
+import { ScreenTitle, SearchBox } from '../../ui/doctor/DoctorUI';
 import { useAuthContext } from '../../context/AuthContext';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 
@@ -71,8 +72,8 @@ export default function DoctorChats() {
         const lastName = item.other_party?.lastName || '';
         const fullName = `${firstName} ${lastName}`.trim() || 'Unknown';
         const isRoomEnabled = item.chat_enabled !== false;
-        const disabledReason = item.chat_disabled_reason || 'Chat disabled';
-        const previewText = isRoomEnabled ? (item.last_message_text || 'No messages yet') : disabledReason;
+        // The stored reason talks to the patient ("book a future slot"), which means nothing to a doctor.
+        const previewText = isRoomEnabled ? (item.last_message_text || 'No messages yet') : 'Chat closed until the next appointment';
         const profileImageUrl = brokenAvatarByRoomId[item.id]
             ? null
             : getImageUrl(item.other_party?.profilePicture);
@@ -81,7 +82,6 @@ export default function DoctorChats() {
             <TouchableOpacity
                 style={[styles.chatItem, { borderBottomColor: theme.borderColor + '40' }]}
                 activeOpacity={0.6}
-                disabled={!isRoomEnabled}
                 onPress={() => router.push({
                     pathname: '/chat-detail',
                     params: { roomId: item.id, name: fullName, otherId: item.other_party?.id }
@@ -141,30 +141,10 @@ export default function DoctorChats() {
     };
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} panHandlers={tabSwipeHandlers}>
-            {/* Header */}
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']} panHandlers={tabSwipeHandlers}>
             <View style={styles.headerContainer}>
-                <Text style={[styles.headerTitle, { color: theme.text }]}>Patient Chats</Text>
-            </View>
-
-            {/* Search Bar */}
-            <View style={styles.searchContainer}>
-                <View style={[styles.searchBar, { backgroundColor: theme.cardBackground }]}>
-                    <Search size={18} color={theme.textSecondary} />
-                    <TextInput
-                        style={[styles.searchInput, { color: theme.text }]}
-                        placeholder="Search patients..."
-                        placeholderTextColor={theme.textSecondary}
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        returnKeyType="search"
-                    />
-                    {searchQuery.length > 0 && (
-                        <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                            <X size={18} color={theme.textSecondary} />
-                        </TouchableOpacity>
-                    )}
-                </View>
+                <ScreenTitle title="Chats" subtitle="Conversations with your patients" />
+                <SearchBox value={searchQuery} onChangeText={setSearchQuery} placeholder="Search patients" />
             </View>
 
             {/* Chat List */}
@@ -187,7 +167,7 @@ export default function DoctorChats() {
                     data={filteredRooms}
                     keyExtractor={(item) => item.id}
                     renderItem={renderChat}
-                    contentContainerStyle={{ paddingHorizontal: 16 }}
+                    contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
                     showsVerticalScrollIndicator={false}
                 />
             )}
@@ -199,25 +179,8 @@ const styles = StyleSheet.create({
     headerContainer: {
         paddingHorizontal: 20,
         paddingTop: 16,
-        paddingBottom: 4,
-    },
-    headerTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.5 },
-    searchContainer: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-    },
-    searchBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        borderRadius: 12,
-    },
-    searchInput: {
-        flex: 1,
-        marginLeft: 10,
-        fontSize: 15,
-        paddingVertical: 0,
+        paddingBottom: 8,
+        gap: 12,
     },
     chatItem: {
         flexDirection: 'row',

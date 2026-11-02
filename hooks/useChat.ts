@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery, InfiniteData } from '@tanstack/react-query';
+import { AppState } from 'react-native';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
 import { useEffect, useMemo } from 'react';
@@ -27,8 +28,8 @@ const E2EE_RECOVERABLE_BOOTSTRAP_PATTERNS = [
     'backup',
 ];
 const ENCRYPTED_ROOM_STORAGE_PREVIEW = 'encrypted message';
-const SECURE_MESSAGE_PREVIEW = '🔒 Secure message';
-const SECURE_MESSAGE_UNAVAILABLE_PREVIEW = '🔒 Secure message unavailable';
+const SECURE_MESSAGE_PREVIEW = 'Message';
+const SECURE_MESSAGE_UNAVAILABLE_PREVIEW = 'Message unavailable';
 
 const isRecoverableE2EEBootstrapError = (message: string): boolean => {
     const normalized = (message || '').trim().toLowerCase();
@@ -42,12 +43,15 @@ const normalizeEncryptedRoomPreview = (value: string): string => {
     if (!isE2EEPlaceholderText(normalized)) return normalized;
 
     const lowered = normalized.toLowerCase();
+    if (lowered.includes('on your phone')) return 'Open on your phone to read';
     if (lowered.includes('unavailable') || lowered.includes('refreshed') || lowered.includes('resend')) {
         return SECURE_MESSAGE_UNAVAILABLE_PREVIEW;
     }
 
     return SECURE_MESSAGE_PREVIEW;
 };
+
+const CHAT_SEND_MUTATION_KEY = ['chat-send'];
 
 export const CHAT_QUERY_KEYS = {
     roomsPrefix: ['chat', 'rooms'] as const,
@@ -727,7 +731,7 @@ export const useChatRooms = () => {
 
         // Subscribe to changes in chat_rooms table for real-time list updates
         const channel = supabase
-            .channel(`chat_rooms_updates:${user.id}`)
+            .channel(`chat_rooms_updates:${user.id}:${Math.random().toString(36).slice(2, 8)}`)
             .on(
                 'postgres_changes',
                 {
@@ -761,11 +765,17 @@ export const useChatRooms = () => {
             )
             .subscribe();
 
+        // Nothing arrives while the app is in the background, so catch up on return.
+        const appStateSubscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') scheduleInvalidate();
+        });
+
         return () => {
             if (invalidateTimer) {
                 clearTimeout(invalidateTimer);
                 invalidateTimer = null;
             }
+            appStateSubscription.remove();
             void supabase.removeChannel(channel);
         };
     }, [user?.id, queryClient]);
@@ -875,8 +885,23 @@ export const useChatMessages = (roomId: string, pageSize: number = DEFAULT_CHAT_
                 return;
             }
 
-            // Own messages are already in cache via optimistic update — only process others' messages
-            if (row.sender_id === user.id) return;
+            // Own messages are already in cache via optimistic update. The one change that comes from the
+            // other person is the read receipt, and only its flag is taken so the decrypted text stays.
+            if (row.sender_id === user.id) {
+                if (eventType === 'UPDATE') {
+                    updateMessageCachesForRoom(queryClient, roomId, (data) => ({
+                        ...data,
+                        pages: data.pages.map((page) => ({
+                            ...page,
+                            items: (page.items || []).map((item) => (item.id === row.id ? { ...item, is_read: row.is_read } : item)),
+                        })),
+                    }));
+                } else if (eventType === 'INSERT' && queryClient.isMutating({ mutationKey: CHAT_SEND_MUTATION_KEY }) === 0) {
+                    // Not sent from this screen: another device, or a prescription PDF sent by the server.
+                    scheduleFallbackInvalidate();
+                }
+                return;
+            }
 
             // Decrypt and push into cache directly (no full refetch)
             try {
@@ -904,6 +929,10 @@ export const useChatMessages = (roomId: string, pageSize: number = DEFAULT_CHAT_
                 }
 
                 addOrUpdateLocalChatMessage(queryClient, roomId, msg);
+                // A fetch already running would overwrite this with older data, and a live row has no quoted message attached.
+                if (msg.reply_to_id || queryClient.isFetching({ queryKey: CHAT_QUERY_KEYS.messagesPrefix(roomId) }) > 0) {
+                    scheduleFallbackInvalidate();
+                }
             } catch {
                 // Fallback: refetch if realtime push fails
                 scheduleFallbackInvalidate();
@@ -922,13 +951,21 @@ export const useChatMessages = (roomId: string, pageSize: number = DEFAULT_CHAT_
                 },
                 handleRealtimeEvent
             )
-            .subscribe();
+            .subscribe((status) => {
+                // Messages sent before this connection was ready are never replayed, so reload once it is.
+                if (status === 'SUBSCRIBED') scheduleFallbackInvalidate();
+            });
+
+        const appStateSubscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') scheduleFallbackInvalidate();
+        });
 
         return () => {
             if (fallbackInvalidateTimer) {
                 clearTimeout(fallbackInvalidateTimer);
                 fallbackInvalidateTimer = null;
             }
+            appStateSubscription.remove();
             void supabase.removeChannel(channel);
         };
     }, [roomId, queryClient, user?.id]);
@@ -995,6 +1032,8 @@ export const useSendMessage = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
+        mutationKey: CHAT_SEND_MUTATION_KEY,
+        scope: { id: 'chat-send' },
         mutationFn: async ({
             roomId,
             text,
@@ -1083,10 +1122,6 @@ export const useSendMessage = () => {
 
             await queryClient.cancelQueries({ queryKey: CHAT_QUERY_KEYS.messagesPrefix(variables.roomId) });
 
-            const previousQueries = queryClient.getQueriesData<InfiniteData<ChatMessagePage>>({
-                queryKey: CHAT_QUERY_KEYS.messagesPrefix(variables.roomId),
-            });
-
             const optimisticMessage: ChatMessage = {
                 id: optimisticId,
                 room_id: variables.roomId,
@@ -1107,7 +1142,6 @@ export const useSendMessage = () => {
             addOrUpdateLocalChatMessage(queryClient, variables.roomId, optimisticMessage);
 
             return {
-                previousQueries,
                 roomId: variables.roomId,
                 optimisticId,
             };
@@ -1184,11 +1218,7 @@ export const useSendMessage = () => {
             // Real-time listener will sync any additional server-side changes.
         },
         onError: (_error, variables, context) => {
-            if (context?.previousQueries?.length) {
-                context.previousQueries.forEach(([queryKey, previousData]) => {
-                    queryClient.setQueryData(queryKey, previousData);
-                });
-            } else if (context?.optimisticId) {
+            if (context?.optimisticId) {
                 removeLocalChatMessage(queryClient, variables.roomId, context.optimisticId);
             }
         }
@@ -1221,7 +1251,17 @@ export const useGetOrCreateRoom = () => {
                 .select('id')
                 .single();
 
-            if (createError) throw createError;
+            if (createError) {
+                if ((createError as any).code !== '23505') throw createError;
+                const { data: created, error: refetchError } = await supabase
+                    .from('chat_rooms')
+                    .select('id')
+                    .eq('patient_id', patientId)
+                    .eq('doctor_id', doctorId)
+                    .single();
+                if (refetchError) throw refetchError;
+                return created.id;
+            }
             return newRoom.id;
         }
     });
@@ -1233,6 +1273,15 @@ export const useMarkAsRead = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
+        onMutate: (roomId: string) => {
+            updateMessageCachesForRoom(queryClient, roomId, (data) => ({
+                ...data,
+                pages: data.pages.map((page) => ({
+                    ...page,
+                    items: (page.items || []).map((item) => (item.sender_id !== user?.id && !item.is_read ? { ...item, is_read: true } : item)),
+                })),
+            }));
+        },
         mutationFn: async (roomId: string) => {
             if (!user) return;
             const { error } = await supabase.rpc('mark_room_as_read', {

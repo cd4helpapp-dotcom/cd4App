@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { findVoiceReplyProblem, isVoiceInjection, looksLikeEcho, VOICE_SAFE_REPLY } from './voiceGuard';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { setAudioModeAsync } from 'expo-audio';
 import { enableSpeaker, resetSpeaker } from '../../modules/speaker-route';
@@ -52,7 +53,7 @@ export async function ensureSpeakerAudioRoute(): Promise<void> {
 
 // --- Transcript hygiene --------------------------------------------------------------------------
 const EMERGENCY_PATTERN = /\b(chest pain|pressure in chest|severe breathing|difficulty breathing|shortness of breath|can't breathe|cannot breathe|fainted|unconscious|loss of consciousness|confusion|confused|stroke|face drooping|slurred speech|severe bleeding|bleeding heavily|bahut khoon|saans nahi|saans lene mein dikkat|behosh|hosh nahi|seene mein tez dard|seizure|fit aa raha|severe dehydration|not passing urine|blue lips|throat swelling|face swelling|suicidal|kill myself|self harm|neck stiffness)\b/i;
-const NOISE_TRANSCRIPT_PATTERN = /^(uh+|um+|hmm+|mm+|ah+|oh+|echo+|noise+|background noise|\.+|[-_.]+)$/i;
+const NOISE_TRANSCRIPT_PATTERN = /^(uh+|um+|hmm+|mm+|ah+|oh+|echo+|noise+|background noise|\.+|[-_.]+|thanks for watching[.!]*|thank you for watching[.!]*|please subscribe[.!]*|subscribe to (my|the) channel[.!]*|subtitles? by.*|\[?(music|applause|silence|noise)\]?)$/i;
 
 const isLikelyNoiseTranscript = (value: string): boolean => {
   const text = value.trim().replace(/\s+/g, ' ');
@@ -337,6 +338,27 @@ export async function connectRealtimeVoice(
     playbackFallbackTimer = setTimeout(guard('playback timer', finishPlayback), estimate);
   };
 
+  // Barge-in: the mic stays open while the assistant talks, so the patient can simply speak over it. If a phone's echo
+  // cancellation is too weak and the assistant keeps hearing itself, this session falls back to closing the mic while it talks.
+  // VOICE_BARGE_IN=off turns it off from the server without a new build.
+  let bargeInActive = data?.data?.bargeIn !== false && context?.mode !== 'hospital';
+  let echoCount = 0;
+  let speechDuringReply = false;
+  let recentAssistantSpeech = '';
+  const MAX_ECHOES_BEFORE_FALLBACK = 2;
+
+  const closeMicForAssistant = () => {
+    if (!bargeInActive) setMicEnabled(false);
+  };
+
+  // Noise or an echo cut the reply off, not the patient, so the assistant carries on.
+  const resumeInterruptedReply = () => {
+    sendChannelEvent({
+      type: 'response.create',
+      response: { instructions: 'Continue your previous reply from where it stopped. Do not repeat what you already said, and do not mention the interruption.' },
+    });
+  };
+
   const requestAssistantResponse = () => {
     void ensureSpeakerAudioRoute();
     if (assistantResponseStarted) return;
@@ -391,6 +413,18 @@ export async function connectRealtimeVoice(
     if (!isClosed) failConnection('Voice session ended unexpectedly. Please start again.');
   });
 
+  // Stops a reply that went wrong, removes it from the screen, and asks once for a safe one.
+  let guardedResponseId: string | null = null;
+  const stopReplyAndSpeakSafely = () => {
+    sendChannelEvent({ type: 'response.cancel' });
+    sendChannelEvent({ type: 'output_audio_buffer.clear' });
+    assistantTranscriptBuffer = '';
+    callbacks.onAssistantTranscript?.('');
+    if (sendChannelEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: VOICE_SAFE_REPLY }] } })) {
+      sendChannelEvent({ type: 'response.create' });
+    }
+  };
+
   const handleChannelMessage = async (event: any) => {
     const payload = parseEvent(typeof event.data === 'string' ? event.data : '');
     if (!payload) return;
@@ -408,9 +442,7 @@ export async function connectRealtimeVoice(
       assistantAudioActive = true;
       isPlaybackPending = true;
       clearPlaybackFallback();
-      // Half-duplex: keep the mic closed while the assistant talks so phones with weak echo
-      // cancellation cannot make the assistant interrupt itself.
-      setMicEnabled(false);
+      closeMicForAssistant();
       void ensureSpeakerAudioRoute();
       callbacks.onStatus?.('speaking');
     }
@@ -431,9 +463,23 @@ export async function connectRealtimeVoice(
       typeof payload.transcript === 'string'
     ) {
       const transcript = collapseRepeatedTranscript(payload.transcript);
+      const cutOffReply = speechDuringReply;
+      speechDuringReply = false;
       if (isLikelyNoiseTranscript(transcript)) {
         // VAD occasionally commits a fan/echo syllable. Cancel that auto-created turn.
         sendChannelEvent({ type: 'response.cancel' });
+        if (cutOffReply) resumeInterruptedReply();
+        return;
+      }
+      if (bargeInActive && cutOffReply && looksLikeEcho(transcript, recentAssistantSpeech)) {
+        echoCount += 1;
+        sendChannelEvent({ type: 'response.cancel' });
+        if (typeof payload.item_id === 'string') sendChannelEvent({ type: 'conversation.item.delete', item_id: payload.item_id });
+        if (echoCount >= MAX_ECHOES_BEFORE_FALLBACK) {
+          bargeInActive = false;
+          setMicEnabled(false);
+        }
+        resumeInterruptedReply();
         return;
       }
       const now = Date.now();
@@ -441,6 +487,10 @@ export async function connectRealtimeVoice(
       lastInputTranscript = transcript;
       lastInputTranscriptAt = now;
       callbacks.onInputTranscript?.(transcript);
+      if (transcript && !EMERGENCY_PATTERN.test(transcript) && isVoiceInjection(transcript)) {
+        stopReplyAndSpeakSafely();
+        return;
+      }
       if (transcript && EMERGENCY_PATTERN.test(transcript)) {
         // Stop any routine reply and force an immediate safety turn.
         sendChannelEvent({ type: 'response.cancel' });
@@ -478,7 +528,13 @@ export async function connectRealtimeVoice(
       assistantAudioActive = true;
       isPlaybackPending = true;
       assistantTranscriptBuffer += String(payload.delta || '');
-      setMicEnabled(false);
+      recentAssistantSpeech = `${recentAssistantSpeech}${String(payload.delta || '')}`.slice(-1200);
+      if (responseId !== guardedResponseId && findVoiceReplyProblem(assistantTranscriptBuffer)) {
+        guardedResponseId = responseId;
+        stopReplyAndSpeakSafely();
+        return;
+      }
+      closeMicForAssistant();
       callbacks.onAssistantTranscript?.(assistantTranscriptBuffer);
       callbacks.onStatus?.('speaking');
     }
@@ -518,11 +574,12 @@ export async function connectRealtimeVoice(
     }
 
     if (type === 'input_audio_buffer.speech_started') {
+      speechDuringReply = assistantAudioActive;
       callbacks.onStatus?.('listening');
     }
     if (type === 'input_audio_buffer.speech_stopped' || type === 'input_audio_buffer.committed') {
-      // End of the patient's turn: close the mic and show that the assistant is preparing a reply.
-      setMicEnabled(false);
+      // End of the patient's turn: show that the assistant is preparing a reply.
+      closeMicForAssistant();
       if (!assistantAudioActive) callbacks.onStatus?.('thinking');
     }
     if (type === 'error') {

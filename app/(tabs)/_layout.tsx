@@ -13,6 +13,7 @@ import { Redirect } from 'expo-router';
 import { useAuthContext } from '../../context/AuthContext';
 import { needsPatientProfileSetup } from '../../utils/profileSetup';
 import { prefetchChatRooms } from '../../hooks/useChat';
+import { prefetchCommunityFeed } from '../../hooks/useCommunity';
 import GlobalHeader from '../../ui/layout/GlobalHeader';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import RouteLoadingScreen from '../../ui/common/RouteLoadingScreen';
@@ -71,6 +72,7 @@ export default function TabLayout() {
     const timer = setTimeout(() => {
       if (cancelled) return;
       void prefetchChatRooms(queryClient, user.id).catch(() => { });
+      void prefetchCommunityFeed(queryClient, user.id).catch(() => { });
     }, 1200);
 
     return () => {
@@ -176,6 +178,7 @@ export default function TabLayout() {
         }}>
 
         {/* 1. Home */}
+      {/* Tabs shown are chosen by visibleRouteNames. Do not use href: null here: expo-router 58 redirects away from such routes. */}
         <Tabs.Screen
           name="index"
           options={{
@@ -196,7 +199,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="daily-engine"
           options={{
-            href: mode === 'teleconsultation' ? null : '/daily-engine',
             title: 'Daily Engine',
             tabBarLabel: t('tab.daily'),
             tabBarIcon: ({ color, focused }) => (
@@ -212,7 +214,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="appointments"
           options={{
-            href: mode === 'reversal' ? null : '/appointments',
             title: t('tab.appointments'),
             tabBarLabel: t('tab.appointments'),
             tabBarIcon: ({ color, focused }) => (
@@ -230,7 +231,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="food-log"
           options={{
-            href: mode === 'teleconsultation' ? null : '/food-log',
             title: 'Food Log',
             tabBarLabel: t('tab.food'),
             tabBarIcon: ({ color, focused }) => (
@@ -246,7 +246,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="records"
           options={{
-            href: mode === 'reversal' ? null : '/records',
             title: t('tab.reports'),
             tabBarLabel: t('tab.reports'),
             tabBarIcon: ({ color, focused }) => (
@@ -260,12 +259,10 @@ export default function TabLayout() {
           }}
         />
 
-        {/* 4. Chat — NO GlobalHeader here */}
+        {/* 4. Chat */}
         <Tabs.Screen
           name="chat"
           options={{
-            headerShown: false,
-            href: mode === 'reversal' ? null : '/chat',
             title: t('tab.chat'),
             tabBarLabel: t('tab.chat'),
             tabBarIcon: ({ color, focused }) => (
@@ -283,7 +280,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="community"
           options={{
-            href: '/community',
             title: t('tab.community'),
             tabBarLabel: t('tab.community'),
             tabBarHideOnKeyboard: true,
@@ -302,7 +298,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="profile"
           options={{
-            href: null, // Hides the tab
             title: t('tab.profile'),
             tabBarIcon: ({ color }) => (
               <TabIcon Icon={User} color={color as string} />
@@ -314,7 +309,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="profile-details"
           options={{
-            href: null,
             headerShown: false,
           }}
         />
@@ -323,7 +317,6 @@ export default function TabLayout() {
         <Tabs.Screen
           name="settings"
           options={{
-            href: null,
             title: t('tab.settings'),
             tabBarLabel: t('tab.settings'),
           }}

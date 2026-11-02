@@ -75,8 +75,12 @@ export const signInWithNativeGoogle = async ({
     }
   }
 
-  const userInfo = await GoogleSignin.signIn();
-  let idToken = typeof userInfo?.idToken === 'string' ? userInfo.idToken.trim() : '';
+  // google-signin v13+ returns { type, data } and reports cancelling as a value instead of throwing.
+  const result = await GoogleSignin.signIn();
+  if (result?.type === 'cancelled') {
+    throw Object.assign(new Error('Google sign-in was cancelled.'), { code: statusCodes.SIGN_IN_CANCELLED });
+  }
+  let idToken = typeof result?.data?.idToken === 'string' ? result.data.idToken.trim() : '';
 
   if (!idToken) {
     const tokens = await GoogleSignin.getTokens();

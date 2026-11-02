@@ -114,6 +114,7 @@ export default function HospitalLayout() {
                 },
             }}
         >
+      {/* Tabs shown are chosen by visibleRouteNames. Do not use href: null here: expo-router 58 redirects away from such routes. */}
             <Tabs.Screen
                 name="dashboard"
                 options={{
@@ -157,7 +158,6 @@ export default function HospitalLayout() {
             <Tabs.Screen
                 name="voice-intake"
                 options={{
-                    href: null,
                     title: 'Voice Intake',
                 }}
             />
@@ -171,8 +171,8 @@ export default function HospitalLayout() {
                     ),
                 }}
             />
-            <Tabs.Screen name="voice-intake-report" options={{ href: null, title: 'AI Intake PDF' }} />
-            <Tabs.Screen name="patient-profile" options={{ href: null, title: 'Patient Profile' }} />
+            <Tabs.Screen name="voice-intake-report" options={{ title: 'AI Intake PDF' }} />
+            <Tabs.Screen name="patient-profile" options={{ title: 'Patient Profile' }} />
         </Tabs>
     );
 }

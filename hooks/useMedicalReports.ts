@@ -54,8 +54,8 @@ export const REPORT_UPLOAD_LIMIT_FREE = FREE_PLAN_REPORT_UPLOAD_LIMIT;
 export const REPORT_UPLOAD_WINDOW_HOURS = FREE_PLAN_REPORT_UPLOAD_WINDOW_HOURS;
 export const REPORT_MAX_UPLOAD_MB = MAX_REPORT_UPLOAD_MB;
 // How long a scan may stay "processing" before the app treats it as stuck and offers a retry. A normal scan takes
-// well under two minutes; the server only gives up on its own after 12 minutes.
-export const REPORT_STUCK_AFTER_MS = 5 * 60 * 1000;
+// well under two minutes, and the server marks it failed by itself after about two and a quarter.
+export const REPORT_STUCK_AFTER_MS = 3 * 60 * 1000;
 
 export const isMedicalReportActive = (report: Pick<MedicalReport, 'analysisStatus'>): boolean =>
   report.analysisStatus === 'pending' || report.analysisStatus === 'processing';
@@ -113,6 +113,11 @@ const normalizeAnalysisErrorMessage = (rawMessage: string): string => {
   const message = (rawMessage || '').trim();
   if (!message) {
     return 'AI report analysis failed. Please try again.';
+  }
+
+  // These are already written for the patient, and the generic text below would hide what to do next.
+  if (/^(we could not read this document reliably|this report took too long|too many rapid scans|daily ai scan limit)/i.test(message)) {
+    return message;
   }
 
   const normalized = message.toLowerCase();
@@ -222,7 +227,7 @@ const isTransientAnalyzeInvokeFailure = (error: any): boolean => {
     return true;
   }
 
-  const transientStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+  const transientStatuses = new Set([408, 425, 500, 502, 503, 504]);
   if (transientStatuses.has(response.status)) {
     return true;
   }
@@ -610,12 +615,19 @@ export const useUploadMedicalReport = () => {
         // Fire-and-forget analysis so UI can open report assistant immediately after upload.
         void (async () => {
           try {
-            const { data: analyzeData, error: analyzeError } = await functionsClient.invoke('analyze-medical-report', {
-              body: {
-                reportId: inserted.id,
-                responseLanguage,
-              },
-            });
+            const startAnalysis = () =>
+              functionsClient.invoke('analyze-medical-report', {
+                body: {
+                  reportId: inserted.id,
+                  responseLanguage,
+                },
+              });
+            let { data: analyzeData, error: analyzeError } = await startAnalysis();
+            // No response object means the request never got through, so nothing would ever pick this report up.
+            if (analyzeError && !(analyzeError as any)?.context?.status) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              ({ data: analyzeData, error: analyzeError } = await startAnalysis());
+            }
 
             if (analyzeError && isTransientAnalyzeInvokeFailure(analyzeError)) {
               console.warn('Analyze request timed out/transient error. Keeping report in processing state.', analyzeError);

@@ -92,6 +92,8 @@ supabase functions deploy razorpay-webhook
   - `20260510123000_add_finalize_appointment_payment_rpc.sql`
 
 ## Webhook Integration (Standard)
+- Razorpay sends no Supabase JWT, so `supabase/config.toml` sets `verify_jwt = false` for this function. Its own signature check is the auth.
+- The webhook also makes the booking (`_shared/appointmentBooking.ts`), so a patient who closes the app after paying still gets it. A slot lost to another patient is refunded automatically.
 - New function: `supabase/functions/razorpay-webhook/index.ts`
 - Signature verification:
   - reads `x-razorpay-signature`

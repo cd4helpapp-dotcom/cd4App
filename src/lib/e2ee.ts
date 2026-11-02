@@ -1,5 +1,6 @@
 import 'react-native-get-random-values';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
 import { supabase } from './supabase';
@@ -14,6 +15,7 @@ const E2EE_WAITING_TEXT = 'Waiting for this message. This may take a while.';
 const E2EE_UNAVAILABLE_TEXT = 'Message unavailable. Please ask the sender to resend.';
 const E2EE_KEY_REFRESHED_TEXT = 'Secure chat key was refreshed on this device. Please ask sender to resend this message.';
 const E2EE_STORAGE_PLACEHOLDER_TEXT = 'Encrypted message';
+const E2EE_OPEN_ON_PHONE_TEXT = 'Open CD4 on your phone to read this message.';
 
 // SecureStore key names can only contain [a-zA-Z0-9._-] on Android.
 const SECRET_KEY_PREFIX = 'cd4.e2ee.secret.';
@@ -60,6 +62,7 @@ export const isE2EEPlaceholderText = (value: unknown): boolean => {
   return normalized === E2EE_WAITING_TEXT.toLowerCase()
     || normalized === E2EE_UNAVAILABLE_TEXT.toLowerCase()
     || normalized === E2EE_KEY_REFRESHED_TEXT.toLowerCase()
+    || normalized === E2EE_OPEN_ON_PHONE_TEXT.toLowerCase()
     || normalized === E2EE_STORAGE_PLACEHOLDER_TEXT.toLowerCase();
 };
 
@@ -218,6 +221,8 @@ const backupIdentityToServer = async (userId: string, identity: IdentityKeyPair)
 };
 
 const loadIdentityFromStore = async (userId: string): Promise<IdentityKeyPair | null> => {
+  // A browser has no secure storage, so its key lives in memory after being restored from the backup.
+  if (Platform.OS === 'web') return null;
   try {
     const secretKey = await SecureStore.getItemAsync(getSecretKeyName(userId));
     const publicKey = await SecureStore.getItemAsync(getPublicKeyName(userId));
@@ -246,6 +251,7 @@ const loadIdentityFromStore = async (userId: string): Promise<IdentityKeyPair | 
 };
 
 const persistIdentityToStore = async (userId: string, identity: IdentityKeyPair): Promise<void> => {
+  if (Platform.OS === 'web') return;
   await SecureStore.setItemAsync(getSecretKeyName(userId), identity.secretKey);
   await SecureStore.setItemAsync(getPublicKeyName(userId), identity.publicKey);
 };
@@ -277,6 +283,11 @@ const getOrCreateLocalIdentity = async (userId: string): Promise<IdentityKeyPair
   const restored = await restoreIdentityFromServerBackup(userId);
   if (restored.status === 'restored' && restored.identity) {
     return restored.identity;
+  }
+
+  // A new key here would replace the phone's key on the server, and the phone could no longer read new messages.
+  if (Platform.OS === 'web') {
+    throw new Error('Secure chat key backup is not available in this browser.');
   }
 
   if (restored.status === 'unavailable') {
@@ -700,6 +711,6 @@ export const decryptMessageTextForUser = async (params: {
 
     return naclUtil.encodeUTF8(opened);
   } catch {
-    return safeFallbackText || E2EE_WAITING_TEXT;
+    return safeFallbackText || (Platform.OS === 'web' ? E2EE_OPEN_ON_PHONE_TEXT : E2EE_WAITING_TEXT);
   }
 };

@@ -473,7 +473,7 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (profileError) throw profileError;
-    const roleSlug = normalizeRoleSlug(profileRow) || String(user.user_metadata?.role || "").trim().toLowerCase();
+    const roleSlug = normalizeRoleSlug(profileRow);
     if (roleSlug !== "hospital") {
       return jsonResponse({ success: false, message: "Hospital admin access required" }, 403);
     }

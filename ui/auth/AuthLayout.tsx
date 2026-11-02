@@ -106,7 +106,7 @@ export default function AuthLayout({ title, subtitle, children, footer, showBack
               <View style={styles.brandInner}>
                 <View style={styles.brandRow}>
                   <Image source={require('../../assets/images/cd4_logo.png')} style={styles.brandLogo} resizeMode="contain" />
-                  <Text style={styles.brandName}>CD4 Health</Text>
+                  <Text style={styles.brandName}>CD4</Text>
                 </View>
                 <Text style={styles.brandHeadline}>Care that comes to you.</Text>
                 <Text style={styles.brandCopy}>

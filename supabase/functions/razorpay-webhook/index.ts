@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { finalizePaidBooking, sendDoctorBrief } from "../_shared/appointmentBooking.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,21 +66,26 @@ Deno.serve(async (req: Request) => {
       .eq("provider", "razorpay")
       .eq("event_id", eventId)
       .maybeSingle();
-    if (existing?.id) return jsonResponse({ success: true, deduplicated: true });
+    // An event that failed part-way is processed again when Razorpay retries it.
+    if (existing?.processed) return jsonResponse({ success: true, deduplicated: true });
 
-    const { data: eventRow, error: insertEventError } = await serviceClient
-      .from("payment_webhook_events")
-      .insert({
-        provider: "razorpay",
-        event_id: eventId,
-        event_type: eventType,
-        payload,
-        processed: false,
-      })
-      .select("id")
-      .single();
-    if (insertEventError || !eventRow?.id) {
-      return jsonResponse({ success: false, message: insertEventError?.message || "event_log_insert_failed" }, 400);
+    let eventRow = existing;
+    if (!eventRow?.id) {
+      const { data: insertedEvent, error: insertEventError } = await serviceClient
+        .from("payment_webhook_events")
+        .insert({
+          provider: "razorpay",
+          event_id: eventId,
+          event_type: eventType,
+          payload,
+          processed: false,
+        })
+        .select("id")
+        .single();
+      if (insertEventError || !insertedEvent?.id) {
+        return jsonResponse({ success: false, message: insertEventError?.message || "event_log_insert_failed" }, 400);
+      }
+      eventRow = insertedEvent;
     }
 
     const paymentEntity = payload?.payload?.payment?.entity || {};
@@ -91,32 +97,52 @@ Deno.serve(async (req: Request) => {
       : new Date().toISOString();
 
     if (status && (paymentId || orderId)) {
-      const { error: appointmentPaymentUpdateError } = await serviceClient
-        .from("appointment_payments")
-        .update({
-          status,
-          payment_id: paymentId || undefined,
-          paid_at: status === "paid" ? paidAtIso : null,
-          metadata: {
-            webhook_event: eventType,
-            webhook_synced_at: new Date().toISOString(),
-          },
-          updated_at: new Date().toISOString(),
-        })
-        .or(`payment_id.eq.${paymentId},order_id.eq.${orderId}`);
-      if (appointmentPaymentUpdateError) {
-        await serviceClient
-          .from("payment_webhook_events")
-          .update({
-            processed: false,
-            processed_at: null,
-            processing_error: `appointment_payment_update_failed:${appointmentPaymentUpdateError.message}`,
-          })
-          .eq("id", eventRow.id);
-        return jsonResponse({ success: false, message: "appointment_payment_update_failed" }, 500);
+      // Refund events also carry the payment entity, and must not book anything.
+      const { data: appointmentPayment } = orderId && !eventType.startsWith("refund.")
+        ? await serviceClient.from("appointment_payments").select("*").eq("order_id", orderId).maybeSingle()
+        : { data: null };
+
+      if (appointmentPayment && status === "paid") {
+        // The patient may have closed the app after paying, so the booking is made here too.
+        const bookingContext = appointmentPayment.metadata?.booking_context || {};
+        const booking = await finalizePaidBooking({
+          serviceClient,
+          paymentRow: appointmentPayment,
+          razorpayPaymentId: paymentId,
+          aiReportId: bookingContext.ai_report_id || null,
+        });
+        if (booking.success) {
+          // Razorpay expects a quick answer and writing the PDF takes seconds, so it runs after this response.
+          // @ts-ignore EdgeRuntime is provided by the Supabase runtime.
+          EdgeRuntime.waitUntil(sendDoctorBrief(serviceClient, booking.appointmentId, bookingContext));
+        }
+        if (!booking.success && !String(booking.code).startsWith("slot_taken_refunded") && booking.code !== "payment_status_invalid") {
+          await serviceClient
+            .from("payment_webhook_events")
+            .update({
+              processed: false,
+              processed_at: null,
+              processing_error: `appointment_booking_failed:${booking.code}`,
+            })
+            .eq("id", eventRow.id);
+          return jsonResponse({ success: false, message: "appointment_booking_failed" }, 500);
+        }
       }
 
-      const { error: subscriptionPaymentUpdateError } = await serviceClient
+      if (appointmentPayment && status === "failed") {
+        // Only an unpaid order can fail: a late failure of an earlier attempt must not undo a successful payment.
+        await serviceClient
+          .from("appointment_payments")
+          .update({
+            status: "failed",
+            metadata: { ...(appointmentPayment.metadata || {}), webhook_event: eventType, webhook_synced_at: new Date().toISOString() },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", appointmentPayment.id)
+          .eq("status", "created");
+      }
+
+      const subscriptionPaymentUpdate = serviceClient
         .from("subscription_payments")
         .update({
           status,
@@ -126,6 +152,10 @@ Deno.serve(async (req: Request) => {
           updated_at: new Date().toISOString(),
         })
         .or(`payment_id.eq.${paymentId},order_id.eq.${orderId}`);
+      // A late failure of an earlier attempt must not undo a successful payment.
+      const { error: subscriptionPaymentUpdateError } = await (status === "failed"
+        ? subscriptionPaymentUpdate.neq("status", "paid")
+        : subscriptionPaymentUpdate);
       if (subscriptionPaymentUpdateError) {
         await serviceClient
           .from("payment_webhook_events")
@@ -143,11 +173,19 @@ Deno.serve(async (req: Request) => {
       const refundEntity = payload?.payload?.refund?.entity || {};
       const sourcePaymentId = String(refundEntity?.payment_id || "").trim();
       if (sourcePaymentId) {
+        const { data: refundedPayment } = await serviceClient
+          .from("appointment_payments")
+          .select("metadata")
+          .eq("payment_id", sourcePaymentId)
+          .maybeSingle();
+        const refundFailed = eventType === "refund.failed";
         const { error: refundUpdateError } = await serviceClient
           .from("appointment_payments")
           .update({
-            status: "refunded",
+            status: refundFailed ? "paid" : "refunded",
             metadata: {
+              ...(refundedPayment?.metadata || {}),
+              needs_manual_refund: refundFailed,
               webhook_event: eventType,
               refund_id: String(refundEntity?.id || ""),
               refund_status: String(refundEntity?.status || ""),

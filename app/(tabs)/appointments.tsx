@@ -1,4 +1,5 @@
-import { avatarSource } from '../../src/utils/avatar';
+import DoctorAvatar from '../../ui/common/DoctorAvatar';
+import { canonicalSpecialty, formatExperienceYears, formatFee, getSpecialtyCategories, isPresentableDoctor } from '../../src/utils/doctors';
 import React from 'react';
 import {
   Alert,
@@ -8,7 +9,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Image,
   Modal,
   TextInput,
   Platform,
@@ -22,11 +22,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, MapPin, Star, X, Clock, Search, Mic, Sparkles, Stethoscope } from 'lucide-react-native';
 import MyAppointmentsList, { AppointmentListItem } from '../../ui/appointments/MyAppointmentsList';
+import ManageAppointmentDialog, { ManageMode } from '../../ui/appointments/ManageAppointmentDialog';
 import Colors from '../../constants/Colors';
 import { useDoctors } from '../../hooks/useDoctor';
 import { getImageUrl } from '../../constants/Config';
 import { getStoredLocationCity, syncLocationCityIfPermitted } from '../../services/locationPermission';
-import { getMergedSpecializationOptions } from '../../constants/DoctorOptions';
 import { useMyAppointments, useAvailableSlots } from '../../hooks/useAppointment';
 import { Slot, Appointment } from '../../src/types';
 import { useAuthContext } from '../../context/AuthContext';
@@ -37,7 +37,8 @@ import { useAppLanguage } from '../../context/AppLanguageContext';
 import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 import { useDeferredFocusSync } from '../../hooks/useDeferredFocusSync';
-import { isCityMatch } from '../../src/utils/city';
+import { formatCityName, isCityMatch } from '../../src/utils/city';
+import { formatClock } from '../../src/utils/slotTime';
 
 type Doctor = {
   _id?: string;
@@ -145,12 +146,6 @@ const getConcernScore = (specialization: string, keywords: string[]): number => 
     return score;
   }, 0);
 };
-
-const titleCase = (value: string): string =>
-  value
-    .split(' ')
-    .map((part) => (part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part))
-    .join(' ');
 
 // Removed static SLOT_TEMPLATES and TIME_SLOT_OPTIONS — now fetched from API
 const DAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -260,6 +255,8 @@ export default function AppointmentsScreen() {
     conversationId?: string | string[];
     appointmentType?: string | string[];
     tab?: string | string[];
+    department?: string | string[];
+    departmentAt?: string | string[];
   }>();
   const { user } = useAuthContext();
   const concern = parseConcernParam(params.concern);
@@ -293,6 +290,7 @@ export default function AppointmentsScreen() {
 
   // Fetch patient's existing appointments to show booked status
   const { data: myAppointments = [], refetch: refetchApts } = useMyAppointments();
+  const [managing, setManaging] = React.useState<{ item: AppointmentListItem; mode: ManageMode } | null>(null);
   const [isPullRefreshing, setIsPullRefreshing] = React.useState(false);
   const [isTabSwitchLoading, setIsTabSwitchLoading] = React.useState(false);
   const [visibleDoctorCount, setVisibleDoctorCount] = React.useState(DOCTORS_PAGE_SIZE);
@@ -456,23 +454,33 @@ export default function AppointmentsScreen() {
     return list;
   }, [doctorsData, locationCity]);
 
-  const categoryOptions = React.useMemo(() => {
-    const map = new Map<string, string>();
-    doctorsData.forEach((doctor) => {
-      const specialization = doctor.specialization?.trim();
-      if (!specialization) {
-        return;
-      }
+  // Only specialities that have doctors, so a chip can never lead to an empty list because of a naming difference.
+  const categoryOptions = React.useMemo(() => getSpecialtyCategories(doctorsData.filter(isPresentableDoctor)), [doctorsData]);
 
-      const key = normalizeText(specialization);
-      if (!key || map.has(key)) {
-        return;
-      }
-      map.set(key, titleCase(specialization));
-    });
+  // Opened from Home's department list: select that department, once per request.
+  const requestedDepartment = parseConcernParam(params.department);
+  const departmentRequestKey = parseConcernParam(params.departmentAt);
+  const handledDepartmentRequestRef = React.useRef('');
+  const departmentFromHome = React.useRef('');
+  React.useEffect(() => {
+    if (!requestedDepartment || !departmentRequestKey || handledDepartmentRequestRef.current === departmentRequestKey) return;
+    handledDepartmentRequestRef.current = departmentRequestKey;
+    setSegment('find');
+    setSelectedCategory(requestedDepartment === 'all' ? 'all' : canonicalSpecialty(requestedDepartment));
+    departmentFromHome.current = requestedDepartment === 'all' ? '' : canonicalSpecialty(requestedDepartment);
+  }, [requestedDepartment, departmentRequestKey]);
 
-    return getMergedSpecializationOptions(Array.from(map.values()));
-  }, [doctorsData]);
+  // If that department has no doctor in the current city, show it across all cities instead of an empty list.
+  React.useEffect(() => {
+    const category = departmentFromHome.current;
+    if (!category || hasUserSelectedCity || selectedCity === 'all' || !doctorsData.length || canonicalSpecialty(selectedCategory) !== category) return;
+    const hasDoctorHere = doctorsData.some((doctor) =>
+      isPresentableDoctor(doctor) && canonicalSpecialty(doctor.specialization) === category && isCityMatch(doctor.city, selectedCity));
+    if (!hasDoctorHere) {
+      setSelectedCity('all');
+      setHasUserSelectedCity(true);
+    }
+  }, [doctorsData, selectedCity, selectedCategory, hasUserSelectedCity]);
 
   const doctorNameById = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -540,15 +548,16 @@ export default function AppointmentsScreen() {
 
     // An explicit doctor search should search the full directory instead of
     // being silently limited by the user's default location.
+    if (!hasExplicitSearch) {
+      candidates = candidates.filter(isPresentableDoctor);
+    }
     if (!hasExplicitSearch && selectedCity !== 'all') {
       candidates = candidates.filter((doctor) => isCityMatch(doctor.city, selectedCity));
     }
 
     if (selectedCategory !== 'all') {
-      const categoryValue = normalizeText(selectedCategory);
-      candidates = candidates.filter((doctor) =>
-        normalizeText(doctor.specialization) === categoryValue
-      );
+      const categoryValue = canonicalSpecialty(selectedCategory);
+      candidates = candidates.filter((doctor) => canonicalSpecialty(doctor.specialization) === categoryValue);
     }
 
     const scored: DoctorWithScore[] = candidates.map((doctor) => ({
@@ -706,7 +715,7 @@ export default function AppointmentsScreen() {
       if (optionValue === 'all') {
         return selectedCategory === 'all';
       }
-      return normalizeText(selectedCategory) === normalizeText(optionValue);
+      return canonicalSpecialty(selectedCategory) === canonicalSpecialty(optionValue);
     }
 
     return false;
@@ -912,6 +921,8 @@ export default function AppointmentsScreen() {
             if (doctor) openBookingModal(doctor);
             else setSegment('find');
           }}
+          onReschedule={(item) => setManaging({ item, mode: 'reschedule' })}
+          onCancel={(item) => setManaging({ item, mode: 'cancel' })}
           onFindDoctor={() => setSegment('find')}
           bottomPadding={Math.max(insets.bottom + 24, 32)}
         />
@@ -956,11 +967,11 @@ export default function AppointmentsScreen() {
             <View style={[styles.categoryIcon, { backgroundColor: theme.cardBackground }]}><CalendarDays size={17} color={theme.tint} /></View>
             <Text style={[styles.categoryChipText, { color: theme.text }]}>All</Text>
           </TouchableOpacity>
-          {categoryOptions.slice(0, 8).map((category) => {
-            const active = normalizeText(selectedCategory) === normalizeText(category);
+          {categoryOptions.map((category) => {
+            const active = canonicalSpecialty(selectedCategory) === canonicalSpecialty(category);
             return <TouchableOpacity key={category} style={[styles.categoryChip, { backgroundColor: active ? theme.primarySoft : theme.cardBackground, borderColor: theme.borderColor }]} onPress={() => setSelectedCategory(active ? 'all' : category)}>
               <View style={[styles.categoryIcon, { backgroundColor: active ? theme.cardBackground : (isDarkTheme ? '#26384B' : '#EAF2FB') }]}><Stethoscope size={17} color={active ? theme.tint : theme.textSecondary} /></View>
-              <Text numberOfLines={1} style={[styles.categoryChipText, { color: theme.text }]}>{category}</Text>
+              <Text numberOfLines={2} style={[styles.categoryChipText, { color: theme.text }]}>{category}</Text>
             </TouchableOpacity>;
           })}
         </ScrollView>
@@ -1054,7 +1065,7 @@ export default function AppointmentsScreen() {
             if (isBooked && bookedSlot) {
               const d = new Date(bookedSlot.date);
               const dateStr = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-              bookedTimeLabel = `${dateStr}, ${bookedSlot.startTime}`;
+              bookedTimeLabel = `${dateStr}, ${formatClock(String(bookedSlot.startTime || ''))}`;
             }
 
             if (isBooked && recentBooking) {
@@ -1078,17 +1089,23 @@ export default function AppointmentsScreen() {
                   disabled={!doctorId}
                   activeOpacity={0.7}
                 >
-                  <Image
-                    source={avatarSource(getImageUrl(doctor.image))}
-                    style={styles.avatar}
+                  <DoctorAvatar
+                    uri={getImageUrl(doctor.image)}
+                    name={`${doctor.firstName || ''} ${doctor.lastName || ''}`}
+                    size={66}
+                    radius={14}
                   />
                   <View style={styles.cardMain}>
                     <View style={styles.cardHeaderMain}>
                       <View style={styles.ratingRow}>
-                        <Star size={12} color="#F59E0B" fill="#F59E0B" />
-                        <Text style={[styles.ratingLabel, { color: theme.textSecondary }]}>
-                          {doctor.rating > 0 ? doctor.rating.toFixed(1) : 'New'}
-                        </Text>
+                        {doctor.rating > 0 ? (
+                          <>
+                            <Star size={12} color="#F59E0B" fill="#F59E0B" />
+                            <Text style={[styles.ratingLabel, { color: theme.textSecondary }]}>{doctor.rating.toFixed(1)}</Text>
+                          </>
+                        ) : (
+                          <Text style={[styles.newLabel, { color: theme.primary }]}>New on CD4</Text>
+                        )}
                       </View>
                       <Text style={[styles.doctorName, { color: theme.text }]}>
                         {getLocalizedDoctorName(
@@ -1098,17 +1115,17 @@ export default function AppointmentsScreen() {
                         )}
                       </Text>
                       <Text style={[styles.specialization, { color: theme.textSecondary }]}>
-                        {doctor.specialization}
+                        {canonicalSpecialty(doctor.specialization)}
                       </Text>
                       <Text style={[styles.experienceText, { color: theme.textSecondary }]}>
-                        {t('appointments.experience', { years: doctor.experience })}
+                        {t('appointments.experience', { years: formatExperienceYears(doctor.experience) })}
                       </Text>
                     </View>
                     <View style={styles.metaRow}>
                       <View style={styles.metaItem}>
                         <MapPin size={12} color={theme.textSecondary} />
                         <Text style={[styles.metaText, { color: theme.textSecondary }]}>
-                          {doctor.city || t('appointments.cityNotSet')}
+                          {doctor.city ? formatCityName(doctor.city) : t('appointments.cityNotSet')}
                         </Text>
                       </View>
                     </View>
@@ -1121,13 +1138,13 @@ export default function AppointmentsScreen() {
                     disabled={isBooked || !doctorId}
                     onPress={() => { if (doctorId) openBookingModal({ ...doctor, _id: doctorId }); }}
                     accessibilityRole="button"
-                    accessibilityLabel={isBooked ? 'Appointment booked' : 'View available slots'}
+                    accessibilityLabel={isBooked ? 'Appointment booked' : `View available slots, fee ${formatFee(doctor.fee) || 'on request'}`}
                   >
                     <Text style={[styles.nextLabel, { color: theme.textSecondary }]}>
-                      {isBooked ? t('appointments.appointmentBooked') : t('appointments.bookAppointment')}
+                      {isBooked ? t('appointments.appointmentBooked') : 'Consultation fee'}
                     </Text>
                     <Text numberOfLines={1} style={[styles.nextTime, { color: isBooked ? theme.tint : theme.text }]}>
-                      {isBooked ? bookedTimeLabel : t('appointments.viewAvailableSlots')}
+                      {isBooked ? bookedTimeLabel : formatFee(doctor.fee) || 'On request'}
                     </Text>
                     {isBooked && bookedApt?.appointmentType === 'second_opinion' ? (
                       <Text style={[styles.appointmentTypeHint, { color: theme.tint }]}>Second Opinion</Text>
@@ -1238,7 +1255,7 @@ export default function AppointmentsScreen() {
               {
                 backgroundColor: theme.cardBackground,
                 borderColor: theme.borderColor,
-                maxHeight: keyboardHeight > 0 ? '56%' : '62%',
+                maxHeight: keyboardHeight > 0 ? '92%' : '72%',
               },
             ]}
           >
@@ -1254,7 +1271,7 @@ export default function AppointmentsScreen() {
                 <Search size={14} color={theme.textSecondary} />
                 <TextInput
                   style={[styles.filterSearchInput, { color: theme.text }]}
-                  placeholder={t('appointments.selectCity')}
+                  placeholder="Search city"
                   placeholderTextColor={theme.textSecondary}
                   value={citySearchQuery}
                   onChangeText={setCitySearchQuery}
@@ -1402,7 +1419,7 @@ export default function AppointmentsScreen() {
                     return (
                       <React.Fragment key={slotId || `${slot.date}-${slot.startTime}-${slot.endTime}`}>
                         {showHeader ? (
-                          <Text style={{ color: theme.textSecondary, fontSize: 12, fontWeight: '800', letterSpacing: 0.4, marginTop: 6, marginBottom: 8 }}>
+                          <Text style={{ color: theme.textSecondary, fontSize: 12, fontWeight: '700', letterSpacing: 0.4, marginTop: 6, marginBottom: 8 }}>
                             {dayLabel.toUpperCase()}
                           </Text>
                         ) : null}
@@ -1452,6 +1469,7 @@ export default function AppointmentsScreen() {
           </View>
         </View>
       </Modal>
+      <ManageAppointmentDialog item={managing?.item || null} mode={managing?.mode || 'cancel'} onClose={() => setManaging(null)} />
     </View>
   );
 }
@@ -1461,19 +1479,19 @@ const styles = StyleSheet.create({
   segmentButton: { flex: 1, height: 38, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   container: { flex: 1 },
   header: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  headerTitle: { fontSize: 28, fontWeight: '800' },
+  headerTitle: { fontSize: 28, fontWeight: '700' },
   headerSubTitle: { fontSize: 12, marginTop: 4 },
   content: { paddingHorizontal: 16, paddingBottom: 90 },
   searchBar: { height: 44, borderWidth: 1, borderRadius: 12, flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 4, marginBottom: 14 },
-  searchInput: { flex: 1, fontSize: 12, marginLeft: 8, paddingVertical: 0 },
+  searchInput: { flex: 1, fontSize: 14, marginLeft: 8, paddingVertical: 0 },
   searchVoiceButton: { width: 34, height: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   categoryHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  categoryTitle: { fontSize: 14, fontWeight: '800' },
+  categoryTitle: { fontSize: 14, fontWeight: '700' },
   categoryArrowButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 15 },
   categoryRow: { gap: 8, paddingBottom: 14 },
-  categoryChip: { width: 72, height: 78, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  categoryChip: { width: 84, height: 92, borderRadius: 13, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   categoryIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-  categoryChipText: { fontSize: 9, fontWeight: '700', textAlign: 'center' },
+  categoryChipText: { fontSize: 11, lineHeight: 14, fontWeight: '600', textAlign: 'center' },
   triageCard: {
     borderWidth: 1,
     borderRadius: 14,
@@ -1483,7 +1501,7 @@ const styles = StyleSheet.create({
   },
   triageLabel: {
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '700',
     letterSpacing: 0.4,
     marginBottom: 7,
   },
@@ -1549,7 +1567,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  resultTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase' },
+  resultTitle: { fontSize: 13, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
   resultSubTitle: { fontSize: 12, fontWeight: '600' },
   loaderWrap: { paddingVertical: 30, alignItems: 'center', justifyContent: 'center' },
   loaderText: { marginTop: 8, fontSize: 13 },
@@ -1587,19 +1605,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cardBody: { flexDirection: 'row', alignItems: 'flex-start' },
-  avatar: {
-    width: 66,
-    height: 66,
-    borderRadius: 12,
-    backgroundColor: '#DCE2E8',
-  },
   cardMain: { flex: 1, marginLeft: 12 },
   cardHeaderMain: { flex: 1 },
   ratingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2 },
   ratingLabel: { fontSize: 12, fontWeight: '700', marginLeft: 4 },
-  doctorName: { fontSize: 17, fontWeight: '800' },
+  doctorName: { fontSize: 17, fontWeight: '700' },
   specialization: { fontSize: 13, marginTop: 2, fontWeight: '600' },
-  experienceText: { fontSize: 12, marginTop: 2, fontStyle: 'italic' },
+  experienceText: { fontSize: 12, marginTop: 2 },
+  newLabel: { fontSize: 12, fontWeight: '700' },
   metaRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
   metaItem: { flexDirection: 'row', alignItems: 'center', marginRight: 12 },
   metaText: { fontSize: 12, marginLeft: 4 },
@@ -1624,7 +1637,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  nextTime: { fontSize: 16, fontWeight: '800', marginTop: 2 },
+  nextTime: { fontSize: 16, fontWeight: '700', marginTop: 2 },
   bookButton: {
     borderRadius: 9,
     borderWidth: 1,
@@ -1635,25 +1648,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bookButtonText: { fontSize: 12, fontWeight: '800' },
+  bookButtonText: { fontSize: 13, fontWeight: '700' },
   bookButtonIcon: { marginLeft: 6 },
+  // City and Department open as a centred dialog; on Android the keyboard padding keeps it above the keyboard.
   filterModalOverlay: {
     flex: 1,
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 24,
   },
   filterModalBackdrop: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(6,12,10,0.48)',
   },
   filterModalSheet: {
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 18,
     borderWidth: 1,
-    borderBottomWidth: 0,
-    paddingTop: 12,
+    paddingTop: 14,
     paddingHorizontal: 14,
-    paddingBottom: 18,
-    maxHeight: '62%',
+    paddingBottom: 14,
+    maxHeight: '72%',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
   },
   filterModalHeader: {
     flexDirection: 'row',
@@ -1663,7 +1685,7 @@ const styles = StyleSheet.create({
   },
   filterModalTitle: {
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   filterModalClose: {
     width: 30,
@@ -1673,7 +1695,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   filterModalList: {
-    maxHeight: 360,
+    flexShrink: 1,
   },
   filterSearchWrap: {
     borderWidth: 1,
@@ -1748,7 +1770,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   modalHeaderTextWrap: { flex: 1, paddingRight: 8 },
-  modalTitle: { fontSize: 17, fontWeight: '800' },
+  modalTitle: { fontSize: 17, fontWeight: '700' },
   modalSubtitle: { marginTop: 2, fontSize: 13, fontWeight: '600' },
   closeButton: {
     width: 32,
@@ -1839,7 +1861,7 @@ const styles = StyleSheet.create({
   },
   confirmButtonText: {
     fontSize: 14,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   slotItem: {
     flexDirection: 'row',

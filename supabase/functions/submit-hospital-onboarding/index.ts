@@ -251,6 +251,8 @@ Deno.serve(async (req: Request) => {
       email: hospitalLoginEmail,
       password: hospitalLoginPassword,
       email_confirm: true,
+      // The signup trigger reads the role from app_metadata, which public signup cannot set.
+      app_metadata: { role: "hospital" },
       user_metadata: {
         role: "hospital",
         first_name: registeredName,

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, Modal, TouchableOpacity, Image, Dimensions, Animated, Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
 import { useCallContext } from '../context/CallContext';
@@ -23,16 +24,22 @@ interface IncomingCall {
 
 export default function GlobalCallObserver() {
     const { user } = useAuthContext();
-    const { bindRoom } = useCallContext();
+    const { bindRoom, declineCall, activeCallRoomId, hasOngoingCall } = useCallContext();
     const router = useRouter();
     
     const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
     const bindRoomRef = useRef(bindRoom);
 
+    const busyRoomRef = useRef<string | null>(null);
+
     useEffect(() => {
         bindRoomRef.current = bindRoom;
     }, [bindRoom]);
+
+    useEffect(() => {
+        busyRoomRef.current = hasOngoingCall ? activeCallRoomId : null;
+    }, [activeCallRoomId, hasOngoingCall]);
 
     useEffect(() => {
         const userId = user?.id;
@@ -59,17 +66,27 @@ export default function GlobalCallObserver() {
             ).start();
         };
 
+        // On a call already: the second caller hears "no answer", and a doctor mid-consultation is not interrupted.
+        const isBusyWithAnotherRoom = (session: any) => {
+            if (!busyRoomRef.current || busyRoomRef.current === session.room_id) return false;
+            void supabase.from('call_sessions').update({ status: 'missed' }).eq('id', session.id).eq('status', 'ringing');
+            return true;
+        };
+
         const checkExistingCalls = async () => {
             const { data, error } = await supabase
                 .from('call_sessions')
                 .select('*')
                 .eq('status', 'ringing')
                 .neq('caller_id', userId)
+                // Older than this, the caller's phone has already given up, or crashed before it could.
+                .gte('created_at', new Date(Date.now() - 60000).toISOString())
                 .order('created_at', { ascending: false })
                 .limit(1)
                 .maybeSingle();
                 
             if (data && !error) {
+                if (isBusyWithAnotherRoom(data)) return;
                 bindRoomRef.current(data.room_id);
 
                 // Don't show global overlay if user is already in that chat room
@@ -96,6 +113,7 @@ export default function GlobalCallObserver() {
 
                 // 1. If ringing and we are the receiver (not the caller)
                 if (session.status === 'ringing' && session.caller_id !== userId) {
+                    if (isBusyWithAnotherRoom(session)) return;
                     bindRoomRef.current(session.room_id);
                     
                     // Don't show global overlay if user is already in that chat room
@@ -127,8 +145,16 @@ export default function GlobalCallObserver() {
         startPulse(); // Prepare animation
         checkExistingCalls(); // Check for calls already ringing on app boot
 
+        // The live connection can drop while the app is open, so a push about a call also triggers a check.
+        const pushListener = Platform.OS === 'web'
+            ? null
+            : Notifications.addNotificationReceivedListener((notification) => {
+                if (notification?.request?.content?.data?.type === 'incoming_call') void checkExistingCalls();
+            });
+
         return () => {
             supabase.removeChannel(channel);
+            pushListener?.remove();
             pulseAnim.stopAnimation();
         };
     }, [pulseAnim, user?.id]);
@@ -174,14 +200,12 @@ export default function GlobalCallObserver() {
 
     const handleDecline = async () => {
         if (!incomingCall) return;
-        const callId = incomingCall.id;
+        const targetRoom = incomingCall.room_id;
         setIncomingCall(null);
 
         try {
-            await supabase
-                .from('call_sessions')
-                .update({ status: 'declined' })
-                .eq('id', callId);
+            // Through the call context, so the ringtone stops now rather than at the next status check.
+            await declineCall(targetRoom);
         } catch (error) {
             console.error('Error declining call from global overlay:', error);
         }
@@ -208,7 +232,7 @@ export default function GlobalCallObserver() {
                         <Text style={styles.callTypeLabel}>
                             CD4 {incomingCall.type === 'video' ? 'Video' : 'Voice'} Call
                         </Text>
-                        <Text style={styles.incomingLabel}>Incoming...</Text>
+                        <Text style={styles.incomingLabel}>Incoming call</Text>
                     </View>
 
                     <View style={styles.centerSection}>

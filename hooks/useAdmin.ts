@@ -326,8 +326,8 @@ export const usePatientPaymentHistory = (userId?: string) => useQuery({
     enabled: Boolean(userId),
     queryFn: async (): Promise<PatientPaymentHistoryItem[]> => {
         const [{ data: appointments, error: appointmentError }, { data: subscriptions, error: subscriptionError }] = await Promise.all([
-            supabase.from('appointment_payments').select('id, doctor_id, gross_amount, currency, status, payment_id, order_id, paid_at, created_at').eq('patient_id', userId!).order('created_at', { ascending: false }).limit(200),
-            supabase.from('subscription_payments').select('id, amount, currency, status, payment_id, order_id, paid_at, created_at').eq('user_id', userId!).order('created_at', { ascending: false }).limit(200),
+            supabase.from('appointment_payments').select('id, doctor_id, gross_amount, currency, status, payment_id, order_id, paid_at, created_at').eq('patient_id', userId!).neq('status', 'created').order('created_at', { ascending: false }).limit(200),
+            supabase.from('subscription_payments').select('id, amount, currency, status, payment_id, order_id, paid_at, created_at').eq('user_id', userId!).neq('status', 'created').order('created_at', { ascending: false }).limit(200),
         ]);
         if (appointmentError) throw appointmentError;
         if (subscriptionError) throw subscriptionError;

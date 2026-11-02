@@ -6,10 +6,12 @@ import { CalendarCheck2 } from 'lucide-react-native';
 import Colors from '../constants/Colors';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
+import { useAppLanguage } from '../context/AppLanguageContext';
 
 export default function BookingConfirmedScreen() {
   const router = useRouter();
   const { user } = useAuthContext();
+  const { t } = useAppLanguage();
   const params = useLocalSearchParams<{
     appointmentId?: string;
     doctorName?: string;
@@ -69,19 +71,19 @@ export default function BookingConfirmedScreen() {
       ) : !isValid ? null : (
       <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
         <CalendarCheck2 size={54} color={theme.tint} />
-        <Text style={[styles.title, { color: theme.text }]}>Booking Confirmed</Text>
-        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{params.doctorName || 'Doctor'} consultation is confirmed.</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{t('payment.bookedTitle')}</Text>
+        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{t('payment.bookedBody', { doctor: params.doctorName || t('payment.doctorFallback') })}</Text>
 
         <View style={[styles.infoBox, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
-          <Text style={[styles.infoText, { color: theme.text }]}>Date: {params.date || '-'}</Text>
-          <Text style={[styles.infoText, { color: theme.text }]}>Time: {params.time || '-'}</Text>
-          <Text style={[styles.infoText, { color: theme.text }]}>Amount Paid: ₹{params.amount || '500'}</Text>
-          <Text style={[styles.infoText, { color: theme.textSecondary }]}>Appointment ID: {params.appointmentId || 'N/A'}</Text>
-          <Text style={[styles.infoText, { color: theme.textSecondary }]}>Payment ID: {params.paymentId || 'N/A'}</Text>
+          <Text style={[styles.infoText, { color: theme.text }]}>{t('payment.dateLine', { date: params.date || '-' })}</Text>
+          <Text style={[styles.infoText, { color: theme.text }]}>{t('payment.timeLine', { time: params.time || '-' })}</Text>
+          <Text style={[styles.infoText, { color: theme.text }]}>{t('payment.amountPaid', { amount: params.amount || '500' })}</Text>
+          <Text style={[styles.infoText, { color: theme.textSecondary }]}>{t('payment.appointmentId', { id: params.appointmentId || 'N/A' })}</Text>
+          <Text style={[styles.infoText, { color: theme.textSecondary }]}>{t('payment.paymentId', { id: params.paymentId || 'N/A' })}</Text>
         </View>
 
         <TouchableOpacity style={[styles.button, { backgroundColor: theme.buttonPrimary }]} onPress={() => router.replace({ pathname: '/(tabs)/appointments', params: { tab: 'mine' } })}>
-          <Text style={[styles.buttonText, { color: theme.buttonText }]}>Go To Appointments</Text>
+          <Text style={[styles.buttonText, { color: theme.buttonText }]}>{t('payment.goToAppointments')}</Text>
         </TouchableOpacity>
       </View>
       )}

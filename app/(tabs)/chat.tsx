@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, FlatList, TextInput, RefreshControl, Image } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
 import { getImageUrl } from '../../constants/Config';
 import { Search, MessageCircle, X } from 'lucide-react-native';
@@ -19,10 +18,9 @@ export default function ChatScreen() {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
     const { t, language } = useAppLanguage();
-    const insets = useSafeAreaInsets();
     const tabSwipeHandlers = useTabSwipeNavigation('chat');
 
-    const { data: rooms = [], refetch, isLoading } = useChatRooms();
+    const { data: rooms = [], refetch, isLoading, isStale } = useChatRooms();
     const queryClient = useQueryClient();
     const { user } = useAuthContext();
 
@@ -55,8 +53,8 @@ export default function ChatScreen() {
     }, [isPullRefreshing, refetch]);
 
     const syncChatOnFocus = React.useCallback(async () => {
-        await refetch();
-    }, [refetch]);
+        if (isStale) await refetch({ cancelRefetch: false });
+    }, [isStale, refetch]);
     const shouldShowChatInitialLoading = React.useCallback(
         () => rooms.length === 0,
         [rooms.length]
@@ -117,8 +115,7 @@ export default function ChatScreen() {
         const unreadCount = item.unread_count_patient || 0;
         const fullName = getRoomDoctorDisplayName(item);
         const isRoomEnabled = item.chat_enabled !== false;
-        const disabledReason = item.chat_disabled_reason || t('chat.disabled');
-        const previewText = isRoomEnabled ? (item.last_message_text || t('chat.noMessagesYet')) : disabledReason;
+        const previewText = item.last_message_text || (isRoomEnabled ? t('chat.noMessagesYet') : item.chat_disabled_reason || t('chat.disabled'));
         const profileImageUrl = brokenAvatarByRoomId[item.id]
             ? null
             : getImageUrl(item.other_party?.profilePicture);
@@ -127,7 +124,6 @@ export default function ChatScreen() {
             <TouchableOpacity
                 style={[styles.chatItem, { borderBottomColor: theme.borderColor + '40' }]}
                 activeOpacity={0.6}
-                disabled={!isRoomEnabled}
                 onPress={() => {
                     router.push({
                         pathname: '/chat-detail',
@@ -137,7 +133,7 @@ export default function ChatScreen() {
             >
                 {/* Avatar */}
                 <View>
-                    <View style={[styles.avatar, { backgroundColor: theme.tint + '18', opacity: isRoomEnabled ? 1 : 0.55 }]}>
+                    <View style={[styles.avatar, { backgroundColor: theme.tint + '18' }]}>
                         {profileImageUrl ? (
                             <Image
                                 source={{ uri: profileImageUrl }}
@@ -156,7 +152,7 @@ export default function ChatScreen() {
                 </View>
 
                 {/* Content */}
-                <View style={[styles.chatContent, { opacity: isRoomEnabled ? 1 : 0.68 }]}>
+                <View style={styles.chatContent}>
                     <View style={styles.chatRow}>
                         <Text numberOfLines={1} style={[styles.name, { color: theme.text, flex: 1, marginRight: 8 }]}>
                             {fullName}
@@ -177,7 +173,12 @@ export default function ChatScreen() {
                         }]}>
                             {previewText}
                         </Text>
-                        {unreadCount > 0 && isRoomEnabled && (
+                        {!isRoomEnabled && (
+                            <View style={[styles.closedChip, { backgroundColor: theme.surfaceMuted }]}>
+                                <Text style={[styles.closedChipText, { color: theme.textSecondary }]}>{t('chat.closed')}</Text>
+                            </View>
+                        )}
+                        {unreadCount > 0 && (
                             <View style={[styles.badge, { backgroundColor: theme.tint }]}>
                                 <Text style={styles.badgeText}>{unreadCount}</Text>
                             </View>
@@ -189,7 +190,7 @@ export default function ChatScreen() {
     };
 
     return (
-        <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background, paddingTop: insets.top }]}>
+        <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
             {/* Header */}
             <View style={styles.headerContainer}>
                 <Text style={[styles.headerTitle, { color: theme.text }]}>{t('tab.chat')}</Text>
@@ -252,6 +253,15 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
+    closedChip: {
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 10,
+    },
+    closedChipText: {
+        fontSize: 11,
+        fontWeight: '600',
+    },
     container: { flex: 1 },
     headerContainer: {
         paddingHorizontal: 20,

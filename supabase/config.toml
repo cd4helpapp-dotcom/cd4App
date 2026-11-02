@@ -37,3 +37,9 @@ entrypoint = "./functions/security-ops-monitor/index.ts"
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/submit-hospital-onboarding/index.ts"
+
+# Razorpay cannot send a Supabase JWT; the function verifies x-razorpay-signature itself.
+[functions.razorpay-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/razorpay-webhook/index.ts"

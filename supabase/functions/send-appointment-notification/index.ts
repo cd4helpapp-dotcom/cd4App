@@ -3,6 +3,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 // @ts-ignore: Remote ESM import is resolved in Deno runtime.
 import { PDFDocument, StandardFonts, degrees, rgb } from "https://esm.sh/pdf-lib@1.17.1";
+import { trackInBackground } from "../_shared/agent/telemetry.ts";
+import { briefToSummaryText, buildDoctorBrief, countPatientTurns, loadConversationForBrief, renderDoctorBriefPdf, renderPlainBriefPdf } from "../_shared/doctorBrief.ts";
 
 declare const Deno: {
   env: {
@@ -1136,260 +1138,6 @@ const drawPageFooters = (args: {
   });
 };
 
-const buildPrescriptionStyleSnapshotPdfBytes = async (args: {
-  patient: PatientSnapshot;
-  doctorName: string;
-  doctorSpecialization: string;
-  slotLabel: string;
-  concern: string;
-  summary: string;
-  triageSnapshot: TriageSnapshot;
-  qaSnapshotLines: string[];
-  chatTimelineLines: string[];
-  reportId?: string | null;
-}) => {
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([595, 842]);
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-
-  const green = rgb(0.04, 0.47, 0.37);
-  const lightGreen = rgb(0.92, 0.97, 0.95);
-  const border = rgb(0.86, 0.9, 0.9);
-  const dark = rgb(0.12, 0.16, 0.18);
-  const muted = rgb(0.35, 0.42, 0.45);
-  const white = rgb(1, 1, 1);
-
-  const drawText = (text: string, x: number, y: number, size = 10, useBold = false, color = dark) => {
-    page.drawText(sanitizePdfText(text), { x, y, size, font: useBold ? bold : font, color });
-  };
-
-  const drawBox = (x: number, y: number, w: number, h: number, fill = white, stroke = border) => {
-    page.drawRectangle({ x, y, width: w, height: h, color: fill, borderColor: stroke, borderWidth: 1 });
-  };
-
-  const fitText = (value: string, maxWidth: number, size = 9, useBold = false): string => {
-    const clean = sanitizePdfText(value || "");
-    if (!clean) return "";
-    const activeFont = useBold ? bold : font;
-    if (activeFont.widthOfTextAtSize(clean, size) <= maxWidth) return clean;
-    let output = clean;
-    while (output.length > 2 && activeFont.widthOfTextAtSize(`${output}...`, size) > maxWidth) {
-      output = output.slice(0, -1);
-    }
-    return `${output}...`;
-  };
-
-  const wrap = (value: string, maxWidth: number, size = 9, useBold = false): string[] => {
-    const words = sanitizePdfText(value).split(/\s+/).filter(Boolean);
-    const activeFont = useBold ? bold : font;
-    const lines: string[] = [];
-    let current = "";
-    for (const word of words) {
-      const next = current ? `${current} ${word}` : word;
-      if (activeFont.widthOfTextAtSize(next, size) > maxWidth && current) {
-        lines.push(current);
-        current = word;
-      } else {
-        current = next;
-      }
-    }
-    if (current) lines.push(current);
-    return lines.length ? lines : [""];
-  };
-
-  const drawBullets = (
-    x: number,
-    y: number,
-    width: number,
-    items: string[],
-    maxItems = 4,
-    size = 9,
-    color = dark,
-    minY = 0,
-  ) => {
-    let cursor = y;
-    const rows = items.length ? items : ["Not clearly captured"];
-    for (const item of rows.slice(0, maxItems)) {
-      const wrapped = wrap(item, width - 10, size).slice(0, 2);
-      drawText(`- ${wrapped[0] || "Not clearly captured"}`, x, cursor, size, false, color);
-      cursor -= 13;
-      if (wrapped[1] && cursor > minY) {
-        drawText(`  ${wrapped[1]}`, x, cursor, size, false, color);
-        cursor -= 13;
-      }
-      if (cursor <= minY) break;
-    }
-  };
-
-  const drawCompactLines = (
-    x: number,
-    y: number,
-    width: number,
-    items: string[],
-    maxItems = 5,
-    size = 8.4,
-    color = dark,
-  ) => {
-    let cursor = y;
-    const rows = items.length ? items : ["No question-answer transcript captured."];
-    rows.slice(0, maxItems).forEach((item) => {
-      drawText(fitText(item, width, size), x, cursor, size, false, color);
-      cursor -= 13;
-    });
-    if (rows.length > maxItems) {
-      drawText(fitText(`+ ${rows.length - maxItems} more Q&A item(s) in chat history`, width, size), x, cursor, size, false, muted);
-    }
-  };
-
-  const summaryLines = buildConciseClinicalSummaryLines(args.summary, 4).map((line) => line.replace(/^\d+\.\s*/, ""));
-  const associatedSymptoms = args.triageSnapshot.associatedSymptoms.length
-    ? args.triageSnapshot.associatedSymptoms.join(", ")
-    : "Not clearly stated";
-  const missingPoints = args.triageSnapshot.missingDataPoints.length
-    ? args.triageSnapshot.missingDataPoints.join(", ")
-    : "None";
-  const redFlagText = /red-flag/i.test(args.triageSnapshot.riskNote)
-    ? "Potential red-flag language detected"
-    : "No red-flag language detected";
-  const reportId = args.reportId || `AI-${Date.now()}`;
-
-  // Header mirrors prescription PDF proportions.
-  drawText("CD4", 34, 807, 24, true, green);
-  page.drawRectangle({ x: 202, y: 790, width: 190, height: 28, color: green });
-  drawText("AI SNAPSHOT", 257, 799, 13, true, white);
-  drawText(`Date: ${new Date().toLocaleDateString("en-IN")}`, 410, 807, 10, false, dark);
-  drawText(`Time: ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`, 410, 793, 10, false, dark);
-
-  // Doctor + patient card.
-  drawBox(28, 675, 539, 104, white, border);
-  drawText("DOCTOR DETAILS", 40, 760, 11, true, green);
-  drawText(fitText(args.doctorName, 210, 14, true), 40, 742, 14, true, dark);
-  drawText(fitText(args.doctorSpecialization || "General Medicine", 210, 10), 40, 726, 10, false, dark);
-  drawText(`Appointment: ${fitText(args.slotLabel, 190, 10)}`, 40, 712, 10, false, muted);
-
-  drawText("PATIENT DETAILS", 290, 760, 11, true, green);
-  drawText(`Name: ${fitText(args.patient.name, 220, 11, true)}`, 290, 742, 11, false, dark);
-  drawText(`Age / Gender: ${fitText(`${args.patient.age} / ${args.patient.gender}`, 180, 10)}`, 290, 726, 10, false, dark);
-  drawText(`Phone: ${fitText(args.patient.phone, 170, 10)}`, 290, 712, 10, false, muted);
-
-  // Clinical snapshot row.
-  drawBox(28, 535, 539, 128, white, border);
-  drawText("CHIEF CONCERN", 40, 645, 11, true, green);
-  drawBullets(
-    40,
-    627,
-    165,
-    [
-      args.triageSnapshot.chiefConcern,
-      `Duration: ${args.triageSnapshot.duration}`,
-      `Severity: ${args.triageSnapshot.severity}`,
-      `Temperature: ${args.triageSnapshot.temperature}`,
-    ],
-    4,
-    9,
-    dark,
-    548,
-  );
-
-  drawText("AI SUMMARY", 220, 645, 11, true, green);
-  drawBullets(220, 627, 185, summaryLines, 4, 8.7, dark, 548);
-
-  drawText("RISK / CONTEXT", 425, 645, 11, true, green);
-  drawBullets(
-    425,
-    627,
-    125,
-    [
-      redFlagText,
-      `Data: ${args.triageSnapshot.captureScore}/${args.triageSnapshot.answeredTopics.length}`,
-      `Missing: ${missingPoints}`,
-    ],
-    3,
-    8.1,
-    dark,
-    548,
-  );
-  drawText(`Concern: ${fitText(args.triageSnapshot.chiefConcern, 500, 9)}`, 40, 560, 9, true, dark);
-  drawText(`Symptoms: ${fitText(associatedSymptoms, 480, 9)}`, 40, 546, 9, false, dark);
-
-  // Doctor quick-review table.
-  drawText("DOCTOR QUICK REVIEW", 28, 515, 12, true, green);
-  // Six review rows need more vertical room than the previous fixed box.
-  // Keep the final note outside the table so it cannot overlap the Booking row.
-  drawBox(28, 326, 539, 180, white, border);
-  page.drawRectangle({ x: 29, y: 485, width: 537, height: 20, color: green });
-  drawText("Field", 38, 491, 9, true, white);
-  drawText("Captured Detail", 146, 491, 9, true, white);
-  drawText("Doctor Action", 382, 491, 9, true, white);
-
-  const reviewRows = [
-    ["Concern", args.triageSnapshot.chiefConcern, "Confirm history"],
-    ["Duration", args.triageSnapshot.duration, "Clarify onset"],
-    ["Severity", args.triageSnapshot.severity, "Assess vitals"],
-    ["Symptoms", associatedSymptoms, "Screen red flags"],
-    ["Medicine / Allergy", args.triageSnapshot.medicationContext, "Verify before Rx"],
-    ["Booking", args.triageSnapshot.bookingContext, "Proceed clinically"],
-  ];
-  let rowY = 468;
-  reviewRows.forEach((row, index) => {
-    if (index % 2 === 0) {
-      page.drawRectangle({ x: 29, y: rowY - 13, width: 537, height: 22, color: rgb(0.98, 0.99, 0.99) });
-    }
-    drawText(fitText(row[0], 96, 8.8, true), 38, rowY, 8.8, index === 0, dark);
-    drawText(fitText(row[1], 220, 8.8), 146, rowY, 8.8, false, dark);
-    drawText(fitText(row[2], 150, 8.8), 382, rowY, 8.8, false, dark);
-    rowY -= 22;
-  });
-  drawText("This AI snapshot supports clinical review and should be verified by the treating doctor.", 36, 334, 8.5, false, muted);
-
-  // Signature + declaration.
-  drawText("AI-assisted summary for doctor review only. Not a diagnosis or prescription.", 28, 208, 9, false, muted);
-  drawText(args.doctorName, 430, 194, 11, true, dark);
-  drawText(args.doctorSpecialization || "Consultant Physician", 430, 182, 9, false, muted);
-
-  // Doctor handoff notes.
-  drawBox(28, 78, 539, 96, white, border);
-  drawText("DOCTOR HANDOFF NOTES", 40, 158, 10, true, green);
-  drawBullets(
-    40,
-    142,
-    500,
-    [
-      "Verify patient-reported symptoms, duration, vitals, medicines, allergies, and red flags directly.",
-      "Use this snapshot as a consultation aid before diagnosis, prescription, or referral.",
-      `Patient vitals on profile: Weight ${args.patient.weight}, BP ${args.patient.bloodPressure}, Pulse ${args.patient.pulse}.`,
-      `Address: ${args.patient.address}`,
-    ],
-    4,
-    8.8,
-    dark,
-    88,
-  );
-
-  page.drawRectangle({ x: 0, y: 0, width: 595, height: 24, color: green });
-  drawText("Your health. Our priority.", 244, 8, 9, true, white);
-
-  return await pdf.save();
-};
-
-const buildFallbackPdfBytes = async (args: {
-  patient: PatientSnapshot;
-  doctorName: string;
-  doctorSpecialization: string;
-  slotLabel: string;
-  concern: string;
-  summary: string;
-  triageSnapshot: TriageSnapshot;
-  qaSnapshotLines: string[];
-  chatTimelineLines: string[];
-}) => {
-  return await buildPrescriptionStyleSnapshotPdfBytes({
-    ...args,
-    reportId: `AI-${Date.now()}`,
-  });
-};
-
 const uploadReportPdf = async (args: {
   serviceClient: any;
   appointmentId: string;
@@ -2336,18 +2084,6 @@ const ensureAppointmentTriageReport = async (args: {
     concern = "General consultation";
   }
 
-  const structuredSummary = buildHeuristicSummary({ concern, history });
-  const existingSummaryText =
-    typeof existingReport?.summary === "string" && existingReport.summary.trim()
-      ? normalizeInlineText(existingReport.summary.trim(), 520)
-      : "";
-  const summary = clipText(
-    [structuredSummary, existingSummaryText ? `Prior AI summary note: ${existingSummaryText}` : ""]
-      .filter(Boolean)
-      .join(" "),
-    1200,
-  );
-
   const patient = resolvePatientSnapshot(args.patientProfile);
 
   const doctorProfile = Array.isArray(args.doctorMeta?.profiles) ? args.doctorMeta.profiles[0] : args.doctorMeta?.profiles;
@@ -2367,33 +2103,50 @@ const ensureAppointmentTriageReport = async (args: {
   const qaSnapshotLines = buildVoiceChatQaSnapshotLines(history, concern, 50);
   const aiChatTimelineLines = buildAiChatTimelineLines(history, 200);
 
+  // The AI reads the original conversation. `history` above is cleaned for PDF text and has lost any Hindi.
+  const originalConversation = await loadConversationForBrief(args.serviceClient, {
+    userId: args.appointment.patient_id,
+    conversationId: payloadConversationId,
+  });
+  const payloadOriginal = (Array.isArray(args.body?.history) ? args.body.history : [])
+    .map((item: any) => ({ role: item?.role === "assistant" ? "assistant" : "user", content: String(item?.content || "").trim() }))
+    .filter((item: any) => item.content);
+  const briefHistory = [originalConversation, payloadOriginal, history]
+    .reduce((best, candidate) => (countPatientTurns(candidate) > countPatientTurns(best) ? candidate : best), [] as any[]);
+
+  const brief = await buildDoctorBrief({
+    concern,
+    history: briefHistory,
+    env: {
+      openAiKey: Deno.env.get("OPENAI_API_KEY") || "",
+      openAiModel: Deno.env.get("CHAT_AI_OPENAI_MODEL")?.trim() || "gpt-4o-mini",
+      geminiKey: Deno.env.get("GEMINI_API_KEY") || "",
+    },
+  });
+  const summary = briefToSummaryText(brief);
+  trackInBackground(args.serviceClient, {
+    surface: "chat",
+    userId: args.appointment.patient_id,
+    route: "doctor_brief",
+    routeReason: brief.source,
+    retrievedChunks: countPatientTurns(briefHistory),
+    guardFlags: brief.source === "basic" ? ["brief_ai_failed"] : [],
+    error: brief.aiError || null,
+  });
+
   let pdfBytes: Uint8Array | null = null;
   try {
-    pdfBytes = await buildPrescriptionStyleSnapshotPdfBytes({
+    pdfBytes = await renderDoctorBriefPdf({ PDFDocument, StandardFonts, rgb }, {
+      brief,
       patient,
       doctorName,
       doctorSpecialization,
       slotLabel,
-      concern,
-      summary,
-      triageSnapshot,
-      qaSnapshotLines,
-      chatTimelineLines: aiChatTimelineLines,
       reportId: existingReportId || args.appointment.id,
     });
   } catch (richPdfError) {
     console.warn("Primary PDF rendering failed, using fallback PDF renderer:", richPdfError);
-    pdfBytes = await buildFallbackPdfBytes({
-      patient,
-      doctorName,
-      doctorSpecialization,
-      slotLabel,
-      concern,
-      summary,
-      triageSnapshot,
-      qaSnapshotLines,
-      chatTimelineLines: aiChatTimelineLines,
-    });
+    pdfBytes = await renderPlainBriefPdf({ PDFDocument, StandardFonts, rgb }, { patientName: patient.name, concern, summary, doctorName, slotLabel });
   }
 
   if (!pdfBytes) {
@@ -2512,8 +2265,12 @@ Deno.serve(async (req: Request) => {
       }, 401);
     }
 
-    const { data: authData, error: authError } = await serviceClient.auth.getUser(accessToken);
-    if (authError || !authData?.user?.id) {
+    // The payment webhook calls this with the service key when the patient closed the app after paying.
+    const isSystemCaller = accessToken === (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "");
+    const { data: authData, error: authError } = isSystemCaller
+      ? { data: null, error: null }
+      : await serviceClient.auth.getUser(accessToken);
+    if (!isSystemCaller && (authError || !authData?.user?.id)) {
       await logSecurityEvent(serviceClient, {
         eventType: "appointment_notification_invalid_token",
         severity: "warn",
@@ -2526,12 +2283,12 @@ Deno.serve(async (req: Request) => {
         reason: "invalid_or_expired_token",
       }, 401);
     }
-    const authenticatedUserId = authData.user.id;
+    const authenticatedUserId = isSystemCaller ? null : authData.user.id;
 
     const rateLimit = await enforceRateLimit(serviceClient, {
       scope: "send-appointment-notification",
-      subject: authenticatedUserId,
-      maxRequests: 12,
+      subject: authenticatedUserId || "system",
+      maxRequests: isSystemCaller ? 120 : 12,
       windowSeconds: 60,
     });
     if (!rateLimit.allowed) {
@@ -2578,7 +2335,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // Only patient who booked or admin can trigger this notification.
-    if (authenticatedUserId !== appointment.patient_id) {
+    if (!isSystemCaller && authenticatedUserId !== appointment.patient_id) {
       const { data: actorProfile } = await serviceClient
         .from("profiles")
         .select("roles(slug)")
@@ -2600,6 +2357,21 @@ Deno.serve(async (req: Request) => {
           reason: "not_allowed_to_notify_for_this_appointment",
         }, 403);
       }
+    }
+
+    // The app and the webhook can both get here; whichever claims the appointment first sends the PDF.
+    const { data: notificationClaim, error: notificationClaimError } = await serviceClient
+      .from("appointments")
+      .update({ doctor_notified_at: new Date().toISOString() })
+      .eq("id", appointment.id)
+      .is("doctor_notified_at", null)
+      .select("id")
+      .maybeSingle();
+    // A failed claim is not the same as "already sent": a doctor missing a PDF is worse than getting it twice.
+    if (notificationClaimError) {
+      console.warn("Appointment notification claim failed:", notificationClaimError.message);
+    } else if (!notificationClaim?.id) {
+      return jsonResponse({ success: true, skipped: true, reason: "already_notified" });
     }
 
     const { data: patientProfileData, error: patientProfileError } = await serviceClient
@@ -2714,6 +2486,11 @@ Deno.serve(async (req: Request) => {
           await sleep(450 * attempt);
         }
       }
+    }
+
+    // A PDF that could not be written can be tried again by the other caller.
+    if (reportGenerationErrorMessage) {
+      await serviceClient.from("appointments").update({ doctor_notified_at: null }).eq("id", appointment.id);
     }
 
     const patientName = patientProfile?.first_name

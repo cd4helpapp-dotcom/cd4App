@@ -6,6 +6,7 @@ const rootDir = process.cwd();
 const configPath = path.join(rootDir, 'supabase', 'config.toml');
 
 const ALLOWED_NO_VERIFY = new Set([
+  'razorpay-webhook',
   'chat-agent-ws', // WebSocket auth token is validated inside function (query/header token flow).
   'health-reminders', // Cron/manual-secret path supports non-JWT invocations.
   'security-ops-monitor', // Cron/manual-secret path supports non-JWT invocations.

@@ -309,7 +309,140 @@ Loaders and shimmer (reload of every tab, light and dark system theme, screensho
 
 Not changed: the test account has "Light" saved in its profile appearance setting, so the app stays light even when the device is dark (correct). Web-only console noise remains from `expo-secure-store` (no web support) and `expo-notifications`. On web the page is blank white for ~0.3 s while the JavaScript loads; phones show the native splash instead.
 
+### Phase 19 — Release config, UI audit, voice doctor search, doctor PDF (2026-11-02, uncommitted)
+
+**Preview build config** (`eas.json`, `.easignore`, `package.json`): `preview`/`production` pinned Node 20.18 while Expo 58 / RN 0.88 need 22.13+; the pin was removed so they use the same default image as the successful development build. `expo-module-scripts` pulled `babel-preset-expo` 54 and codegen 0.81 into the root `node_modules`, which broke every Android bundle ("Unable to determine event arguments for onModeChange"); removed, with `babel-preset-expo` 58 as a direct dev dependency. `.easignore` replaces `.gitignore` for uploads, so `.env` (Agora certificate) and `dist` were being uploaded; both are now excluded and the client `EXPO_PUBLIC_*` flags moved to `eas.json`. google-signin v17 returns `{ type, data }`; `utils/googleNativeAuth.ts` reads it and treats cancelling as a cancel. Verified: `expo export --platform android` builds (8.8 MB Hermes bundle), expo-doctor 19/20 (directory metadata only). **Production still has a Razorpay test key.**
+
+**UI audit** (Home, Appointments, Reports at 390x844 and 360x640 in Chrome: no page overflow, clipped labels or console errors after fixes). Appointments: "Cardiologist" and similar chips listed specialities with no doctors and matched spelling exactly (database has "Dermatology"/"Dermatologist", "General Physician "), so a chip could show an empty list; `src/utils/doctors.ts` now gives one name per speciality and lists only those with doctors. Junk profiles hidden from browsing (search still finds them), cards show the fee instead of repeating "View Available Slots", initials replace blank photos (`ui/common/DoctorAvatar.tsx`), lighter type, readable chips, "New on CD4" instead of a star. Reports: value names wrap instead of "Total cholest...", "+N more in the full report". Home: speciality and experience/city on separate lines.
+
+**Voice: "doctors in Patna" answered that the system returned none.** General searches went through `chat-ai`; when the model sent a concern like "doctors in Patna" its medical-scope guard returned no doctors (live test: 0 doctors in 5 s, while 4 real Patna doctors exist) and the assistant invented an explanation. `_shared/doctorSearch.ts` now queries the database directly: whole-word city, no junk profiles, doctors with open slots first, next slots attached and attributed, and a plain `searchNote` when it has to widen ("CD4 has no Cardiology doctor in Patna right now..."). The session instructions tell the assistant to speak like a receptionist and never mention the system or tools. Tested against a fake database (`scripts/test-voice-doctor-search.mjs`); **not yet tested with the live voice model, needs deploy**.
+
+**Doctor PDF** (`_shared/doctorBrief.ts`, used by `send-appointment-notification` and `save-ai-report`). The old page came from English-only regexes (Hindi chats became "Not clearly stated"), printed raw markdown ("* **Chief Concern:** Issues in focus."), showed UTC times and printed the doctor's name like a signature. Now an AI model reads the whole conversation in any language and returns facts in simple English from what the patient said, without diagnosing; if OpenAI fails it tries Gemini, then a clearly labelled basic summary; a booking without any chat says so. One A4 page: patient and appointment, main concern, danger signs (only if reported), summary, key facts, reported and denied symptoms, what to confirm. Rendering checked with sample data including the longest allowed text. **The AI extraction itself has not run yet, because the API keys exist only on the server: check a real booking after deploy.**
+
+**Report chat ("Ask AI") still fails live** with the `getUTCFulloear` typo until `medical-report-chat` is deployed. New `npm run check:edge` finds misspelled methods and undefined names across all edge functions despite `@ts-nocheck` (currently clean, 28 files); run it before deploying.
+
+**Hidden routes redirected to Home (SDK 58 regression).** expo-router 58 turns `href: null` into `hidden: true`, and a hidden route redirects away when opened. Patient Settings and Profile details could not open from the profile icon, and the same setting was on doctor settings, fees, clinic, complete-profile, admin pages and hospital patient-profile. `href` was removed from the four tab layouts; `SmoothTabBar` already chooses visible tabs through `visibleRouteNames`. Verified for the patient role in the browser; **doctor, admin and hospital screens not opened yet** (needs those logins).
+
+**Department list on Home** only changed internal state. It now opens Appointments with that department selected, and shows all cities when the department has no doctor in the current city. Home's department tiles (not the list) still open AI guidance.
+
+**City/Department dialogs** on Appointments are a centred dialog instead of a bottom sheet. Other bottom sheets (booking, upload, Home's concern and department lists) are unchanged.
+
+**Top specialists card**: `flex: 1` on the card's upper section (added during the UI audit) collapses inside an auto-height card on native but not in browsers; now `flexGrow: 1`. Not verified on a phone.
+
+**Doctor PDF** reworked as a history sheet: chief complaint, history of present illness, since when, how it started, better/worse, severity, what affects it, already tried, medicines, allergies, past history.
+
+**Splash icon**: the source logo fills its square with white corners, so Android 12+'s circular mask cut it, and the corners would show on the dark splash. `scripts/generate-splash-logo.mjs` makes `assets/images/splash-logo.png` (transparent rounded corners, clear space); needs a new native build to appear.
+
+**Brand**: app text and the assistant's name are "CD4" instead of "CD4 Health". Legal names in the privacy policy and the doctor-signup copyright are unchanged.
+
+**Deploy needed:** `chat-ai medical-report-chat save-ai-report register-push-token send-appointment-notification voice-realtime-session voice-realtime-tools`.
+
+### Phase 20 — Role, booking and payment lockdown (2026-11-02, uncommitted)
+
+Audit of everything except the Chat and Community tabs. Dummy doctors stay until the new database is set up (owner's decision).
+
+**Who is admin:** `EXPO_PUBLIC_ADMIN_EMAILS` (`.env`, `eas.json`) only picks the screen after login (`src/utils/authRouting.ts`). Real access is `profiles.role_id`, set at signup by the email list in `handle_new_user`. The lists match. The client list ships inside the APK.
+
+**Fixed** in `supabase/migrations/20261102120000_lock_roles_and_paid_bookings.sql`, `_shared/appointmentBooking.ts`, `razorpay-webhook`, `manage-appointment-payment`:
+
+| Bug | Fix |
+|---|---|
+| Signup with `role: admin` in metadata created an admin; users could edit their own `role_id` | Public signup gives only patient or doctor; hospital comes from `app_metadata`; trigger keeps `role_id` and `is_verified` for non-admins. Hospital voice checks no longer read `user_metadata`. |
+| Patients could insert confirmed appointments without paying and edit linked slots | Appointment insert and slot update are admin only; participants can only mark a booking completed |
+| Doctors could verify themselves and set their rating | Trigger keeps these for non-admins |
+| **Webhook never ran:** live endpoint returned 401 because `verify_jwt` was on | `verify_jwt = false` (function checks Razorpay's signature) |
+| Paying and then closing the app left no booking | Webhook makes the booking |
+| A failed attempt, or a webhook arriving first, made a good payment fail with `payment_status_invalid` | Finalize accepts `created`, `failed` and unbooked `paid`; a late failure cannot undo a success |
+| Two patients could pay for one slot, with no refund | 5 minute hold, automatic Razorpay refund if the slot is lost, `needs_manual_refund` in metadata if the refund fails |
+| Webhook overwrote payment metadata, losing `appointment_type`; failed events were never retried; `refund.failed` marked payments refunded | Metadata merged; unprocessed events reprocess; refund failures flagged |
+| Doctor could delete a slot during payment, which cascaded away the payment row | Delete blocked for 15 minutes after a payment starts |
+| Signature check was skipped if the Razorpay secret went missing | Rejected unless the order was created in test mode |
+
+**Tests:** `npm run test:booking`. The migration was also run on in-memory Postgres (PGlite) with a minimal copy of the schema and attacked as signed-in users. Not tested: real Razorpay payment, refund or webhook delivery.
+
+**Report chat language** now follows the latest question (`medical-report-chat`), deploy pending.
+
+**Deploy order:** functions first (the hospital signup needs `app_metadata` before the trigger changes), then `npx supabase db push`. Then check the webhook is registered in Razorpay.
+
+### Phase 21 — Bug list, doctor panel, CD4 AI agent (2026-11-03, uncommitted)
+
+**Bugs from the Phase 20 list:**
+
+| Item | Fix |
+|---|---|
+| Doctor PDF lost if the patient closes the app after paying | Concern and conversation are stored on the order; the webhook sends the PDF with `EdgeRuntime.waitUntil`. `appointments.doctor_notified_at` is claimed once, so the app and the webhook cannot both send it. |
+| Unpaid orders shown as receipts | Payment history hides `created` rows; status labels and dates cleaned up. |
+| No cancel or reschedule | `cancel_appointment_booking` and `reschedule_appointment_booking`, up to 2 hours before for patients, with an automatic full refund. Doctors can cancel until the slot starts; that slot stays closed. |
+| Legal pages said ReVeda | Migration replaces only rows containing the old name, so admin edits survive. Firebase removed from `PRIVACY_POLICY.md`. |
+| No Hindi on Reports or payment screens | 240 new keys across Reports, report detail, upload, payment screens and My appointments. |
+| Another patient's AI report could be linked to a booking | `guard_appointment_report_owner` drops a report that is not the patient's own. |
+
+**Auth theme:** signed out, the app now always follows the device, instead of keeping the last user's saved Light or Dark. `expo-system-ui` added, which Android needs for automatic dark mode; this requires a new native build.
+
+**Doctor panel:** Home rewritten (the metric cards were collapsing because `width: 48%` sat inside a wrapper with no width), with shared `ui/doctor/DoctorUI.tsx` for titles, tiles and search. Slot times now read "6:00 AM", not "06:00:00". Patients, Slots and Chats restyled to match. Bugs fixed: Transactions redirected to Home (missing from the tab layout); verified doctors showed "Verification Pending"; profile dividers overflowed the card; the chat list told doctors to "book a future slot".
+
+**CD4 AI:** one identity, free small talk, injection checks, output scrubbing, hybrid RAG, exact and semantic cache, model routing, RBAC and telemetry. Full explanation in `docs/CD4_AI_AGENT.md`.
+
+Two bugs found on the way: `chat-ai` still had `bookSlotWithoutPayment`, which created a confirmed appointment with the service key and bypassed the Phase 20 lock, now replaced by a hand-off to the payment screen. And report chunks were written on upload but report chat never read them, so long reports lost everything past 8,000 characters.
+
+**Tests:** `npm run test:agent`, `npm run test:booking`. Migrations were also run on PGlite with pgvector and tested as signed-in users (82 checks). Not tested: real voice, real Razorpay refunds, the webhook sending a PDF, and `npm run eval:agent`, which needs these functions deployed first.
+
+**Deploy order:** `npx supabase db push` first (the notification claim needs the new column), then the functions, then `npm run ingest:knowledge`.
+
+### Phase 22 — Report reading, calls, chat and Community speed (2026-11-02, uncommitted)
+
+**Report reading.** The same handwritten OPD card gave a different wrong answer on each run, including a pregnancy test that is not on the card. The model had to fill a JSON form from a photo in one low-effort pass, under a 22 s limit that also pushed it onto the fallback model.
+- Photos and scanned PDFs are read twice at the same time by two models. A detail the readings disagree on is marked as uncertain.
+- The draft is then checked against the page and unsupported claims are removed. If the check cannot run, or claims survive a rewrite, nothing is saved and the patient is asked for a clearer photo.
+- Cut-off or non-JSON model output counts as a failed attempt.
+- This lowers wrong readings but cannot rule them out for hard handwriting, so the screen shows what was read and what to confirm with a doctor.
+- `npm run eval:report -- <file> --runs 3 --must "a,b" --never "c,d"` runs a document through the deployed function and checks every run.
+
+**Reports UI.** Hero card, range meters, plain summary (`headline`, `plain_points`), `report_title`, "what the document says", "please confirm", a Read again action and a doctor's note type. Older reports keep their text until read again. The red and green values bar was removed: it only counted the values AI chose to list, so it looked far worse than the report.
+
+**Calls** (`context/CallContext.tsx`). Fixed: a voice call turning the camera on; a denied microphone starting a silent call; the first call resetting itself when the permission prompt backgrounded the app; hanging up during setup still ringing the other phone; a double tap ringing twice; the ringtone continuing after the call ended; answering after the caller hung up; a crashed caller leaving the other phone ringing on every app open; a second incoming call taking over a call in progress; an old call's closing event ending a new call; a call staying open for ever when the other phone died; calls dropping at one hour because the token was never renewed; a short test call marking the appointment completed (it now needs 60 s connected); the speaker setting being applied before joining, where Agora ignores it.
+
+Added: ringback tone, vibration, call timer, Reconnecting status, missed-call push, one live call per room (`20261103160000_one_live_call_per_room.sql`), and a 24 s ringtone channel for a closed app (`calls_ringtone_v3`). The caller's token is no longer stored where the other person can read it.
+
+**Chat.** Read ticks update live. Closing a chat no longer removes the Chat tab's live updates. Messages sent while offline or in the background load on return. A failed send keeps the typed text and no longer erases messages received meanwhile. A message that arrives in the background is not marked read. Closed consultations can be opened to read. "Last seen" and Online now reflect use of the whole app, not only having a chat open, and no longer broadcast every online user's id to everyone.
+
+**Community.** Feed requests ran one after another. They now run together, picture links come in one request, the feed is loaded shortly after sign-in, opening the tab reloads only stale data, and it no longer loads twice.
+
+**Report timing.** Analysis now answers at once and carries on in the background, and marks the report failed after 135 s. A limit error is shown instead of waiting. Report chat had been failing over to the backup provider on every question, because GPT-5 rejects a custom temperature. The report screen has Summary, Results, Document and Ask AI tabs.
+
+**CD4 AI chat.** The websocket was seen closing itself mid-answer (1006), and the app then showed an error, so any socket failure now falls back to HTTP and HTTP streaming goes first (`EXPO_PUBLIC_AGENT_WS_FIRST=off`). Doctor and slot cards were never rendered although the data arrived, so they now show with the top 5 slots. Emergency symptoms no longer get replaced by a slot list, and a doctor search no longer pays for a model reply it throws away. History-taking asks one question at a time. Internal source lines and the report note on non-report answers are gone.
+
+**Doctor chat, more.** `mark_room_as_read` trusted what the app sent and compared the role with 'Doctor', so a doctor cleared the patient's unread count and any user could mark any room read (`20261103170000`). Sends go one at a time, so order holds. Fixed the quoted name on replies, single and double ticks, typing signals on every key, and closed chats on the doctor side. Added date separators.
+
+**Community, more.** Follow, like and comment flows rebuilt with optimistic updates and double-tap guards, with a new comment sheet in `ui/community`. A post with several photos shows only the first, because the feed does not request `media`.
+
+**Privacy.** Any signed-in user could read every doctor's whole profile, including email, phone and address. Security views and doctors' registration numbers were readable with no login (`20261103180000`). A patient and doctor who share a booking or chat can still read each other's full profile row.
+
+**Start-up.** A saved snapshot of name and role opens the app without waiting for the profile. Database calls time out at 20 s.
+
+**Capacity.** The project is on NANO compute with no backups, and it went Unhealthy during heavy testing, then recovered after a restart. Before launch it needs a larger compute size and backups. Run tests one at a time on this size.
+
+**Not verified:** calls need two phones and a new build, so none of the call behaviour above has been run. Report reading needs the function deployed.
+
+**Encryption, as it really is.** Text messages use x25519 and XSalsa20-Poly1305. It is not true end-to-end:
+- `E2EE_BACKUP_WRAP_KEY` is not set, so key backup does not run. Reinstalling or changing phone creates a new key and old messages can no longer be read. Once set, backups work, but whoever holds that key can read messages.
+- Messages go in plain text when the other person has no key yet, even with `EXPO_PUBLIC_CHAT_E2EE_ALLOW_PLAINTEXT_FALLBACK=false`. On the test accounts about 60% of all text messages are plain, and 3 of the patient's newest 20.
+- Push previews send the message text to the server and Expo.
+- Photos and files are private links, not encrypted.
+
+**Open decisions:**
+- Whether to block sending without a key, send generic push previews, and whether privacy text may call chat end-to-end encrypted.
+- A closed app rings through a notification. A full-screen call like WhatsApp needs a native call library.
+- `get-agora-token` checks room membership but not the consultation window, which only the app checks.
+
 ## Pending / known issues backlog
+
+- **`support@cd4.app`** appears on the legal and support pages. Confirm this mailbox exists and is read.
+- **Legal text** is a working draft from `PRIVACY_POLICY.md`. Have a lawyer review it, including DPDP Act duties and naming AI providers.
+- **Refund after payout:** if a consultation is refunded after the doctor was paid, the money is not recovered automatically. These rows carry `refund_after_payout` in `appointment_payments.metadata`.
+- **Doctor panel text** is English only.
+- **Medical knowledge for CD4 AI** still has to be sourced and clinically reviewed. See `docs/CD4_AI_AGENT.md`.
+- **New database:** create the three admin accounts first. The signup trigger makes those emails admin before email confirmation, so anyone registering one first would become admin. Do not reuse the dummy doctors' seed password.
 
 - **No slot locking at payment time**: `create_order` does not reserve the slot, so two patients can pay for the same slot; `verify_and_book` must be atomic and refund the loser. Worth a DB-level test.
 - Appointments: no cancel / reschedule action for the patient yet; "Message" opens the Chat tab rather than the specific consultation chat.

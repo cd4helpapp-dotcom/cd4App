@@ -25,7 +25,8 @@ const FALLBACK_CONTENT: Record<ManagedContentKey, ManagedContentPayload> = {
     body:
       'By using CD4, you agree to use the app responsibly and provide accurate information. CD4 connects users with healthcare services and provides AI-assisted health information.\n\n' +
       'AI guidance and report explanations are for informational support only. They do not replace a qualified doctor, diagnosis, prescription, or emergency care. Contact local emergency services for urgent symptoms.\n\n' +
-      'You are responsible for protecting your account and for confirming medical decisions with a qualified healthcare professional. Misuse, abuse, or unauthorized access attempts may lead to account restriction.',
+      'You are responsible for protecting your account and for confirming medical decisions with a qualified healthcare professional. Misuse, abuse, or unauthorized access attempts may lead to account restriction.\n\n' +
+      'You can cancel or reschedule a consultation from My appointments up to 2 hours before the slot. A cancelled consultation is refunded in full to your original payment method.',
   },
   privacy_policy: {
     title: 'Privacy Policy',

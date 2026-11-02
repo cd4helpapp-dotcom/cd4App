@@ -57,20 +57,26 @@ export const usePublicProfile = (userId: string | undefined | null) => {
       if (!userId) throw new Error('No user ID provided');
 
       const {
-        data: { user: authUser },
-      } = await supabase.auth.getUser();
-      const currentUserId = authUser?.id || null;
+        data: { session },
+      } = await supabase.auth.getSession();
+      const currentUserId = session?.user?.id || null;
       const isOwnProfile = Boolean(currentUserId && currentUserId === userId);
 
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('id, first_name, last_name, gender, profile_picture, role_id')
-        .eq('id', userId)
-        .single();
+      // Someone else's profile comes through a function that returns only public fields, never their contact details.
+      const { data: profileRow, error: profileError } = isOwnProfile
+        ? await supabase
+            .from('profiles')
+            .select('id, first_name, last_name, gender, profile_picture, role_id')
+            .eq('id', userId)
+            .single()
+        : await supabase
+            .rpc('community_get_public_profiles', { p_user_ids: [userId] })
+            .single();
 
       if (profileError) throw profileError;
+      const profileData = profileRow as any;
 
-      let roleSlug = '';
+      let roleSlug = String(profileData?.role_slug || '');
       if (profileData?.role_id) {
         try {
           const { data: roleRow } = await supabase

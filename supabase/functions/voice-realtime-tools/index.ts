@@ -1,6 +1,21 @@
 // @ts-nocheck
 /// <reference lib="deno.window" />
 import { createClient } from "npm:@supabase/supabase-js@2"
+import { searchVerifiedDoctors } from "../_shared/doctorSearch.ts"
+
+import { detectPromptInjection, wrapUntrusted } from "../_shared/agent/guards.ts"
+import { embedText, formatKnowledge, retrieveKnowledge, retrieveReportChunks } from "../_shared/agent/knowledge.ts"
+import { can, loadOwnAppointments, resolveActor, type AgentCapability } from "../_shared/agent/access.ts"
+import { trackInBackground } from "../_shared/agent/telemetry.ts"
+
+// What a voice tool needs from the caller's role. The model can ask for anything; this decides.
+const TOOL_CAPABILITY: Record<string, AgentCapability> = {
+  search_verified_doctors: "doctors.search",
+  book_appointment: "booking.start",
+  lookup_cd4_information: "knowledge.search",
+  get_my_appointments: "records.own_appointments",
+  search_my_reports: "records.own_reports",
+}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -26,7 +41,6 @@ Deno.serve(async (request: Request) => {
   if (request.method !== "POST") return json({ success: false, message: "POST required" }, 405)
   const url = Deno.env.get("SUPABASE_URL") || ""
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || serviceKey
   const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim()
   if (!url || !serviceKey || !token) return json({ success: false, message: "Unauthorized" }, 401)
   try {
@@ -36,7 +50,35 @@ Deno.serve(async (request: Request) => {
     const body = await request.json().catch(() => ({}))
     const name = String(body?.name || "")
     const args = typeof body?.arguments === "string" ? JSON.parse(body.arguments) : (body?.arguments || {})
-    if (!["search_verified_doctors", "book_appointment"].includes(name)) return json({ success: false, message: "Unknown voice tool" }, 400)
+    if (!TOOL_CAPABILITY[name]) return json({ success: false, message: "Unknown voice tool" }, 400)
+    const actor = await resolveActor(admin, userData.user.id)
+    if (!can(actor, TOOL_CAPABILITY[name])) {
+      trackInBackground(admin, { surface: "voice_tool", userId: actor.id, role: actor.role, route: "denied", routeReason: name, guardFlags: ["rbac_denied"] })
+      return json({ success: true, result: { status: "not_allowed", message: "This is not available for this account." } })
+    }
+
+    if (name === "lookup_cd4_information" || name === "search_my_reports") {
+      const query = String(args.query || "").slice(0, 500)
+      if (detectPromptInjection(query).flagged) return json({ success: true, result: { status: "not_found", message: "No information found." } })
+      const embedded = await embedText(Deno.env.get("OPENAI_API_KEY") || "", query)
+      if (!embedded) return json({ success: true, result: { status: "not_found", message: "No information found." } })
+      const rows = name === "lookup_cd4_information"
+        ? await retrieveKnowledge(admin, { query, embedding: embedded.embedding, audience: actor.role === "doctor" ? "doctor" : "patient" })
+        : await retrieveReportChunks(admin, { patientId: actor.id, query, embedding: embedded.embedding })
+      trackInBackground(admin, { surface: "voice_tool", userId: actor.id, role: actor.role, route: "retrieval", routeReason: name, embeddingTokens: embedded.tokens, retrievedChunks: rows.length, topScore: rows[0]?.score ?? null })
+      if (!rows.length) return json({ success: true, result: { status: "not_found", message: "This information is not available. Say so plainly and do not guess." } })
+      const facts = name === "lookup_cd4_information"
+        ? formatKnowledge(rows)
+        : wrapUntrusted("patient reports", rows.map((row: any) => row.content).join("\n---\n"), 5000)
+      return json({ success: true, result: { status: "found", facts } })
+    }
+
+    if (name === "get_my_appointments") {
+      const facts = await loadOwnAppointments(admin, actor)
+      trackInBackground(admin, { surface: "voice_tool", userId: actor.id, role: actor.role, route: "records", routeReason: name })
+      return json({ success: true, result: { status: "found", facts: wrapUntrusted("patient appointments", facts) } })
+    }
+
     if (name === "book_appointment") {
       if (args.confirmed !== true) {
         return json({
@@ -217,31 +259,9 @@ Deno.serve(async (request: Request) => {
       })
     }
 
-    const response = await fetch(`${url}/functions/v1/chat-ai`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, apikey: anonKey, "Content-Type": "application/json", "x-internal-key": serviceKey },
-      body: JSON.stringify({ message: `Please find verified doctors for ${args.concern || "this health concern"}.`, concern: args.concern || "General health", showDoctors: true, searchAreaCity: args.city || null, locationCity: args.city || null, replyInVoice: true }),
-    })
-    const payload = await response.json().catch(() => ({}))
-    if (!response.ok || payload?.success !== true) return json({ success: false, message: payload?.message || "Voice tool failed" }, 400)
-    const result = payload.data || {}
-    const genericDoctors = Array.isArray(result.doctorRecommendations) ? result.doctorRecommendations : []
-    // Keep the voice tool response flat and compatible with the appointment
-    // UI. chat-ai stores slots under bookingPreparation.slotOptions, while
-    // the voice client also accepts bookingSlotOptions directly.
-    return json({
-      success: true,
-      result: {
-        ...result,
-        reply: genericDoctors.length
-          ? "I found verified doctors. Please choose a doctor first, and then I will show that doctor's available slots."
-          : result.reply || "I could not find a verified doctor right now.",
-        // Generic search shows doctors first. Slots are fetched only after
-        // the patient names/selects a specific doctor.
-        bookingSlotOptions: [],
-        bookingPreparation: result.bookingPreparation ? { ...result.bookingPreparation, slotOptions: [] } : result.bookingPreparation,
-      },
-    })
+    // A general request ("doctors in Patna", "skin doctor") goes straight to the database, with open slots attached.
+    const search = await searchVerifiedDoctors(admin, { concern: args.concern, city: args.city })
+    return json({ success: true, result: { ...search, departmentSuggestion: inferDepartmentSuggestion(args.concern || "") } })
   } catch (error) {
     return json({ success: false, message: error instanceof Error ? error.message : "Voice tool failed" }, 400)
   }

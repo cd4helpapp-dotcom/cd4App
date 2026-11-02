@@ -21,6 +21,7 @@ import Colors from '../../constants/Colors';
 import { useAuthContext } from '../../context/AuthContext';
 import { useUploadProfilePicture } from '../../hooks/useAuth';
 import { getImageUrl } from '../../constants/Config';
+import { useDoctorProfile } from '../../hooks/useDoctor';
 
 const displayOrPlaceholder = (value: string | number | undefined | null, fallback = 'Not added') => {
   if (value === undefined || value === null) return fallback;
@@ -47,6 +48,16 @@ const InfoRow = ({
     {withDivider ? <View style={[styles.metaDivider, { backgroundColor: theme.borderColor }]} /> : null}
   </View>
 );
+
+// A doctor's verification lives on the doctors table, not on the account.
+const DoctorVerificationLabel = ({ color }: { color: string }) => {
+  const { data } = useDoctorProfile();
+  return (
+    <Text style={[styles.verifiedText, { color }]}>
+      {data?.data?.isVerified ? 'Verified Doctor' : 'Verification Pending'}
+    </Text>
+  );
+};
 
 export default function ProfileDetailsScreen() {
   const colorScheme = useColorScheme();
@@ -155,6 +166,7 @@ export default function ProfileDetailsScreen() {
 
   const roleValue = user.role as any;
   const roleName = (typeof roleValue === 'string' ? roleValue : roleValue?.name || '').toLowerCase();
+  const isDoctor = roleName === 'doctor';
   const profileImageUrl = getImageUrl(user.profilePicture);
 
   return (
@@ -174,8 +186,8 @@ export default function ProfileDetailsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={[styles.card, { backgroundColor: theme.cardBackground, shadowColor: theme.text }]}>
-          <TouchableOpacity onPress={pickImage} disabled={uploadMutation.isPending}>
+        <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+          <TouchableOpacity onPress={pickImage} disabled={uploadMutation.isPending} style={styles.avatarWrap}>
             <View style={[styles.avatarContainer, { backgroundColor: theme.primarySoft }]}>
               {uploadMutation.isPending ? (
                 <ActivityIndicator color={theme.tint} />
@@ -184,10 +196,9 @@ export default function ProfileDetailsScreen() {
               ) : (
                 <UserIcon size={40} color={theme.tint} />
               )}
-
-              <View style={[styles.cameraIconContainer, { backgroundColor: theme.tint }]}>
-                <Camera size={14} color="#fff" />
-              </View>
+            </View>
+            <View style={[styles.cameraIconContainer, { backgroundColor: theme.buttonPrimary, borderColor: theme.cardBackground }]}>
+              <Camera size={14} color="#fff" />
             </View>
           </TouchableOpacity>
 
@@ -197,14 +208,18 @@ export default function ProfileDetailsScreen() {
 
           <View style={[styles.verifiedBadge, { backgroundColor: theme.successLight }]}>
             <CheckCircle size={14} color={theme.tint} style={{ marginRight: 4 }} />
-            <Text style={[styles.verifiedText, { color: theme.tint }]}>
-              {user.isVerified ? 'Verified Account' : 'Verification Pending'}
-            </Text>
+            {isDoctor ? (
+              <DoctorVerificationLabel color={theme.tint} />
+            ) : (
+              <Text style={[styles.verifiedText, { color: theme.tint }]}>
+                {user.isVerified ? 'Verified Account' : 'Verification Pending'}
+              </Text>
+            )}
           </View>
           <Text style={[styles.roleText, { color: theme.textSecondary }]}>{displayOrPlaceholder(roleName, 'Patient')}</Text>
         </View>
 
-        <View style={[styles.card, styles.infoCard, { backgroundColor: theme.cardBackground, shadowColor: theme.text }]}>
+        <View style={[styles.card, styles.infoCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>Account Information</Text>
 
           <View style={styles.infoRow}>
@@ -240,22 +255,19 @@ export default function ProfileDetailsScreen() {
           </View>
         </View>
 
-        <View style={[styles.card, styles.metaCard, { backgroundColor: theme.cardBackground, shadowColor: theme.text }]}>
+        <View style={[styles.card, styles.metaCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
           <Text style={[styles.sectionTitle, { color: theme.text }]}>
             {roleName === 'doctor' ? 'Basic Information' : 'Patient Information'}
           </Text>
           <InfoRow label="Age" value={displayOrPlaceholder(user.age)} theme={theme} />
           <InfoRow label="Gender" value={displayOrPlaceholder(user.gender)} theme={theme} />
-          <InfoRow label="Address" value={displayOrPlaceholder(user.address)} theme={theme} />
+          <InfoRow label="Address" value={displayOrPlaceholder(user.address)} withDivider={!isDoctor} theme={theme} />
           {roleName !== 'doctor' && (
             <>
               <InfoRow label="Weight (kg)" value={displayOrPlaceholder(user.weight)} theme={theme} />
               <InfoRow label="BP (mmHg)" value={displayOrPlaceholder(user.bloodPressure)} theme={theme} />
               <InfoRow label="Pulse (bpm)" value={displayOrPlaceholder(user.pulse)} withDivider={false} theme={theme} />
             </>
-          )}
-          {roleName === 'doctor' && (
-            <InfoRow label="Member Role" value={displayOrPlaceholder(roleName, 'Doctor')} withDivider={false} theme={theme} />
           )}
         </View>
 
@@ -313,13 +325,10 @@ const styles = StyleSheet.create({
   },
   card: {
     borderRadius: 16,
-    padding: 24,
+    borderWidth: 1,
+    padding: 20,
     marginBottom: 16,
     alignItems: 'center',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
   },
   infoCard: {
     alignItems: 'stretch',
@@ -328,14 +337,15 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     paddingBottom: 12,
   },
+  avatarWrap: {
+    marginBottom: 16,
+  },
   avatarContainer: {
     width: 100,
     height: 100,
     borderRadius: 50,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    position: 'relative',
     overflow: 'hidden',
   },
   avatarImage: {
@@ -346,12 +356,13 @@ const styles = StyleSheet.create({
   cameraIconContainer: {
     position: 'absolute',
     bottom: 0,
-    left: 0,
     right: 0,
-    height: 30,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
-    opacity: 0.8,
   },
   userName: {
     fontSize: 22,
@@ -406,7 +417,6 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    width: '100%',
     marginLeft: 50,
   },
   metaRowWrap: {

@@ -6,10 +6,12 @@ import { CheckCircle2 } from 'lucide-react-native';
 import Colors from '../constants/Colors';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
+import { useAppLanguage } from '../context/AppLanguageContext';
 
 export default function PaymentSuccessScreen() {
   const router = useRouter();
   const { user } = useAuthContext();
+  const { t } = useAppLanguage();
   const params = useLocalSearchParams<{
     amount?: string;
     paymentId?: string;
@@ -83,13 +85,13 @@ export default function PaymentSuccessScreen() {
       ) : !isValid ? null : (
       <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
         <CheckCircle2 size={54} color={theme.success} />
-        <Text style={[styles.title, { color: theme.text }]}>Payment Successful</Text>
-        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Your payment has been received securely.</Text>
-        <Text style={[styles.meta, { color: theme.textSecondary }]}>Amount: ₹{params.amount || '500'}</Text>
-        <Text style={[styles.meta, { color: theme.textSecondary }]}>Payment ID: {params.paymentId || 'N/A'}</Text>
+        <Text style={[styles.title, { color: theme.text }]}>{t('payment.successTitle')}</Text>
+        <Text style={[styles.subtitle, { color: theme.textSecondary }]}>{t('payment.successBody')}</Text>
+        <Text style={[styles.meta, { color: theme.textSecondary }]}>{t('payment.amount', { amount: params.amount || '500' })}</Text>
+        <Text style={[styles.meta, { color: theme.textSecondary }]}>{t('payment.paymentId', { id: params.paymentId || 'N/A' })}</Text>
 
         <TouchableOpacity style={[styles.button, { backgroundColor: theme.buttonPrimary }]} onPress={continueToBooking}>
-          <Text style={[styles.buttonText, { color: theme.buttonText }]}>Continue</Text>
+          <Text style={[styles.buttonText, { color: theme.buttonText }]}>{t('payment.continue')}</Text>
         </TouchableOpacity>
       </View>
       )}

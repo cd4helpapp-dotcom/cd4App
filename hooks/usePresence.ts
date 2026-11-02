@@ -1,111 +1,71 @@
-import { useEffect, useState, useRef } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
 
-export interface PresenceState {
-    [key: string]: Array<{
-        user_id: string;
-        online_at: string;
-    }>;
-}
+const HEARTBEAT_MS = 45_000;
+const STATUS_REFRESH_MS = 30_000;
+// Two missed heartbeats, so one slow request does not flip someone to offline.
+const ONLINE_WINDOW_MS = 100_000;
 
-export const usePresence = () => {
-    const { user } = useAuthContext();
-    const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
-    const channelRef = useRef<any>(null);
-    const appStateRef = useRef<AppStateStatus>((AppState.currentState ?? 'active') as AppStateStatus);
+let isUpdatingLastSeen = false;
 
-    const updateLastSeen = async () => {
-        if (!user) return;
+const updateLastSeen = async () => {
+    if (isUpdatingLastSeen) return;
+    isUpdatingLastSeen = true;
+    try {
         const { error } = await supabase.rpc('update_last_seen');
-        if (error) console.error('Error updating last seen:', error);
-    };
+        if (error && __DEV__) console.warn('Error updating last seen:', error);
+    } finally {
+        isUpdatingLastSeen = false;
+    }
+};
+
+// Mounted once for the whole app, so "last seen" means the last time someone used CD4, not the last time they had a chat open.
+export const useLastSeenHeartbeat = () => {
+    const { user } = useAuthContext();
 
     useEffect(() => {
-        if (!user) return;
+        if (!user?.id) return;
 
-        // 1. Initial last seen update
-        updateLastSeen();
-
-        // 2. Setup Presence Channel
-        const channel = supabase.channel('online-users', {
-            config: {
-                presence: {
-                    key: user.id,
-                },
-            },
+        void updateLastSeen();
+        const heartbeat = setInterval(() => {
+            if (AppState.currentState === 'active') void updateLastSeen();
+        }, HEARTBEAT_MS);
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active' || state === 'background') void updateLastSeen();
         });
 
-        channel
-            .on('presence', { event: 'sync' }, () => {
-                const newState = channel.presenceState();
-                const onlineIds = new Set<string>();
-                Object.keys(newState).forEach((key) => {
-                    onlineIds.add(key);
-                });
-                setOnlineUsers(onlineIds);
-            })
-            .on('presence', { event: 'join' }, ({ key }: { key: string }) => {
-                setOnlineUsers((prev) => new Set([...prev, key]));
-            })
-            .on('presence', { event: 'leave' }, ({ key }: { key: string }) => {
-                setOnlineUsers((prev) => {
-                    const next = new Set(prev);
-                    next.delete(key);
-                    return next;
-                });
-            })
-            .subscribe(async (status: string) => {
-                if (status === 'SUBSCRIBED') {
-                    await channel.track({
-                        user_id: user.id,
-                        online_at: new Date().toISOString(),
-                    });
-                }
-            });
-
-        channelRef.current = channel;
-
-        // 3. Track AppState changes for Last Seen
-        const handleAppStateChange = (nextAppState: AppStateStatus) => {
-            appStateRef.current = nextAppState;
-            if (nextAppState === 'active') {
-                updateLastSeen();
-                if (channelRef.current) {
-                    channelRef.current.track({
-                        user_id: user.id,
-                        online_at: new Date().toISOString(),
-                    });
-                }
-            } else if (nextAppState === 'background') {
-                updateLastSeen();
-            }
-        };
-
-        const subscription = AppState.addEventListener('change', handleAppStateChange);
-        const heartbeatInterval = setInterval(() => {
-            if (appStateRef.current !== 'active') return;
-            updateLastSeen();
-            if (channelRef.current) {
-                channelRef.current.track({
-                    user_id: user.id,
-                    online_at: new Date().toISOString(),
-                });
-            }
-        }, 45_000);
-
-        // 4. Cleanup
         return () => {
+            clearInterval(heartbeat);
             subscription.remove();
-            clearInterval(heartbeatInterval);
-            if (channelRef.current) {
-                channelRef.current.unsubscribe();
-            }
         };
     }, [user?.id]);
+};
 
-    const isUserOnline = (userId: string) => onlineUsers.has(userId);
+export const useOnlineStatus = (userId?: string | null) => {
+    const [now, setNow] = useState(() => Date.now());
 
-    return { onlineUsers, isUserOnline, updateLastSeen };
+    const { data: lastSeenAt } = useQuery({
+        queryKey: ['last-seen', userId],
+        enabled: Boolean(userId),
+        refetchInterval: STATUS_REFRESH_MS,
+        queryFn: async (): Promise<string | null> => {
+            const { data, error } = await supabase.from('profiles').select('last_seen_at').eq('id', userId as string).maybeSingle();
+            if (error) throw error;
+            return data?.last_seen_at || null;
+        },
+    });
+
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), STATUS_REFRESH_MS);
+        return () => clearInterval(timer);
+    }, []);
+
+    const seenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
+    return {
+        lastSeenAt: lastSeenAt || null,
+        isOnline: Number.isFinite(seenMs) && now - seenMs < ONLINE_WINDOW_MS,
+    };
 };

@@ -1,13 +1,17 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Animated, FlatList, Dimensions, Platform, Pressable } from 'react-native';
-import { Heart, MessageSquare, Share2, Pin, ShieldCheck, MoreHorizontal, Play, Pause } from 'lucide-react-native';
+import { Animated, FlatList, Image, Platform, Pressable, StyleSheet, Text, TouchableOpacity, View, type LayoutChangeEvent } from 'react-native';
+import { Heart, MessageCircle, MoreHorizontal, Pin, Play, Share2, ShieldCheck } from 'lucide-react-native';
 import { useEvent } from 'expo';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { Theme } from '../constants/Colors';
+import { elevation, Radius, Spacing, Typography } from '../constants/Design';
+import { useAppLanguage } from '../context/AppLanguageContext';
+import CommunityAvatar from './community/CommunityAvatar';
+import { communityCategoryLabel, formatCommunityTime } from './community/communityFormat';
 
-const { width: WINDOW_WIDTH } = Dimensions.get('window');
-const POST_MARGIN = 16;
-const CARD_WIDTH = WINDOW_WIDTH - (POST_MARGIN * 2);
+const DEFAULT_IMAGE_RATIO = 1.25;
+const LONG_POST_CHARS = 240;
+const COLLAPSED_LINES = 5;
 
 export type CommunityAuthorCard = {
   id: string;
@@ -35,6 +39,7 @@ export type CommunityPostCard = {
   commentCount: number;
   shareCount: number;
   likedByMe: boolean;
+  followedByMe?: boolean;
   author: CommunityAuthorCard;
 };
 
@@ -48,44 +53,20 @@ interface PostCardProps {
   onPressShare: (post: CommunityPostCard) => void;
   onPressLikeCount?: (post: CommunityPostCard) => void;
   onPressMenu?: (post: CommunityPostCard) => void;
-  likeDisabled?: boolean;
+  onPressFollow?: (post: CommunityPostCard) => void;
   commentDisabled?: boolean;
-  shareDisabled?: boolean;
-  menuDisabled?: boolean;
 }
 
-const formatRelativeTime = (iso: string): string => {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return 'just now';
-
-  const now = Date.now();
-  const diffMs = Math.max(0, now - date.getTime());
-  const minuteMs = 60 * 1000;
-  const hourMs = 60 * minuteMs;
-  const dayMs = 24 * hourMs;
-
-  if (diffMs < minuteMs) return 'just now';
-  if (diffMs < hourMs) return `${Math.floor(diffMs / minuteMs)}m ago`;
-  if (diffMs < dayMs) return `${Math.floor(diffMs / hourMs)}h ago`;
-  if (diffMs < 7 * dayMs) return `${Math.floor(diffMs / dayMs)}d ago`;
-  return date.toLocaleDateString();
-};
-
-const getCategoryLabel = (category: CommunityPostCard['category']): string => {
-  if (category === 'success_stories') return 'Success Story';
-  if (category === 'challenges') return 'Challenge';
-  if (category === 'mentor_tips') return 'Mentor Tip';
-  return 'Community';
-};
-
 const normalizeImageAspectRatio = (ratio: number): number => {
-  if (!Number.isFinite(ratio) || ratio <= 0) return 1;
-  return Math.max(0.75, Math.min(1.5, ratio));
+  if (!Number.isFinite(ratio) || ratio <= 0) return DEFAULT_IMAGE_RATIO;
+  return Math.max(0.8, Math.min(1.6, ratio));
 };
 
-function VideoPlayer({ url, theme, isActive }: { url: string; theme: Theme; isActive: boolean }) {
+// Created only when tapped: a video player per post in a long feed is the heaviest thing this screen could do.
+function VideoPlayer({ url, isActive }: { url: string; isActive: boolean }) {
   const player = useVideoPlayer({ uri: url }, (instance) => {
     instance.loop = true;
+    instance.play();
   });
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
@@ -93,26 +74,90 @@ function VideoPlayer({ url, theme, isActive }: { url: string; theme: Theme; isAc
     if (!isActive) player.pause();
   }, [isActive, player]);
 
-  const togglePlay = () => {
-    if (isPlaying) player.pause();
-    else player.play();
-  };
-
   return (
-    <View style={styles.videoContainer}>
-      <VideoView player={player} style={styles.videoPlayer} contentFit="cover" nativeControls={false} />
-      <Pressable style={styles.videoOverlay} onPress={togglePlay}>
-        {!isPlaying && (
-          <View style={[styles.playButton, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
-            <Play size={32} color="#fff" fill="#fff" />
+    <View style={styles.fill}>
+      <VideoView player={player} style={styles.fill} contentFit="cover" nativeControls={false} />
+      <Pressable style={styles.videoOverlay} onPress={() => (isPlaying ? player.pause() : player.play())}>
+        {!isPlaying ? (
+          <View style={styles.playButton}>
+            <Play size={28} color="#fff" fill="#fff" />
           </View>
-        )}
+        ) : null}
       </Pressable>
     </View>
   );
 }
 
-export default function PostCard({
+function VideoTile({ url, isActive }: { url: string; isActive: boolean }) {
+  const [started, setStarted] = React.useState(false);
+  if (started) return <VideoPlayer url={url} isActive={isActive} />;
+  return (
+    <Pressable style={styles.videoPoster} onPress={() => setStarted(true)} accessibilityRole="button" accessibilityLabel="Play video">
+      <View style={styles.playButton}>
+        <Play size={28} color="#fff" fill="#fff" />
+      </View>
+    </Pressable>
+  );
+}
+
+function PostMedia({ media, theme }: { media: CommunityMediaItem[]; theme: Theme }) {
+  const [width, setWidth] = React.useState(0);
+  const [ratio, setRatio] = React.useState(DEFAULT_IMAGE_RATIO);
+  const [activeIndex, setActiveIndex] = React.useState(0);
+
+  const onLayout = (event: LayoutChangeEvent) => {
+    const next = event.nativeEvent.layout.width;
+    if (next && next !== width) setWidth(next);
+  };
+
+  // The size comes with the picture itself, so nothing is downloaded twice just to measure it.
+  const onImageLoad = (event: any) => {
+    const source = event?.nativeEvent?.source;
+    if (source?.width > 0 && source?.height > 0) setRatio(normalizeImageAspectRatio(source.width / source.height));
+  };
+
+  const renderItem = (item: CommunityMediaItem, index: number) =>
+    item.type === 'video' ? (
+      <VideoTile url={item.url} isActive={index === activeIndex} />
+    ) : (
+      <Image source={{ uri: item.url }} style={styles.fill} resizeMode="cover" onLoad={index === 0 ? onImageLoad : undefined} />
+    );
+
+  return (
+    <View style={[styles.mediaWrap, { backgroundColor: theme.surfaceMuted }]} onLayout={onLayout}>
+      {media.length === 1 ? (
+        <View style={{ aspectRatio: media[0].type === 'video' ? 1 : ratio }}>{renderItem(media[0], 0)}</View>
+      ) : width > 0 ? (
+        <>
+          <FlatList
+            data={media}
+            horizontal
+            pagingEnabled
+            initialNumToRender={1}
+            windowSize={3}
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item, index) => `${item.url}-${index}`}
+            getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+            onMomentumScrollEnd={(event) => setActiveIndex(Math.round(event.nativeEvent.contentOffset.x / width))}
+            renderItem={({ item, index }) => <View style={{ width, aspectRatio: ratio }}>{renderItem(item, index)}</View>}
+          />
+          <View style={styles.pagination}>
+            {media.map((item, index) => (
+              <View
+                key={`${item.url}-dot-${index}`}
+                style={[styles.dot, { backgroundColor: index === activeIndex ? theme.primary : theme.borderColor }]}
+              />
+            ))}
+          </View>
+        </>
+      ) : (
+        <View style={{ aspectRatio: ratio }} />
+      )}
+    </View>
+  );
+}
+
+function PostCard({
   theme,
   post,
   onPressAuthor,
@@ -122,387 +167,216 @@ export default function PostCard({
   onPressShare,
   onPressLikeCount,
   onPressMenu,
-  likeDisabled,
+  onPressFollow,
   commentDisabled,
-  shareDisabled,
-  menuDisabled,
 }: PostCardProps) {
+  const { t } = useAppLanguage();
   const likeScale = React.useRef(new Animated.Value(1)).current;
   const prevLikedRef = React.useRef<boolean>(post.likedByMe);
-  const [imageAspectRatio, setImageAspectRatio] = React.useState(1);
-  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [expanded, setExpanded] = React.useState(false);
 
-  // Derive media list, prioritizing new array but falling back to single image
-  const mediaList: CommunityMediaItem[] = React.useMemo(() => {
+  const media: CommunityMediaItem[] = React.useMemo(() => {
     if (post.media && post.media.length > 0) return post.media;
-    if (post.imageUrl) return [{ url: post.imageUrl, type: 'image' }];
-    return [];
+    return post.imageUrl ? [{ url: post.imageUrl, type: 'image' }] : [];
   }, [post.media, post.imageUrl]);
 
   React.useEffect(() => {
     if (!prevLikedRef.current && post.likedByMe) {
       Animated.sequence([
-        Animated.spring(likeScale, {
-          toValue: 1.25,
-          useNativeDriver: Platform.OS !== 'web',
-          speed: 18,
-          bounciness: 9,
-        }),
-        Animated.spring(likeScale, {
-          toValue: 1,
-          useNativeDriver: Platform.OS !== 'web',
-          speed: 14,
-          bounciness: 7,
-        }),
+        Animated.spring(likeScale, { toValue: 1.25, useNativeDriver: Platform.OS !== 'web', speed: 18, bounciness: 9 }),
+        Animated.spring(likeScale, { toValue: 1, useNativeDriver: Platform.OS !== 'web', speed: 14, bounciness: 7 }),
       ]).start();
     }
     prevLikedRef.current = post.likedByMe;
   }, [likeScale, post.likedByMe]);
 
-  React.useEffect(() => {
-    // We only calculate aspect ratio for single image or first media if it is an image
-    const firstMedia = mediaList[0];
-    if (!firstMedia || firstMedia.type !== 'image') {
-      setImageAspectRatio(1.2);
-      return;
-    }
-
-    let active = true;
-    Image.getSize(
-      firstMedia.url,
-      (width, height) => {
-        if (!active || width <= 0 || height <= 0) return;
-        setImageAspectRatio(normalizeImageAspectRatio(width / height));
-      },
-      () => {
-        if (active) setImageAspectRatio(1.2);
-      }
-    );
-
-    return () => {
-      active = false;
-    };
-  }, [mediaList]);
-
-  const onScroll = React.useCallback((event: any) => {
-    const slideSize = event.nativeEvent.layoutMeasurement.width;
-    const index = Math.floor(event.nativeEvent.contentOffset.x / slideSize + 0.5);
-    if (index !== activeIndex) {
-      setActiveIndex(index);
-    }
-  }, [activeIndex]);
-
-  const avatarSource = post.author.avatar?.trim()
-    ? { uri: post.author.avatar }
-    : { uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(post.author.name || 'User')}` };
-
-  const renderMediaItem = ({ item, index }: { item: CommunityMediaItem; index: number }) => {
-    if (item.type === 'video') {
-      return <VideoPlayer url={item.url} theme={theme} isActive={index === activeIndex} />;
-    }
-    return (
-      <View style={[styles.mediaItemWrap, { aspectRatio: imageAspectRatio }]}>
-        <Image source={{ uri: item.url }} style={styles.postImage} resizeMode="cover" />
-      </View>
-    );
-  };
+  const isLong = post.content.length > LONG_POST_CHARS || post.content.split('\n').length > COLLAPSED_LINES;
+  const isDoctor = post.author.role === 'doctor';
+  const likeColor = post.likedByMe ? theme.primary : theme.textSecondary;
 
   return (
-    <TouchableOpacity
-      activeOpacity={1}
-      delayLongPress={360}
-      onLongPress={onLongPress ? () => onLongPress(post) : undefined}
+    <View
       style={[
-        styles.postCard,
-        {
-          backgroundColor: theme.cardBackground,
-          borderColor: post.isPinned ? theme.primaryBorder : theme.borderColor,
-          borderWidth: post.isPinned ? 1.5 : 1,
-        },
+        styles.card,
+        { backgroundColor: theme.cardBackground, borderColor: post.isPinned ? theme.primaryBorder : theme.borderColor },
+        elevation(1),
       ]}
     >
-      <View style={styles.postHeader}>
+      <View style={styles.header}>
         <TouchableOpacity
-          style={styles.authorTapArea}
-          activeOpacity={0.8}
+          style={styles.authorTap}
+          activeOpacity={0.75}
           onPress={onPressAuthor ? () => onPressAuthor(post) : undefined}
           disabled={!onPressAuthor}
+          accessibilityRole="button"
+          accessibilityLabel={post.author.name}
         >
-        <Image source={avatarSource} style={[styles.avatar, { backgroundColor: theme.borderColor }]} />
-        <View style={styles.authorBlock}>
-          <View style={styles.authorTopRow}>
-            <Text style={[styles.userName, { color: theme.text }]}>{post.author.name}</Text>
-            {post.author.role === 'doctor' && (
-              <View style={[styles.roleBadge, { backgroundColor: theme.successLight }]}>
-                <ShieldCheck size={11} color={theme.success} style={{ marginRight: 4 }} />
-                <Text style={[styles.roleBadgeText, { color: theme.success }]}>Doctor</Text>
-              </View>
-            )}
-            {post.author.isVerified && post.author.role !== 'doctor' && (
-              <View style={[styles.roleBadge, { backgroundColor: theme.successLight }]}>
-                <Text style={[styles.roleBadgeText, { color: theme.success }]}>Verified</Text>
-              </View>
-            )}
+          <CommunityAvatar name={post.author.name} uri={post.author.avatar} size={42} />
+          <View style={styles.authorText}>
+            <View style={styles.nameRow}>
+              <Text style={[Typography.bodyStrong, styles.name, { color: theme.text }]} numberOfLines={1}>
+                {post.author.name}
+              </Text>
+              {isDoctor ? (
+                <View style={[styles.badge, { backgroundColor: theme.primarySoft }]}>
+                  <ShieldCheck size={11} color={theme.primary} />
+                  <Text style={[styles.badgeText, { color: theme.primary }]}>{t('community.doctor')}</Text>
+                </View>
+              ) : post.author.isVerified ? (
+                <View style={[styles.badge, { backgroundColor: theme.primarySoft }]}>
+                  <Text style={[styles.badgeText, { color: theme.primary }]}>{t('community.verified')}</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>
+              {communityCategoryLabel(post.category, t)} · {formatCommunityTime(post.createdAt, t)}
+            </Text>
           </View>
-          <Text style={[styles.timestamp, { color: theme.textSecondary }]}>
-            {getCategoryLabel(post.category)} • {formatRelativeTime(post.createdAt)}
-          </Text>
-        </View>
         </TouchableOpacity>
-        <View style={styles.headerActions}>
-          {onPressMenu ? (
-            <TouchableOpacity
-              style={[styles.menuButton, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
-              activeOpacity={0.85}
-              disabled={menuDisabled}
-              onPress={() => onPressMenu(post)}
-            >
-              <MoreHorizontal size={16} color={theme.textSecondary} />
-            </TouchableOpacity>
-          ) : null}
-          {post.isPinned && (
-            <View style={[styles.pinnedLabel, { backgroundColor: theme.primarySoft }]}>
-              <Pin size={12} color={theme.primary} style={{ marginRight: 4 }} />
-              <Text style={[styles.pinnedText, { color: theme.primary }]}>Pinned</Text>
-            </View>
-          )}
-        </View>
-      </View>
 
-      <Text style={[styles.postBody, { color: theme.text }]}>{post.content}</Text>
-
-      {mediaList.length > 0 && (
-        <View style={styles.carouselContainer}>
-          <FlatList
-            data={mediaList}
-            renderItem={renderMediaItem}
-            keyExtractor={(item, index) => `${item.url}-${index}`}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onScroll={onScroll}
-            scrollEventThrottle={16}
-          />
-          {mediaList.length > 1 && (
-            <View style={styles.pagination}>
-              {mediaList.map((_, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.paginationDot,
-                    { backgroundColor: i === activeIndex ? theme.primary : theme.textSecondary + '40' },
-                    i === activeIndex ? styles.paginationDotActive : null,
-                  ]}
-                />
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-
-      <View style={[styles.interactionRow, { borderTopColor: theme.borderColor }]}>
-        <View style={styles.interactionItem}>
+        {onPressFollow ? (
           <TouchableOpacity
-            activeOpacity={0.7}
-            disabled={likeDisabled}
-            onPress={() => onPressLike(post)}
-            style={{ paddingVertical: 4, paddingRight: 6 }}
+            activeOpacity={0.8}
+            onPress={() => onPressFollow(post)}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityState={{ selected: Boolean(post.followedByMe) }}
+            style={[
+              styles.followButton,
+              post.followedByMe
+                ? { backgroundColor: theme.surfaceMuted, borderColor: theme.surfaceMuted }
+                : { backgroundColor: theme.primarySoft, borderColor: theme.primaryBorder },
+            ]}
           >
-            <Animated.View style={{ transform: [{ scale: likeScale }] }}>
-              <Heart
-                size={17}
-                color={post.likedByMe ? theme.primary : theme.textSecondary}
-                fill={post.likedByMe ? theme.primary : 'transparent'}
-              />
-            </Animated.View>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            activeOpacity={0.7} 
-            disabled={!onPressLikeCount || likeDisabled}
-            onPress={() => onPressLikeCount?.(post)}
-            style={{ paddingVertical: 4, minWidth: 20 }}
-          >
-            <Text style={[styles.interactionText, { color: post.likedByMe ? theme.primary : theme.textSecondary, marginLeft: 0 }]}>
-              {post.likeCount}
+            <Text style={[styles.followText, { color: post.followedByMe ? theme.textSecondary : theme.primary }]}>
+              {post.followedByMe ? t('community.following') : t('community.follow')}
             </Text>
           </TouchableOpacity>
+        ) : null}
+
+        {onPressMenu ? (
+          <TouchableOpacity
+            style={styles.menuButton}
+            onPress={() => onPressMenu(post)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Post options"
+          >
+            <MoreHorizontal size={20} color={theme.textSecondary} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {post.isPinned ? (
+        <View style={styles.pinnedRow}>
+          <Pin size={12} color={theme.primary} />
+          <Text style={[styles.badgeText, { color: theme.primary }]}>{t('community.pinned')}</Text>
+        </View>
+      ) : null}
+
+      <Pressable onLongPress={onLongPress ? () => onLongPress(post) : undefined} delayLongPress={360}>
+        {post.content ? (
+          <Text style={[styles.body, { color: theme.text }]} numberOfLines={isLong && !expanded ? COLLAPSED_LINES : undefined}>
+            {post.content}
+          </Text>
+        ) : null}
+        {isLong ? (
+          <Text onPress={() => setExpanded((value) => !value)} style={[Typography.label, styles.seeMore, { color: theme.primary }]}>
+            {expanded ? t('community.seeLess') : t('community.seeMore')}
+          </Text>
+        ) : null}
+      </Pressable>
+
+      {media.length > 0 ? <PostMedia media={media} theme={theme} /> : null}
+
+      <View style={[styles.actions, { borderTopColor: theme.divider }]}>
+        <View style={styles.action}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => onPressLike(post)}
+            hitSlop={8}
+            style={styles.actionHit}
+            accessibilityRole="button"
+            accessibilityLabel={t('community.like')}
+            accessibilityState={{ selected: post.likedByMe }}
+          >
+            <Animated.View style={{ transform: [{ scale: likeScale }] }}>
+              <Heart size={19} color={likeColor} fill={post.likedByMe ? theme.primary : 'transparent'} />
+            </Animated.View>
+            {post.likeCount === 0 ? <Text style={[styles.actionText, { color: likeColor }]}>{t('community.like')}</Text> : null}
+          </TouchableOpacity>
+          {post.likeCount > 0 ? (
+            <TouchableOpacity
+              activeOpacity={0.7}
+              disabled={!onPressLikeCount}
+              onPress={() => onPressLikeCount?.(post)}
+              hitSlop={8}
+              style={styles.actionHit}
+              accessibilityRole="button"
+              accessibilityLabel={t('community.likes')}
+            >
+              <Text style={[styles.actionText, { color: likeColor }]}>{post.likeCount}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <TouchableOpacity
-          activeOpacity={0.85}
+          activeOpacity={0.7}
           disabled={commentDisabled}
-          style={styles.interactionItem}
+          style={[styles.action, styles.actionHit]}
           onPress={() => onPressComment(post)}
+          accessibilityRole="button"
+          accessibilityLabel={t('community.comment')}
         >
-          <MessageSquare size={17} color={theme.textSecondary} />
-          <Text style={[styles.interactionText, { color: theme.textSecondary }]}>{post.commentCount}</Text>
+          <MessageCircle size={19} color={theme.textSecondary} />
+          <Text style={[styles.actionText, { color: theme.textSecondary }]}>
+            {post.commentCount > 0 ? post.commentCount : t('community.comment')}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          activeOpacity={0.85}
-          disabled={shareDisabled}
-          style={styles.interactionItem}
+          activeOpacity={0.7}
+          style={[styles.action, styles.actionHit]}
           onPress={() => onPressShare(post)}
+          accessibilityRole="button"
+          accessibilityLabel={t('community.share')}
         >
-          <Share2 size={17} color={theme.textSecondary} />
-          <Text style={[styles.interactionText, { color: theme.textSecondary }]}>{post.shareCount}</Text>
+          <Share2 size={19} color={theme.textSecondary} />
+          <Text style={[styles.actionText, { color: theme.textSecondary }]}>
+            {post.shareCount > 0 ? post.shareCount : t('community.share')}
+          </Text>
         </TouchableOpacity>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 }
 
+export default React.memo(PostCard);
+
 const styles = StyleSheet.create({
-  postCard: {
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-  },
-  postHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  authorTapArea: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  authorBlock: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  authorTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 2,
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  userName: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  roleBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  roleBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  timestamp: {
-    fontSize: 12,
-  },
-  pinnedLabel: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  headerActions: {
-    marginLeft: 8,
-    alignItems: 'flex-end',
-    justifyContent: 'flex-start',
-    gap: 8,
-  },
-  menuButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pinnedText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  postBody: {
-    fontSize: 14,
-    lineHeight: 22,
-    marginBottom: 12,
-  },
-  carouselContainer: {
-    width: '100%',
-    marginBottom: 12,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  mediaItemWrap: {
-    width: CARD_WIDTH - 32, // Accommodate card padding
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  postImage: {
-    width: '100%',
-    height: '100%',
-  },
-  videoContainer: {
-    width: CARD_WIDTH - 32,
-    aspectRatio: 1,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  videoPlayer: {
-    width: '100%',
-    height: '100%',
-  },
-  videoOverlay: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  playButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pagination: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 6,
-  },
-  paginationDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  paginationDotActive: {
-    width: 12,
-    height: 6,
-    borderRadius: 3,
-  },
-  interactionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    gap: 22,
-  },
-  interactionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  interactionText: {
-    fontSize: 12,
-    marginLeft: 6,
-    fontWeight: '600',
-  },
+  fill: { width: '100%', height: '100%' },
+  card: { borderWidth: 1, borderRadius: Radius.xl, paddingTop: Spacing.lg, paddingHorizontal: Spacing.lg, marginBottom: Spacing.md },
+  header: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.md },
+  authorTap: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  authorText: { flex: 1, minWidth: 0, gap: 1 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { flexShrink: 1 },
+  badge: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: Radius.pill },
+  badgeText: { fontSize: 11, fontWeight: '700' },
+  followButton: { height: 32, paddingHorizontal: 12, borderRadius: Radius.pill, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  followText: { fontSize: 12, fontWeight: '700' },
+  menuButton: { width: 28, height: 32, alignItems: 'center', justifyContent: 'center' },
+  pinnedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: Spacing.sm },
+  body: { fontSize: 15, lineHeight: 22 },
+  seeMore: { marginTop: 2 },
+  mediaWrap: { marginTop: Spacing.md, borderRadius: Radius.md, overflow: 'hidden' },
+  videoPoster: { width: '100%', height: '100%', backgroundColor: '#0F172A', alignItems: 'center', justifyContent: 'center' },
+  videoOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  playButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  pagination: { flexDirection: 'row', justifyContent: 'center', gap: 6, paddingVertical: Spacing.sm },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth * 2, paddingHorizontal: Spacing.xs },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  actionHit: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  actionText: { fontSize: 13, fontWeight: '600' },
 });

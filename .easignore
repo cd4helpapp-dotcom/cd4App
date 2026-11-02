@@ -7,3 +7,8 @@ node_modules
 /ios
 *.lock
 
+# .easignore replaces .gitignore for EAS uploads. Build values live in eas.json env.
+.env
+.env.*
+dist
+web-build

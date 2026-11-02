@@ -106,7 +106,7 @@ const ThemePreferenceContext = createContext<ThemePreferenceContextValue | undef
 
 export function ThemePreferenceProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useColorScheme();
-  const { user } = useAuthContext();
+  const { user, session, isLoading: isAuthLoading } = useAuthContext();
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(FALLBACK_THEME_PREFERENCE);
   const [isThemePreferenceLoaded, setIsThemePreferenceLoaded] = useState(false);
 
@@ -159,20 +159,23 @@ export function ThemePreferenceProvider({ children }: { children: React.ReactNod
     setThemePreferenceState((current) => (current === profileThemePreference ? current : profileThemePreference));
   }, [user?.settings?.appearance?.mode]);
 
+  const isSignedOut = !isAuthLoading && !session;
+  const activePreference: ThemePreference = isSignedOut ? 'system' : themePreference;
+
   useEffect(() => {
     try {
-      Appearance.setColorScheme(themePreference === 'system' ? 'unspecified' : themePreference);
+      Appearance.setColorScheme(activePreference === 'system' ? 'unspecified' : activePreference);
     } catch (error) {
       console.warn('Failed to apply app theme preference:', error);
     }
-  }, [themePreference]);
+  }, [activePreference]);
 
   const resolvedColorScheme: 'light' | 'dark' = useMemo(() => {
-    if (themePreference === 'light' || themePreference === 'dark') {
-      return themePreference;
+    if (activePreference === 'light' || activePreference === 'dark') {
+      return activePreference;
     }
     return systemColorScheme === 'dark' ? 'dark' : 'light';
-  }, [themePreference, systemColorScheme]);
+  }, [activePreference, systemColorScheme]);
 
   const value = useMemo<ThemePreferenceContextValue>(
     () => ({

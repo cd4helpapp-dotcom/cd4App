@@ -12,6 +12,7 @@ import { AuthProvider } from '../context/AuthContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import Toast from 'react-native-toast-message';
 import GlobalCallObserver from '../components/GlobalCallObserver';
+import PresenceHeartbeat from '../components/PresenceHeartbeat';
 import { CallProvider } from '../context/CallContext';
 import OngoingCallBanner from '../components/OngoingCallBanner';
 import GlobalCallPiP from '../components/GlobalCallPiP';
@@ -107,6 +108,7 @@ export default function RootLayout() {
                         {heavyProvidersReady && (
                           <>
                             <GlobalCallObserver />
+                            <PresenceHeartbeat />
                             <OngoingCallBanner />
                             <GlobalCallPiP />
                           </>

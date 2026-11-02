@@ -13,7 +13,6 @@
       "android": {
         "buildType": "apk"
       },
-      "node": "20.18.0",
       "env": {
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "902668215449-rlceg5t7j52gde53jajbe2l6obdnfjvr.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "902668215449-odm61vl468r4lrad17diclp63tvnum4s.apps.googleusercontent.com",
@@ -21,7 +20,18 @@
         "EXPO_PUBLIC_AGORA_APP_ID": "1726b727a8db4ccb9223fb6042714844",
         "EXPO_PUBLIC_SUPABASE_URL": "https://prcpnwectrptrpblmezy.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_4n1CyNZta7Xjzun0Ni_ALQ_nwXv5w8Y",
-        "EXPO_PUBLIC_ADMIN_EMAILS": "navinchandra665@gmail.com,nitesh2kaushik@gmail.com,prem31703@gmail.com"
+        "EXPO_PUBLIC_ADMIN_EMAILS": "navinchandra665@gmail.com,nitesh2kaushik@gmail.com,prem31703@gmail.com",
+        "EXPO_PUBLIC_SUPABASE_STORAGE_BUCKET": "cd4-storage",
+        "EXPO_PUBLIC_CHAT_E2EE_ALLOW_PLAINTEXT_FALLBACK": "false",
+        "EXPO_PUBLIC_AI_ONLY_RESPONSES": "true",
+        "EXPO_PUBLIC_CHAT_STREAM_MODE": "on",
+        "EXPO_PUBLIC_AGENT_WS_MODE": "on",
+        "EXPO_PUBLIC_AGENT_WS_FIRST": "on",
+        "EXPO_PUBLIC_CHAT_AI_MESSAGE_LIMIT_PER_WINDOW": "20",
+        "EXPO_PUBLIC_HOME_VOICE_STREAM_MODE": "on",
+        "EXPO_PUBLIC_HOME_VOICE_TTS_MODE": "premium",
+        "EXPO_PUBLIC_HOME_VOICE_WARMUP": "on",
+        "EXPO_PUBLIC_CHAT_VOICE_TTS_MODE": "premium"
       }
     },
     "preview-aab": {
@@ -35,7 +45,6 @@
       "android": {
         "buildType": "app-bundle"
       },
-      "node": "20.18.0",
       "env": {
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "902668215449-rlceg5t7j52gde53jajbe2l6obdnfjvr.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "902668215449-odm61vl468r4lrad17diclp63tvnum4s.apps.googleusercontent.com",
@@ -43,7 +52,18 @@
         "EXPO_PUBLIC_AGORA_APP_ID": "1726b727a8db4ccb9223fb6042714844",
         "EXPO_PUBLIC_SUPABASE_URL": "https://prcpnwectrptrpblmezy.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_4n1CyNZta7Xjzun0Ni_ALQ_nwXv5w8Y",
-        "EXPO_PUBLIC_ADMIN_EMAILS": "navinchandra665@gmail.com,nitesh2kaushik@gmail.com,prem31703@gmail.com"
+        "EXPO_PUBLIC_ADMIN_EMAILS": "navinchandra665@gmail.com,nitesh2kaushik@gmail.com,prem31703@gmail.com",
+        "EXPO_PUBLIC_SUPABASE_STORAGE_BUCKET": "cd4-storage",
+        "EXPO_PUBLIC_CHAT_E2EE_ALLOW_PLAINTEXT_FALLBACK": "false",
+        "EXPO_PUBLIC_AI_ONLY_RESPONSES": "true",
+        "EXPO_PUBLIC_CHAT_STREAM_MODE": "on",
+        "EXPO_PUBLIC_AGENT_WS_MODE": "on",
+        "EXPO_PUBLIC_AGENT_WS_FIRST": "on",
+        "EXPO_PUBLIC_CHAT_AI_MESSAGE_LIMIT_PER_WINDOW": "20",
+        "EXPO_PUBLIC_HOME_VOICE_STREAM_MODE": "on",
+        "EXPO_PUBLIC_HOME_VOICE_TTS_MODE": "premium",
+        "EXPO_PUBLIC_HOME_VOICE_WARMUP": "on",
+        "EXPO_PUBLIC_CHAT_VOICE_TTS_MODE": "premium"
       },
       "autoIncrement": true
     }

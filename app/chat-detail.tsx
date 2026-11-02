@@ -2,11 +2,10 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Toast from 'react-native-toast-message';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView, LayoutAnimation, UIManager } from 'react-native';
 import type { TextInputInstance } from 'react-native';
-import Markdown from 'react-native-markdown-display';
-import { useColorScheme } from 'react-native';
+import { AppState, useColorScheme } from 'react-native';
 import Colors from '../constants/Colors';
 import { getImageUrl } from '../constants/Config';
-import { ArrowLeft, Video, Phone, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, ChevronUp, ChevronDown, Maximize2, MessageCircle } from 'lucide-react-native';
+import { ArrowLeft, Check, Video, Phone, PhoneOff, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, ChevronUp, ChevronDown, Maximize2, MessageCircle } from 'lucide-react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { PanResponder, Animated } from 'react-native';
 import { useFocusEffect } from 'expo-router';
@@ -17,10 +16,10 @@ import { useAuthContext } from '../context/AuthContext';
 import { useAppLanguage } from '../context/AppLanguageContext';
 import { useChatMessages, useSendMessage, useGetOrCreateRoom, useMarkAsRead, useChatRooms, useSendPrescriptionPdfToChat } from '../hooks/useChat';
 import { useCall } from '../hooks/useCall';
-import { usePresence } from '../hooks/usePresence';
+import { useOnlineStatus } from '../hooks/usePresence';
 import { useFileTransfer } from '../hooks/useFileTransfer';
 import { useParseDoctorPrescription, type ParsedPrescriptionSummary } from '../hooks/useMedicalReports';
-import { setActiveRoomId } from '../hooks/usePushNotifications';
+import { getActiveRoomId, setActiveRoomId } from '../hooks/usePushNotifications';
 import { supabase } from '../src/lib/supabase';
 import { RtcSurfaceView, RtcTextureView } from '../src/lib/agora';
 import { getLocalizedDoctorName } from '../src/i18n/nameLocalization';
@@ -665,126 +664,6 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
     ]);
     const isSystemMessage = typeof msg.text === 'string' && systemMessageSet.has(msg.text);
     const isEncryptedAttachment = (msg.type === 'image' || msg.type === 'file') && msg.is_encrypted && isSystemMessage;
-    const assistantMarkdownStyles = React.useMemo(
-        () => ({
-            body: {
-                color: isMe ? '#fff' : theme.text,
-                fontSize: 16,
-                lineHeight: 22,
-            },
-            paragraph: {
-                marginTop: 0,
-                marginBottom: 8,
-            },
-            heading1: {
-                color: isMe ? '#fff' : theme.text,
-                fontSize: 18,
-                lineHeight: 24,
-                fontWeight: '800' as const,
-                marginTop: 2,
-                marginBottom: 8,
-            },
-            heading2: {
-                color: isMe ? '#fff' : theme.text,
-                fontSize: 16,
-                lineHeight: 22,
-                fontWeight: '800' as const,
-                marginTop: 2,
-                marginBottom: 6,
-            },
-            heading3: {
-                color: isMe ? '#fff' : theme.text,
-                fontSize: 15,
-                lineHeight: 21,
-                fontWeight: '700' as const,
-                marginTop: 2,
-                marginBottom: 5,
-            },
-            strong: {
-                color: isMe ? '#fff' : theme.text,
-                fontWeight: '800' as const,
-            },
-            em: {
-                color: isMe ? '#fff' : theme.text,
-                fontStyle: 'italic' as const,
-            },
-            link: {
-                color: isMe ? '#fff' : theme.tint,
-                textDecorationLine: 'underline' as const,
-            },
-            bullet_list: {
-                marginTop: 2,
-                marginBottom: 8,
-            },
-            bullet_list_icon: {
-                color: isMe ? 'rgba(255,255,255,0.8)' : theme.tint,
-            },
-            bullet_list_content: {
-                color: isMe ? '#fff' : theme.text,
-            },
-            ordered_list: {
-                marginTop: 2,
-                marginBottom: 8,
-            },
-            ordered_list_icon: {
-                color: isMe ? 'rgba(255,255,255,0.8)' : theme.tint,
-            },
-            ordered_list_content: {
-                color: isMe ? '#fff' : theme.text,
-            },
-            list_item: {
-                flexDirection: 'row' as const,
-                alignItems: 'flex-start' as const,
-                marginTop: 2,
-                marginBottom: 2,
-            },
-            blockquote: {
-                borderLeftWidth: 3,
-                borderLeftColor: theme.tint,
-                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.tint + '12',
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                marginTop: 4,
-                marginBottom: 8,
-            },
-            code_inline: {
-                color: isMe ? '#fff' : theme.text,
-                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.background,
-                borderRadius: 6,
-                paddingHorizontal: 6,
-                paddingVertical: 2,
-            },
-            code_block: {
-                color: isMe ? '#fff' : theme.text,
-                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.background,
-                borderWidth: 1,
-                borderColor: theme.borderColor,
-                borderRadius: 10,
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                marginTop: 4,
-                marginBottom: 8,
-            },
-            fence: {
-                color: isMe ? '#fff' : theme.text,
-                backgroundColor: isMe ? 'rgba(255,255,255,0.12)' : theme.background,
-                borderWidth: 1,
-                borderColor: theme.borderColor,
-                borderRadius: 10,
-                paddingHorizontal: 10,
-                paddingVertical: 8,
-                marginTop: 4,
-                marginBottom: 8,
-            },
-            hr: {
-                backgroundColor: theme.borderColor,
-                height: 1,
-                marginTop: 8,
-                marginBottom: 8,
-            },
-        }),
-        [isMe, theme]
-    );
 
     if (isSystemMessage || isEncryptedAttachment) {
          const label = (msg.type === 'image')
@@ -803,7 +682,7 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
             {msg.reply_to && (
                 <View style={[styles.replyBubble, { backgroundColor: isMe ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.05)' }]}>
                     <Text style={[styles.replyText, { color: isMe ? 'rgba(255,255,255,0.7)' : theme.textSecondary }]} numberOfLines={1}>
-                        <Text style={{fontWeight: 'bold'}}>{msg.reply_to.sender_id === msg.sender_id ? 'You' : otherPartyName}</Text>
+                        <Text style={{fontWeight: 'bold'}}>{(isMe ? msg.reply_to.sender_id === msg.sender_id : msg.reply_to.sender_id !== msg.sender_id) ? 'You' : otherPartyName}</Text>
                         {msg.reply_to.type === 'image' ? ' 📷 Photo' : `: ${msg.reply_to.text}`}
                     </Text>
                 </View>
@@ -832,33 +711,43 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
                 </TouchableOpacity>
             ) : null}
             {msg.type === 'text' && msg.text ? (
-                isMe ? (
-                    <Text style={[styles.messageText, { color: '#fff' }]}>{msg.text}</Text>
-                ) : (
-                    <Markdown style={assistantMarkdownStyles}>
-                        {msg.text}
-                    </Markdown>
-                )
+                <Text style={[styles.messageText, { color: isMe ? '#fff' : theme.text }]}>{msg.text}</Text>
             ) : null}
             {msg.is_pending ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}><Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.75)' : theme.textSecondary }}>{msg.type === 'text' ? 'Sending...' : 'Uploading...'}</Text></View>
             ) : null}
             <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 4, gap: 4 }}>
                 <Text style={[styles.timeText, { color: isMe ? 'rgba(255,255,255,0.7)' : theme.textSecondary, marginTop: 0 }]}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-                {isMe && !msg.is_pending && (<CheckCheck size={14} color={msg.is_read ? "#34B7F1" : "rgba(255,255,255,0.7)"} />)}
+                {isMe && !msg.is_pending && (msg.is_read ? <CheckCheck size={14} color="#34B7F1" /> : <Check size={14} color="rgba(255,255,255,0.7)" />)}
             </View>
         </TouchableOpacity>
     );
 }, (prevProps, nextProps) => {
-    return prevProps.msg.id === nextProps.msg.id && prevProps.msg.is_read === nextProps.msg.is_read && prevProps.msg.is_pending === nextProps.msg.is_pending && prevProps.msg.text === nextProps.msg.text;
+    return prevProps.msg.id === nextProps.msg.id && prevProps.msg.is_read === nextProps.msg.is_read && prevProps.msg.is_pending === nextProps.msg.is_pending && prevProps.msg.text === nextProps.msg.text
+        && prevProps.msg.attachment_access_url === nextProps.msg.attachment_access_url
+        && prevProps.msg.reply_to?.id === nextProps.msg.reply_to?.id
+        && prevProps.theme === nextProps.theme
+        && prevProps.otherPartyName === nextProps.otherPartyName;
 });
+
+// Counts up from when both people are on the call.
+function CallDuration({ since, style }: { since: number; style?: any }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+    const seconds = Math.max(0, Math.floor((now - since) / 1000));
+    const clock = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    return <Text style={style}>{clock}</Text>;
+}
 
 export default function ChatDetailScreen() {
     const router = useRouter();
     const queryClient = useQueryClient();
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
-    const { language } = useAppLanguage();
+    const { language, t } = useAppLanguage();
     const params = useLocalSearchParams<{ roomId: string; name: string; otherId: string; autoAccept?: string }>();
     const [roomId, setRoomId] = useState(params.roomId || '');
     const { autoAccept } = params;
@@ -870,6 +759,7 @@ export default function ChatDetailScreen() {
     const [isResolvingRoom, setIsResolvingRoom] = useState(!roomId && !!otherId);
     const [isCallMinimized, setIsCallMinimized] = useState(false);
     const [isTyping, setIsTyping] = useState(false);
+    const lastTypingSentRef = useRef(0);
     const [isHeaderAvatarBroken, setIsHeaderAvatarBroken] = useState(false);
     const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const typingChannelRef = useRef<any>(null);
@@ -963,13 +853,12 @@ export default function ChatDetailScreen() {
     const { mutateAsync: parseDoctorPrescription } = useParseDoctorPrescription();
     const { mutate: markAsRead } = useMarkAsRead();
     const { data: allRooms = [] } = useChatRooms();
-    const { isUserOnline } = usePresence();
 
     const currentRoom = allRooms.find(r => r.id === roomId);
     const headerAvatarUrl = isHeaderAvatarBroken ? null : getImageUrl(currentRoom?.other_party?.profilePicture);
     const targetOtherId = otherId || currentRoom?.other_party?.id;
-    const isOnline = targetOtherId ? isUserOnline(targetOtherId) : false;
-    const lastSeenAt = currentRoom?.other_party?.lastSeenAt;
+    const { isOnline, lastSeenAt: liveLastSeenAt } = useOnlineStatus(targetOtherId);
+    const lastSeenAt = liveLastSeenAt || currentRoom?.other_party?.lastSeenAt;
     const isChatEnabled = currentRoom?.chat_enabled !== false;
     const chatDisabledReason = currentRoom?.chat_disabled_reason || 'Chat is disabled for this consultation window.';
     const isDoctorUser = String(user?.role || '').toLowerCase() === 'doctor';
@@ -995,14 +884,6 @@ export default function ChatDetailScreen() {
         setIsHeaderAvatarBroken(false);
     }, [currentRoom?.other_party?.profilePicture, roomId]);
 
-    const prevIsOnlineRef = useRef(isOnline);
-    useEffect(() => {
-        // When user transitions from Online to Offline, refetch chat rooms to update last_seen_at
-        if (prevIsOnlineRef.current && !isOnline && roomId) {
-            queryClient.invalidateQueries({ queryKey: ['chat-rooms'] });
-        }
-        prevIsOnlineRef.current = isOnline;
-    }, [isOnline, roomId, queryClient]);
 
     const getStatusText = () => {
         if (isOnline) return 'Online';
@@ -1044,6 +925,7 @@ export default function ChatDetailScreen() {
         isVideoMuted,
         isRemoteVideoMuted,
         isSpeakerOn,
+        connectedAt,
         toggleAudio,
         toggleVideo,
         toggleSpeaker,
@@ -1112,7 +994,15 @@ export default function ChatDetailScreen() {
     );
 
     // Continuously mark as read if new messages arrive while user is inside the chat
+    // Their message has arrived, so they have stopped typing it.
+    const newestMessage = messages[0];
     useEffect(() => {
+        if (newestMessage && newestMessage.sender_id !== user?.id) setIsTyping(false);
+    }, [newestMessage?.id, newestMessage?.sender_id, user?.id]);
+
+    useEffect(() => {
+        // A message that arrives while the phone is in a pocket has not been read.
+        if (AppState.currentState !== 'active' || getActiveRoomId() !== roomId) return;
         if (roomId && messages.length > 0) {
             const hasUnreadFromOther = messages.some(m => !m.is_read && m.sender_id !== user?.id);
             if (hasUnreadFromOther) {
@@ -1122,10 +1012,15 @@ export default function ChatDetailScreen() {
     }, [messages, roomId, user?.id]);
 
     useEffect(() => {
+        const subscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active' && roomId && getActiveRoomId() === roomId) markAsRead(roomId);
+        });
+        return () => subscription.remove();
+    }, [markAsRead, roomId]);
+
+    useEffect(() => {
         // Resolve logic handled by resolveRoom effect below
-        if (roomId) {
-            console.log('Chat Detail: roomId available:', roomId);
-        } else if (!otherId) {
+        if (!roomId && !otherId) {
             console.warn('Chat Detail: Both roomId and otherId are missing');
         }
     }, [roomId, otherId]);
@@ -1154,7 +1049,7 @@ export default function ChatDetailScreen() {
             typingChannelRef.current = null;
             if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         }
-    }, [roomId, user]);
+    }, [roomId, user?.id]);
 
     const clearRxRestartTimer = useCallback(() => {
         if (rxRestartTimerRef.current) {
@@ -1354,7 +1249,6 @@ export default function ChatDetailScreen() {
     useEffect(() => {
         const resolveRoomId = async () => {
             if (!roomId && otherId && user) {
-                console.log('Resolving room for otherId:', otherId);
                 setIsResolvingRoom(true);
                 try {
                     const isDoctor = String(user.role || '').toLowerCase() === 'doctor';
@@ -1387,7 +1281,10 @@ export default function ChatDetailScreen() {
 
     const handleTyping = (text: string) => {
         setInputText(text);
-        if (text.length > 0 && roomId && user && typingChannelRef.current) {
+        // One signal every two seconds is enough for a "typing" label, and sending one per key costs battery and data.
+        const now = Date.now();
+        if (text.length > 0 && roomId && user && typingChannelRef.current && now - lastTypingSentRef.current > 2000) {
+            lastTypingSentRef.current = now;
             typingChannelRef.current.send({
                 type: 'broadcast',
                 event: 'typing',
@@ -1406,7 +1303,9 @@ export default function ChatDetailScreen() {
         }
         const text = inputText.trim();
         setInputText('');
-        
+        flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+
+        const currentReply = replyingTo;
         const currentReplyId = replyingTo?.id;
         setReplyingTo(null);
 
@@ -1414,10 +1313,9 @@ export default function ChatDetailScreen() {
             await sendMessageMutation.mutateAsync({ roomId, text, replyToId: currentReplyId });
         } catch (error: any) {
             console.error('Failed to send message:', error);
-            const errorMsg = error.message || JSON.stringify(error);
-            import('react-native').then(({ Alert }) => {
-                Alert.alert('Send Error', errorMsg);
-            });
+            setInputText((current) => current || text);
+            setReplyingTo(currentReply);
+            Alert.alert(t('chat.notSentTitle'), t('chat.notSentBody'));
         }
     };
 
@@ -1662,19 +1560,37 @@ export default function ChatDetailScreen() {
         ]);
     }, []);
 
-    const renderMessageItem = useCallback(({ item }: { item: any }) => {
+    const dayKey = (value?: string) => (value ? new Date(value).toDateString() : '');
+    const dayLabel = (value: string) => {
+        const date = new Date(value);
+        const now = new Date();
+        const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        if (date.toDateString() === now.toDateString()) return t('chat.today');
+        if (date.toDateString() === yesterday.toDateString()) return t('chat.yesterday');
+        return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    };
+
+    const renderMessageItem = useCallback(({ item, index }: { item: any; index: number }) => {
         const isMe = item.sender_id === user?.id;
+        const startsNewDay = dayKey(item.created_at) !== dayKey(messages[index + 1]?.created_at);
         return (
-            <MessageItem 
-                msg={item}
-                isMe={isMe}
-                theme={theme}
-                otherPartyName={otherPartyName}
-                onLongPress={handleLongPress}
-                onImagePress={setSelectedImage}
-            />
+            <>
+                {startsNewDay ? (
+                    <View style={[styles.dayPill, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                        <Text style={[styles.dayPillText, { color: theme.textSecondary }]}>{dayLabel(item.created_at)}</Text>
+                    </View>
+                ) : null}
+                <MessageItem
+                    msg={item}
+                    isMe={isMe}
+                    theme={theme}
+                    otherPartyName={otherPartyName}
+                    onLongPress={handleLongPress}
+                    onImagePress={setSelectedImage}
+                />
+            </>
         );
-    }, [user?.id, theme, otherPartyName, handleLongPress]);
+    }, [user?.id, theme, otherPartyName, handleLongPress, messages, t]);
 
     // On Android, use a plain View with manual keyboard padding
     // On iOS, use KeyboardAvoidingView with padding behavior
@@ -1772,10 +1688,10 @@ export default function ChatDetailScreen() {
                         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 }}>
                             <MessageCircle size={48} color={theme.textSecondary} style={{ opacity: 0.3, marginBottom: 16 }} />
                             <Text style={{ fontSize: 16, fontWeight: '600', color: theme.textSecondary, textAlign: 'center' }}>
-                                No messages yet
+                                {t('chat.noMessagesYet')}
                             </Text>
                             <Text style={{ fontSize: 14, color: theme.textSecondary, textAlign: 'center', marginTop: 8, opacity: 0.7 }}>
-                                Start a conversation with {otherPartyName || 'this doctor'}!
+                                {t('chat.startWith', { name: otherPartyName || t('chat.unknown') })}
                             </Text>
                         </View>
                     ) : (
@@ -1865,7 +1781,7 @@ export default function ChatDetailScreen() {
                 <TextInput
                     ref={chatInputRef}
                     style={[styles.input, { color: theme.text, backgroundColor: theme.background }]}
-                    placeholder={isChatEnabled ? "Type a message..." : "Chat disabled"}
+                    placeholder={isChatEnabled ? t('chat.typeMessage') : t('chat.disabled')}
                     placeholderTextColor={theme.textSecondary}
                     value={inputText}
                     onChangeText={handleTyping}
@@ -1923,13 +1839,21 @@ export default function ChatDetailScreen() {
                                         )}
                                     </View>
                                     <Text style={styles.callNameLarge}>{otherPartyName}</Text>
-                                    <Text style={styles.callStatusText}>
-                                        {callStatus === 'active' 
-                                            ? (callType === 'audio' ? 'Audio Call Active' : 'Remote Camera Off') 
-                                            : 'Connecting stream...'}
-                                    </Text>
+                                    {remoteUid === 0 ? (
+                                        <Text style={styles.callStatusText}>{connectedAt ? 'Reconnecting…' : 'Connecting…'}</Text>
+                                    ) : connectedAt && callType === 'audio' ? (
+                                        <CallDuration since={connectedAt} style={styles.callStatusText} />
+                                    ) : (
+                                        <Text style={styles.callStatusText}>Camera is off</Text>
+                                    )}
                                 </View>
                             )}
+
+                            {callType === 'video' && connectedAt && remoteUid !== 0 ? (
+                                <View style={[styles.callDurationPill, { top: insets.top + 16 }]}>
+                                    <CallDuration since={connectedAt} style={styles.callDurationText} />
+                                </View>
+                            ) : null}
 
                             {/* Local Video (Floating Window) */}
                             {callType === 'video' && (
@@ -1960,14 +1884,20 @@ export default function ChatDetailScreen() {
 
                             {callStatus === 'ringing' && (
                                 <Text style={styles.callStatusText}>
-                                    {callType === 'video' ? 'Video Calling...' : 'Audio Calling...'}
+                                    {isCaller ? 'Calling…' : callType === 'video' ? 'Incoming video call' : 'Incoming voice call'}
                                 </Text>
                             )}
+                            {callStatus === 'active' && (
+                                <Text style={styles.callStatusText}>Connecting…</Text>
+                            )}
+                            {callStatus === 'missed' && (
+                                <Text style={[styles.callStatusText, { color: theme.textSecondary }]}>{isCaller ? 'No answer' : 'Missed call'}</Text>
+                            )}
                             {callStatus === 'declined' && (
-                                <Text style={[styles.callStatusText, { color: theme.error }]}>Call Declined</Text>
+                                <Text style={[styles.callStatusText, { color: theme.error }]}>Call declined</Text>
                             )}
                             {callStatus === 'ended' && (
-                                <Text style={[styles.callStatusText, { color: theme.textSecondary }]}>Call Ended</Text>
+                                <Text style={[styles.callStatusText, { color: theme.textSecondary }]}>Call ended</Text>
                             )}
                         </View>
                     )}
@@ -1976,7 +1906,7 @@ export default function ChatDetailScreen() {
                         {callStatus === 'ringing' && !isCaller && (
                             <View style={{ flexDirection: 'row', gap: 40 }}>
                                 <TouchableOpacity onPress={declineCall} style={[styles.callActionButton, { backgroundColor: theme.error }]}>
-                                    <X size={32} color="#fff" />
+                                    <PhoneOff size={30} color="#fff" />
                                 </TouchableOpacity>
                                 <TouchableOpacity onPress={handleAcceptCall} style={[styles.callActionButton, { backgroundColor: theme.success }]}>
                                     {callType === 'video' ? (
@@ -2002,7 +1932,7 @@ export default function ChatDetailScreen() {
                                 )}
 
                                 <TouchableOpacity onPress={endCall} style={[styles.callActionButton, { backgroundColor: theme.error }]}>
-                                    <X size={32} color="#fff" />
+                                    <PhoneOff size={30} color="#fff" />
                                 </TouchableOpacity>
 
                                 {callStatus === 'active' && (
@@ -2566,6 +2496,31 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
         color: '#fff'
+    },
+    dayPill: {
+        alignSelf: 'center',
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        marginVertical: 10,
+    },
+    dayPillText: {
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    callDurationPill: {
+        position: 'absolute',
+        alignSelf: 'center',
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+    },
+    callDurationText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600',
     },
     callStatusText: {
         fontSize: 18,

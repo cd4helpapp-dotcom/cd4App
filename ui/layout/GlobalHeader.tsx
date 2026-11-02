@@ -36,8 +36,9 @@ export default function GlobalHeader() {
         };
     }, []);
 
-    // Chat has its own title bar; Home renders this same header inside its scroll view.
-    if (pathname.includes('/chat') || pathname === '/' || pathname === '/index' || pathname === '/(tabs)') {
+    // An open chat has its own title bar; Home renders this same header inside its scroll view.
+    const isOpenChat = pathname.includes('/chat') && pathname !== '/chat';
+    if (isOpenChat || pathname === '/' || pathname === '/index' || pathname === '/(tabs)') {
         return null;
     }
 

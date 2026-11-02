@@ -3,7 +3,8 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'r
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import { FileText, FlaskConical, Pill, Plus, ShieldCheck, Sparkles, Upload } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { AlertTriangle, ArrowRight, Camera, FileText, FlaskConical, FolderOpen, Lightbulb, Pill, Plus, ShieldCheck, Sparkles, Upload } from 'lucide-react-native';
 import {
   isMedicalReportActive,
   useMedicalReports,
@@ -15,25 +16,27 @@ import {
   type ReportUploadCategory,
 } from '../../hooks/useMedicalReports';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { useAppLanguage } from '../../context/AppLanguageContext';
 import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
 import { RecordsTabSkeleton } from '../common/TabLoadingSkeletons';
 import { confirmAction } from '../../src/utils/confirm';
-import { getReportKind } from '../../src/utils/reportInsights';
+import { getAttentionCount, getReportKind, getReportState } from '../../src/utils/reportInsights';
 import ReportCard from './ReportCard';
 import InsightsTab from './InsightsTab';
+import { FadeInUp } from './ReportVisuals';
 import UploadSheet, { type PickedReportFile } from './UploadSheet';
 
 export type ReportsTabKey = 'all' | 'lab' | 'prescription' | 'insights';
 
-const TABS: { key: ReportsTabKey; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'lab', label: 'Lab reports' },
-  { key: 'prescription', label: 'Prescriptions' },
-  { key: 'insights', label: 'Insights' },
-];
-
 export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: ReportsTabKey }) {
-  const { theme } = useAppTheme();
+  const { theme, isDark } = useAppTheme();
+  const { t } = useAppLanguage();
+  const TABS: { key: ReportsTabKey; label: string; Icon: React.ComponentType<{ size?: number; color?: string }> }[] = [
+    { key: 'all', label: t('reports.tabAll'), Icon: FolderOpen },
+    { key: 'lab', label: t('reports.tabLab'), Icon: FlaskConical },
+    { key: 'prescription', label: t('reports.tabPrescriptions'), Icon: Pill },
+    { key: 'insights', label: t('reports.tabInsights'), Icon: Lightbulb },
+  ];
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = React.useState<ReportsTabKey>(initialTab);
@@ -62,8 +65,18 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
     if (tab === 'insights') return [];
     if (tab === 'all') return reports;
     // "Lab reports" means lab results only; other documents (scans, letters, screenshots) stay under All.
-    return reports.filter((report) => getReportKind(report) === (tab === 'prescription' ? 'prescription' : 'lab'));
+    // A doctor's note sits with prescriptions, because both are what the doctor wrote.
+    return reports.filter((report) => {
+      const kind = getReportKind(report);
+      return tab === 'lab' ? kind === 'lab' : kind === 'prescription' || kind === 'note';
+    });
   }, [reports, tab]);
+
+  const toReview = React.useMemo(
+    () => reports.filter((report) => getReportState(report, nowMs) === 'ready' && getReportKind(report) === 'lab' && getAttentionCount(report) > 0).length,
+    [reports, nowMs]
+  );
+  const heroGradient = (isDark ? ['#065F46', '#073B2C', '#062A22'] : ['#047857', '#059669', '#10B981']) as [string, string, string];
 
   const openReport = (report: MedicalReport) =>
     router.push({
@@ -84,7 +97,7 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
       openReport(uploaded);
       return uploaded;
     } catch (error: any) {
-      Toast.show({ type: 'error', text1: 'Upload failed', text2: error?.message || 'Please check your connection and try again.' });
+      Toast.show({ type: 'error', text1: t('reports.uploadFailed'), text2: error?.message || t('reports.checkConnection') });
     }
   };
 
@@ -94,7 +107,7 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
       await reanalyzeMutation.mutateAsync({ reportId: report.id });
       setNowMs(Date.now());
     } catch (error: any) {
-      Toast.show({ type: 'error', text1: 'Could not retry', text2: error?.message || 'Please try again in a moment.' });
+      Toast.show({ type: 'error', text1: t('reports.couldNotRetry'), text2: error?.message || t('reports.tryInMoment') });
     } finally {
       setBusyId(null);
     }
@@ -102,17 +115,18 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
 
   const handleDelete = async (report: MedicalReport) => {
     const ok = await confirmAction({
-      title: 'Delete this report?',
-      message: 'It will be removed from your reports. This cannot be undone.',
-      confirmText: 'Delete',
+      title: t('reports.deleteTitle'),
+      message: t('reports.deleteMessage'),
+      confirmText: t('reports.delete'),
+      cancelText: t('reports.cancel'),
       destructive: true,
     });
     if (!ok) return;
     try {
       await deleteMutation.mutateAsync({ reportId: report.id });
-      Toast.show({ type: 'success', text1: 'Report deleted' });
+      Toast.show({ type: 'success', text1: t('reports.deleted') });
     } catch (error: any) {
-      Toast.show({ type: 'error', text1: 'Could not delete', text2: error?.message || 'Please try again.' });
+      Toast.show({ type: 'error', text1: t('reports.couldNotDelete'), text2: error?.message || t('reports.tryAgainPlease') });
     }
   };
 
@@ -125,16 +139,16 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
         {tab === 'prescription' ? <Pill size={30} color={theme.primary} /> : tab === 'lab' ? <FlaskConical size={30} color={theme.primary} /> : <FileText size={30} color={theme.primary} />}
       </View>
       <Text style={[Typography.heading, { color: theme.text, textAlign: 'center' }]}>
-        {tab === 'prescription' ? 'No prescriptions yet' : tab === 'lab' ? 'No lab reports yet' : 'Understand your reports in simple words'}
+        {tab === 'prescription' ? t('reports.emptyPrescription') : tab === 'lab' ? t('reports.emptyLab') : t('reports.emptyAll')}
       </Text>
       <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>
-        Take a photo or upload a PDF. AI reads it and explains it in plain language. You can then ask it questions.
+        {t('reports.emptyBody')}
       </Text>
       <View style={styles.steps}>
         {[
-          { icon: Upload, title: '1. Add', text: 'Photo or PDF of your report' },
-          { icon: Sparkles, title: '2. AI reads it', text: 'Takes under a minute' },
-          { icon: ShieldCheck, title: '3. Understand', text: 'Simple summary and Q&A' },
+          { icon: Upload, title: t('reports.step1Title'), text: t('reports.step1Text') },
+          { icon: Sparkles, title: t('reports.step2Title'), text: t('reports.step2Text') },
+          { icon: ShieldCheck, title: t('reports.step3Title'), text: t('reports.step3Text') },
         ].map(({ icon: Icon, title, text }) => (
           <View key={title} style={styles.step}>
             <View style={[styles.stepIcon, { backgroundColor: theme.primarySoft }]}>
@@ -149,7 +163,7 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
       </View>
       <Pressable onPress={openSheet} accessibilityRole="button" style={({ pressed }) => [styles.cta, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary }]}>
         <Plus size={18} color="#FFFFFF" />
-        <Text style={styles.ctaText}>{tab === 'prescription' ? 'Add prescription' : 'Add report'}</Text>
+        <Text style={styles.ctaText}>{tab === 'prescription' ? t('reports.addPrescription') : t('reports.addReport')}</Text>
       </Pressable>
     </View>
   );
@@ -162,26 +176,46 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
         refreshControl={<RefreshControl refreshing={reportsQuery.isRefetching && !hasActive} onRefresh={() => { void reportsQuery.refetch(); }} tintColor={theme.primary} />}
       >
         <View style={styles.inner}>
-          <View style={styles.headerRow}>
-            <View style={styles.flex}>
-              <Text style={[Typography.display, { color: theme.text }]}>Reports</Text>
-              <Text style={[Typography.body, { color: theme.textSecondary }]}>
-                {reports.length ? `${reports.length} saved · AI explains them simply` : 'Your medical records, explained simply'}
-              </Text>
-            </View>
-            <Pressable
-              onPress={openSheet}
-              accessibilityRole="button"
-              accessibilityLabel="Add report"
-              style={({ pressed }) => [styles.addBtn, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary }]}
-            >
-              <Plus size={18} color="#FFFFFF" />
-              <Text style={styles.fabText}>Add</Text>
-            </Pressable>
-          </View>
+          <FadeInUp>
+            <LinearGradient colors={heroGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+              <Text style={styles.heroTitle}>{t('reports.title')}</Text>
+              <Text style={styles.heroSubtitle}>{reports.length ? t('reports.subtitleCount', { count: reports.length }) : t('reports.subtitleEmpty')}</Text>
+
+              {reports.length > 0 ? (
+                <View style={styles.heroStats}>
+                  <View style={styles.heroStat}>
+                    <FileText size={16} color="#FFFFFF" />
+                    <Text style={styles.heroStatValue}>{reports.length}</Text>
+                    <Text style={styles.heroStatLabel}>{t('reports.heroSaved')}</Text>
+                  </View>
+                  <View style={styles.heroStat}>
+                    {toReview > 0 ? <AlertTriangle size={16} color="#FFFFFF" /> : <ShieldCheck size={16} color="#FFFFFF" />}
+                    <Text style={styles.heroStatValue}>{toReview}</Text>
+                    <Text style={styles.heroStatLabel}>{toReview > 0 ? t('reports.heroReview') : t('reports.heroClear')}</Text>
+                  </View>
+                </View>
+              ) : null}
+
+              <Pressable
+                onPress={openSheet}
+                accessibilityRole="button"
+                accessibilityLabel={t('reports.heroScan')}
+                style={({ pressed }) => [styles.heroCta, { opacity: pressed ? 0.9 : 1 }]}
+              >
+                <View style={styles.heroCtaIcon}>
+                  <Camera size={20} color="#047857" />
+                </View>
+                <View style={styles.flex}>
+                  <Text style={styles.heroCtaTitle}>{t('reports.heroScan')}</Text>
+                  <Text style={styles.heroCtaHint} numberOfLines={1}>{t('reports.heroHint')}</Text>
+                </View>
+                <ArrowRight size={20} color="#047857" />
+              </Pressable>
+            </LinearGradient>
+          </FadeInUp>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabs}>
-            {TABS.map(({ key, label }) => {
+            {TABS.map(({ key, label, Icon }) => {
               const active = tab === key;
               return (
                 <Pressable
@@ -189,8 +223,9 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
                   onPress={() => setTab(key)}
                   accessibilityRole="tab"
                   accessibilityState={{ selected: active }}
-                  style={[styles.tab, { backgroundColor: active ? theme.buttonPrimary : theme.surfaceMuted }]}
+                  style={[styles.tab, { backgroundColor: active ? theme.buttonPrimary : theme.cardBackground, borderColor: active ? theme.buttonPrimary : theme.borderColor }]}
                 >
+                  <Icon size={15} color={active ? '#FFFFFF' : theme.textSecondary} />
                   <Text style={[styles.tabText, { color: active ? '#FFFFFF' : theme.textSecondary }]}>{label}</Text>
                 </Pressable>
               );
@@ -201,10 +236,10 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
             <RecordsTabSkeleton theme={theme} cardsOnly />
           ) : reportsQuery.isError ? (
             <View style={[styles.empty, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-              <Text style={[Typography.heading, { color: theme.text }]}>Could not load your reports</Text>
-              <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>Check your internet and try again.</Text>
+              <Text style={[Typography.heading, { color: theme.text }]}>{t('reports.loadFailed')}</Text>
+              <Text style={[Typography.body, { color: theme.textSecondary, textAlign: 'center' }]}>{t('reports.checkInternet')}</Text>
               <Pressable onPress={() => reportsQuery.refetch()} accessibilityRole="button" style={[styles.cta, { backgroundColor: theme.buttonPrimary }]}>
-                <Text style={styles.ctaText}>Retry</Text>
+                <Text style={styles.ctaText}>{t('reports.retry')}</Text>
               </Pressable>
             </View>
           ) : tab === 'insights' ? (
@@ -213,16 +248,17 @@ export default function ReportsScreen({ initialTab = 'all' }: { initialTab?: Rep
             renderEmpty()
           ) : (
             <View style={styles.list}>
-              {visible.map((report) => (
-                <ReportCard
-                  key={report.id}
-                  report={report}
-                  nowMs={nowMs}
-                  isBusy={busyId === report.id}
-                  onOpen={openReport}
-                  onRetry={handleRetry}
-                  onDelete={handleDelete}
-                />
+              {visible.map((report, index) => (
+                <FadeInUp key={report.id} index={index}>
+                  <ReportCard
+                    report={report}
+                    nowMs={nowMs}
+                    isBusy={busyId === report.id}
+                    onOpen={openReport}
+                    onRetry={handleRetry}
+                    onDelete={handleDelete}
+                  />
+                </FadeInUp>
               ))}
             </View>
           )}
@@ -246,9 +282,19 @@ const styles = StyleSheet.create({
   flex: { flex: 1, minWidth: 0 },
   content: { alignItems: 'center' },
   inner: { width: '100%', maxWidth: Layout.contentMaxWidth, paddingHorizontal: Layout.screenGutter, paddingTop: Spacing.lg, gap: Spacing.lg },
-  headerRow: { flexDirection: 'row', alignItems: 'center' },
+  hero: { borderRadius: Radius.xl + 4, padding: Spacing.xl, gap: Spacing.md, overflow: 'hidden' },
+  heroTitle: { color: '#FFFFFF', fontSize: 28, lineHeight: 34, fontWeight: '800' },
+  heroSubtitle: { color: 'rgba(255,255,255,0.88)', fontSize: 14, lineHeight: 20, marginTop: -8 },
+  heroStats: { flexDirection: 'row', gap: Spacing.sm },
+  heroStat: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.16)', borderRadius: Radius.md, paddingHorizontal: 10, paddingVertical: 9 },
+  heroStatValue: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  heroStatLabel: { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '600', flexShrink: 1 },
+  heroCta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, backgroundColor: '#FFFFFF', borderRadius: Radius.lg, padding: Spacing.md },
+  heroCtaIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: '#E7F8F0', alignItems: 'center', justifyContent: 'center' },
+  heroCtaTitle: { color: '#0F172A', fontSize: 15, fontWeight: '800' },
+  heroCtaHint: { color: '#475569', fontSize: 12, marginTop: 1 },
   tabs: { gap: Spacing.sm, paddingVertical: 2 },
-  tab: { height: 38, paddingHorizontal: 13, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
+  tab: { height: 38, paddingHorizontal: 13, borderRadius: Radius.pill, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   tabText: { fontSize: 13, fontWeight: '700' },
   list: { gap: Spacing.md },
   empty: { borderWidth: 1, borderRadius: Radius.xl, padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md },
@@ -258,6 +304,4 @@ const styles = StyleSheet.create({
   stepIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   cta: { height: 48, borderRadius: Radius.md, paddingHorizontal: Spacing.xxl, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: Spacing.sm, alignSelf: 'stretch' },
   ctaText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  addBtn: { height: 44, borderRadius: Radius.pill, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  fabText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
 });

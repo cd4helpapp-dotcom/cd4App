@@ -29,10 +29,16 @@ export default function ManagedContentScreen({ contentKey, fallbackTitle }: Mana
         ) : (
           <>
             <Text style={[styles.title, { color: theme.text }]}>{title}</Text>
-            <Text style={[styles.body, { color: theme.textSecondary }]}>{data?.body || ''}</Text>
+            {(data?.body || '').split('\n').map((line, index) =>
+              line.startsWith('# ') ? (
+                <Text key={index} style={[styles.heading, { color: theme.text }]}>{line.slice(2)}</Text>
+              ) : (
+                <Text key={index} style={[styles.body, { color: theme.textSecondary }]}>{line}</Text>
+              )
+            )}
             {data?.updatedAt ? (
               <Text style={[styles.updatedAt, { color: theme.textSecondary }]}>
-                Last updated: {new Date(data.updatedAt).toLocaleDateString()}
+                Last updated: {new Date(data.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
               </Text>
             ) : null}
           </>
@@ -53,6 +59,7 @@ const styles = StyleSheet.create({
   loaderWrap: { paddingVertical: 24, alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 18, fontWeight: '700', marginBottom: 10 },
   body: { fontSize: 14, lineHeight: 22 },
+  heading: { fontSize: 15, fontWeight: '700', marginTop: 12, marginBottom: 2 },
   updatedAt: { marginTop: 16, fontSize: 12, fontWeight: '500' },
 });
 

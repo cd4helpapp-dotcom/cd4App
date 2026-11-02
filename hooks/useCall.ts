@@ -32,6 +32,7 @@ export const useCall = (roomId: string) => {
         isVideoMuted,
         isRemoteVideoMuted,
         isSpeakerOn,
+        connectedAt,
         toggleAudio: toggleAudioGlobal,
         toggleVideo: toggleVideoGlobal,
         toggleSpeaker: toggleSpeakerGlobal,
@@ -75,6 +76,7 @@ export const useCall = (roomId: string) => {
         isVideoMuted: isRoomLinked ? isVideoMuted : false,
         isRemoteVideoMuted: isRoomLinked ? isRemoteVideoMuted : false,
         isSpeakerOn: isRoomLinked ? isSpeakerOn : false,
+        connectedAt: isRoomLinked ? connectedAt : null,
         toggleAudio: () => {
             if (!isRoomLinked) return;
             toggleAudioGlobal();

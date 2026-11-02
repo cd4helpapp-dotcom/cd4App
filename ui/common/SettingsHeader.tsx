@@ -39,7 +39,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 18,
     fontWeight: '700',
   },
   rightSpacer: {

@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Camera, FileText, FlaskConical, ImagePlus, Lock, Pill, Sparkles, UploadCloud, X } from 'lucide-react-native';
 import { elevation, Radius, Spacing, Typography } from '../../constants/Design';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { useAppLanguage } from '../../context/AppLanguageContext';
 import { REPORT_MAX_UPLOAD_MB, REPORT_UPLOAD_WINDOW_HOURS, type ReportUploadCategory } from '../../hooks/useMedicalReports';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
@@ -22,23 +23,6 @@ type Props = {
   onPicked: (file: PickedReportFile, category: ReportUploadCategory) => void;
 };
 
-const STEPS_REPORT = [
-  { n: '1', title: 'Add your report', body: 'A PDF, or a clear photo of every page.' },
-  { n: '2', title: 'AI reads it', body: 'Takes about a minute. You can leave this screen.' },
-  { n: '3', title: 'Understand it', body: 'Get a simple explanation and ask questions.' },
-];
-const STEPS_PRESCRIPTION = [
-  { n: '1', title: 'Add your prescription', body: 'A clear photo or PDF of the doctor’s prescription.' },
-  { n: '2', title: 'AI reads it', body: 'Takes about a minute. You can leave this screen.' },
-  { n: '3', title: 'Know your medicines', body: 'What each medicine is for, when to take it, and what to avoid.' },
-];
-
-const TIPS = [
-  'Good light, no shadows or glare, whole page in the frame',
-  'Several pages? Choose one PDF, or add each page separately',
-  `File size up to ${REPORT_MAX_UPLOAD_MB} MB (PDF, JPG or PNG)`,
-];
-
 const guessMimeType = (name: string, fallback?: string | null): string => {
   if (fallback) return fallback;
   const lower = name.toLowerCase();
@@ -50,6 +34,18 @@ const guessMimeType = (name: string, fallback?: string | null): string => {
 
 export default function UploadSheet({ visible, initialCategory, isUploading, quota, onClose, onPicked }: Props) {
   const { theme } = useAppTheme();
+  const { t } = useAppLanguage();
+  const STEPS_REPORT = [
+    { n: '1', title: t('upload.step1ReportTitle'), body: t('upload.step1ReportBody') },
+    { n: '2', title: t('upload.step2Title'), body: t('upload.step2Body') },
+    { n: '3', title: t('upload.step3ReportTitle'), body: t('upload.step3ReportBody') },
+  ];
+  const STEPS_PRESCRIPTION = [
+    { n: '1', title: t('upload.step1RxTitle'), body: t('upload.step1RxBody') },
+    { n: '2', title: t('upload.step2Title'), body: t('upload.step2Body') },
+    { n: '3', title: t('upload.step3RxTitle'), body: t('upload.step3RxBody') },
+  ];
+  const TIPS = [t('upload.tipLight'), t('upload.tipPages'), t('upload.tipSize', { size: REPORT_MAX_UPLOAD_MB })];
   const insets = useSafeAreaInsets();
   const [category, setCategory] = React.useState<ReportUploadCategory>(initialCategory);
   const [isPicking, setIsPicking] = React.useState(false);
@@ -68,7 +64,7 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Toast.show({ type: 'info', text1: 'Camera permission needed', text2: 'Allow camera access in Settings to photograph a report.' });
+        Toast.show({ type: 'info', text1: t('upload.cameraPermission'), text2: t('upload.cameraPermissionBody') });
         return;
       }
       const result = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 });
@@ -107,9 +103,9 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
   };
 
   const sources = [
-    ...(Platform.OS === 'web' ? [] : [{ key: 'camera', Icon: Camera, title: 'Take a photo', hint: 'Use your camera', onPress: fromCamera }]),
-    ...(Platform.OS === 'web' ? [] : [{ key: 'gallery', Icon: ImagePlus, title: 'From gallery', hint: 'Pick a saved photo', onPress: fromGallery }]),
-    { key: 'files', Icon: FileText, title: 'PDF or file', hint: 'Choose from your phone', onPress: fromFiles },
+    ...(Platform.OS === 'web' ? [] : [{ key: 'camera', Icon: Camera, title: t('upload.takePhoto'), hint: t('upload.useCamera'), onPress: fromCamera }]),
+    ...(Platform.OS === 'web' ? [] : [{ key: 'gallery', Icon: ImagePlus, title: t('upload.fromGallery'), hint: t('upload.pickSaved'), onPress: fromGallery }]),
+    { key: 'files', Icon: FileText, title: t('upload.pdfOrFile'), hint: t('upload.chooseFromPhone'), onPress: fromFiles },
   ];
 
   return (
@@ -120,8 +116,8 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
           <View style={[styles.grabber, { backgroundColor: theme.borderColor }]} />
           <View style={styles.header}>
             <View style={styles.flex}>
-              <Text style={[Typography.title, { color: theme.text }]}>Add a report</Text>
-              <Text style={[Typography.body, { color: theme.textSecondary }]}>We turn medical jargon into plain language.</Text>
+              <Text style={[Typography.title, { color: theme.text }]}>{t('upload.title')}</Text>
+              <Text style={[Typography.body, { color: theme.textSecondary }]}>{t('upload.subtitle')}</Text>
             </View>
             <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close" style={[styles.close, { backgroundColor: theme.surfaceMuted }]}>
               <X size={18} color={theme.textSecondary} />
@@ -129,11 +125,11 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
-            <Text style={[Typography.overline, { color: theme.textSecondary }]}>WHAT ARE YOU ADDING?</Text>
+            <Text style={[Typography.overline, { color: theme.textSecondary }]}>{t('upload.whatAdding')}</Text>
             <View style={[styles.segment, { backgroundColor: theme.surfaceMuted }]} accessibilityRole="radiogroup">
               {([
-                { key: 'report' as const, label: 'Test report', Icon: FlaskConical },
-                { key: 'prescription' as const, label: 'Prescription', Icon: Pill },
+                { key: 'report' as const, label: t('upload.testReport'), Icon: FlaskConical },
+                { key: 'prescription' as const, label: t('upload.prescription'), Icon: Pill },
               ]).map(({ key, label, Icon }) => {
                 const active = category === key;
                 return (
@@ -152,8 +148,8 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
             </View>
             <Text style={[Typography.caption, { color: theme.textSecondary }]}>
               {category === 'prescription'
-                ? 'We list the medicines, doses and instructions so they are easy to follow.'
-                : 'Blood tests, scans, discharge summaries and other lab results.'}
+                ? t('upload.rxHint')
+                : t('upload.reportHint')}
             </Text>
 
             <View style={styles.steps}>
@@ -172,9 +168,9 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
 
             {isBlocked ? (
               <View style={[styles.notice, { backgroundColor: theme.warningSoft, borderColor: theme.warningBorder }]}>
-                <Text style={[Typography.bodyStrong, { color: theme.warning }]}>Daily free limit reached</Text>
+                <Text style={[Typography.bodyStrong, { color: theme.warning }]}>{t('upload.limitTitle')}</Text>
                 <Text style={[Typography.caption, { color: theme.textSecondary }]}>
-                  Free plan: {quota?.limit} reports every {REPORT_UPLOAD_WINDOW_HOURS} hours. Try again later or upgrade to Pro for more.
+                  {t('upload.limitBody', { limit: quota?.limit, hours: REPORT_UPLOAD_WINDOW_HOURS })}
                 </Text>
               </View>
             ) : (
@@ -204,20 +200,20 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
             {busy ? (
               <View style={styles.busy}>
                 <ActivityIndicator color={theme.primary} />
-                <Text style={[Typography.body, { color: theme.textSecondary }]}>{isUploading ? 'Uploading your report…' : 'Opening…'}</Text>
+                <Text style={[Typography.body, { color: theme.textSecondary }]}>{isUploading ? t('upload.uploading') : t('upload.opening')}</Text>
               </View>
             ) : null}
 
             {quota && !quota.isPro ? (
               <Text style={[Typography.caption, styles.center, { color: theme.textSecondary }]}>
-                {quota.remaining} of {quota.limit} free uploads left in {REPORT_UPLOAD_WINDOW_HOURS} hours
+                {t('upload.quota', { remaining: quota.remaining, limit: quota.limit, hours: REPORT_UPLOAD_WINDOW_HOURS })}
               </Text>
             ) : null}
 
             <View style={[styles.tips, { backgroundColor: theme.surfaceMuted }]}>
               <View style={styles.tipsTitle}>
                 <Sparkles size={14} color={theme.primary} />
-                <Text style={[Typography.label, { color: theme.text }]}>For the best result</Text>
+                <Text style={[Typography.label, { color: theme.text }]}>{t('upload.bestResult')}</Text>
               </View>
               {TIPS.map((tip) => (
                 <Text key={tip} style={[Typography.caption, { color: theme.textSecondary }]}>
@@ -229,11 +225,11 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
             <View style={styles.footerNotes}>
               <View style={styles.noteRow}>
                 <Lock size={13} color={theme.textTertiary} />
-                <Text style={[Typography.caption, styles.flex, { color: theme.textTertiary }]}>Private: only you can see your reports. You can delete them anytime.</Text>
+                <Text style={[Typography.caption, styles.flex, { color: theme.textTertiary }]}>{t('upload.privateNote')}</Text>
               </View>
               <View style={styles.noteRow}>
                 <UploadCloud size={13} color={theme.textTertiary} />
-                <Text style={[Typography.caption, styles.flex, { color: theme.textTertiary }]}>AI explains your report in simple words. It is not a diagnosis; talk to a doctor about any concern.</Text>
+                <Text style={[Typography.caption, styles.flex, { color: theme.textTertiary }]}>{t('reports.insightsDisclaimer')}</Text>
               </View>
             </View>
           </ScrollView>
