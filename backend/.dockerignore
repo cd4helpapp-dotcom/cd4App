@@ -1,0 +1,6 @@
+target
+.env
+.env.*
+prisma/node_modules
+uploads
+*.md

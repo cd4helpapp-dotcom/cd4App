@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { Crown, RefreshCw } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
+import { PRO_PLAN_ENABLED } from '../../constants/Config';
 import Colors from '../../constants/Colors';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { useAuthContext } from '../../context/AuthContext';
@@ -87,7 +88,11 @@ const formatAmount = (amount: number | null | undefined, currency: string | null
   return `${normalizedCurrency} ${amount}`;
 };
 
-export default function SubscriptionSettingsScreen() {
+export default function SubscriptionSettingsRoute() {
+  return PRO_PLAN_ENABLED ? <SubscriptionSettingsScreen /> : <Redirect href="/" />;
+}
+
+function SubscriptionSettingsScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const { user, refetchUser } = useAuthContext();

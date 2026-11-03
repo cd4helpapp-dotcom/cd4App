@@ -1,0 +1,15 @@
+{
+  "name": "cd4-backend-database",
+  "private": true,
+  "description": "Prisma schema and migrations for the CD4 Java backend. Node is used only for this.",
+  "scripts": {
+    "validate": "prisma validate",
+    "format": "prisma format",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "studio": "prisma studio"
+  },
+  "devDependencies": {
+    "prisma": "6.19.0"
+  }
+}

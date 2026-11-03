@@ -1,0 +1,9 @@
+target/
+.env
+.env.*
+!.env.example
+*.log
+.idea/
+*.iml
+prisma/node_modules/
+uploads/

@@ -2,6 +2,9 @@
 
 export const APP_BRAND_NAME = 'CD4';
 
+// Off for the Play Store launch: Pro is a digital subscription, which Play requires to go through Play Billing.
+export const PRO_PLAN_ENABLED = process.env.EXPO_PUBLIC_PRO_PLAN_ENABLED !== 'false';
+
 export const SUPABASE_PROFILE_MEDIA_BUCKET = (() => {
     const bucket = (process.env.EXPO_PUBLIC_SUPABASE_STORAGE_BUCKET || '').trim();
     return bucket || 'cd4-storage';

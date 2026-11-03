@@ -26,7 +26,7 @@ import { useThemePreference } from '../../context/ThemePreferenceContext';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import { useStorageInsights } from '../../hooks/useStorageInsights';
 import { useAppTheme } from '../../hooks/useAppTheme';
-import { getImageUrl } from '../../constants/Config';
+import { getImageUrl, PRO_PLAN_ENABLED } from '../../constants/Config';
 import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
 import { SettingsGroup, SettingsRow } from '../../ui/common/SettingsGroup';
 import { confirmAction } from '../../src/utils/confirm';
@@ -118,11 +118,13 @@ export default function SettingsScreen() {
                 {user.email}
               </Text>
             ) : null}
+            {PRO_PLAN_ENABLED ? (
             <View style={[styles.planPill, { backgroundColor: subscription.isActive ? theme.primarySoft : theme.surfaceMuted }]}>
               <Text style={[Typography.caption, { color: subscription.isActive ? theme.primary : theme.textSecondary, fontWeight: '600' }]}>
                 {subscription.isActive ? 'CD4 Pro' : 'Free plan'}
               </Text>
             </View>
+            ) : null}
           </View>
           <ChevronRight size={20} color={theme.textTertiary} />
         </Pressable>
@@ -130,7 +132,9 @@ export default function SettingsScreen() {
         <SettingsGroup title="Account">
           <SettingsRow icon={User} label={t('settings.account')} onPress={() => router.push('/(tabs)/profile-details')} />
           <SettingsRow icon={ImageIcon} label={t('settings.avatar')} onPress={() => router.push('/settings/avatar')} />
-          <SettingsRow icon={CreditCard} label={t('settings.subscription')} value={subscription.label} onPress={() => router.push('/settings/subscription')} />
+          {PRO_PLAN_ENABLED ? (
+            <SettingsRow icon={CreditCard} label={t('settings.subscription')} value={subscription.label} onPress={() => router.push('/settings/subscription')} />
+          ) : null}
           <SettingsRow icon={Receipt} label="Payment history" onPress={() => router.push('/payment-history')} />
           {canRecruitDoctors ? (
             <SettingsRow icon={Stethoscope} label={t('settings.doctorRecruitment')} onPress={() => router.push('/doctor-recruitment')} />

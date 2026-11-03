@@ -799,7 +799,7 @@ export default function CommunityScreen() {
                 onPress={async () => {
                   try {
                     const result = await ImagePicker.launchImageLibraryAsync({
-                      mediaTypes: ImagePicker.MediaTypeOptions.All,
+                      mediaTypes: ImagePicker.MediaTypeOptions.Images,
                       allowsMultipleSelection: true,
                       quality: 0.7,
                     });

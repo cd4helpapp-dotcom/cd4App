@@ -273,7 +273,7 @@ interface AgentMessage {
 import { useDoctors } from '../../hooks/useDoctor';
 import { useQueryClient } from '@tanstack/react-query';
 import { APPOINTMENT_QUERY_KEYS } from '../../hooks/useAppointment';
-import { getImageUrl } from '../../constants/Config';
+import { getImageUrl, PRO_PLAN_ENABLED } from '../../constants/Config';
 import ShimmerBlock from '../common/ShimmerSkeleton';
 import { HomeTabSkeleton } from '../common/TabLoadingSkeletons';
 import { getStoredLocationCity, syncLocationCityIfPermitted } from '../../services/locationPermission';
@@ -4765,8 +4765,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                         text2: 'Please take a short break and try again later.',
                     });
                 } else {
-                    setVoiceStatusText('Daily voice limit reached. Upgrade to Pro to continue.');
-                    setShowProPlanModal(true);
+                    setVoiceStatusText(PRO_PLAN_ENABLED ? 'Daily voice limit reached. Upgrade to Pro to continue.' : 'Daily voice limit reached. You can still chat by text.');
+                    setShowProPlanModal(PRO_PLAN_ENABLED);
                 }
             }
 
@@ -5103,8 +5103,8 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             clearVoiceAutoSubmitTimers();
             setIsAgentConversationVisible(true);
             setIsChatInputActive(false);
-            setVoiceStatusText('Daily voice limit reached. Upgrade to Pro to continue.');
-            setShowProPlanModal(true);
+            setVoiceStatusText(PRO_PLAN_ENABLED ? 'Daily voice limit reached. Upgrade to Pro to continue.' : 'Daily voice limit reached. You can still chat by text.');
+            setShowProPlanModal(PRO_PLAN_ENABLED);
             return;
         }
 
@@ -5551,7 +5551,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
             : null;
     const hasValidProWindow = subscriptionExpiryMs === null || (Number.isFinite(subscriptionExpiryMs) && subscriptionExpiryMs > Date.now());
     const isProUser = ['active', 'trialing', 'grace'].includes(subscriptionStatus) && hasValidProWindow;
-    const shouldShowVoiceUpgradePrompt = Boolean(voiceLimitPrompt?.blocked && !voiceLimitPrompt?.isPro && !isProUser);
+    const shouldShowVoiceUpgradePrompt = PRO_PLAN_ENABLED && Boolean(voiceLimitPrompt?.blocked && !voiceLimitPrompt?.isPro && !isProUser);
     const isLargeScreen = windowWidth > 768;
     const isCompactDoctorCard = windowWidth <= 390;
     const promoCardGap = 10;
@@ -6734,7 +6734,7 @@ export default function FindDoctorView({ theme }: FindDoctorViewProps) {
                                                             >
                                                                 {formatAgentReplyForTextMode(message.text)}
                                                             </Markdown>
-                                                            {message.role === 'ai' && (message.text.includes('Usage limit reached') || message.rateLimit?.blocked) && !message.rateLimit?.isPro && (
+                                                            {PRO_PLAN_ENABLED && message.role === 'ai' && (message.text.includes('Usage limit reached') || message.rateLimit?.blocked) && !message.rateLimit?.isPro && (
                                                                 <TouchableOpacity
                                                                     style={[styles.chatUpgradeButton, { backgroundColor: theme.tint }]}
                                                                     activeOpacity={0.88}

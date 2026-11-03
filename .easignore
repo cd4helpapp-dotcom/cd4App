@@ -12,3 +12,6 @@ node_modules
 .env.*
 dist
 web-build
+
+# Java backend, not part of the mobile app
+backend

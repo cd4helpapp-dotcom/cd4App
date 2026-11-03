@@ -15,6 +15,7 @@ import { ArrowLeft } from 'lucide-react-native';
 
 import Colors from '../../../constants/Colors';
 import PostCard, { CommunityPostCard } from '../../../ui/PostCard';
+import CommentsSheet from '../../../ui/community/CommentsSheet';
 import { useAuthContext } from '../../../context/AuthContext';
 import {
   useCommunityComments,
@@ -30,6 +31,7 @@ const mapPostToCardModel = (post: any): CommunityPostCard => ({
   id: post.id,
   content: post.content,
   imageUrl: post.imageUrl,
+  media: post.media,
   category: post.category,
   createdAt: post.createdAt,
   isPinned: post.isPinned,
@@ -53,6 +55,8 @@ export default function CommunityPostDeepLinkScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const { user } = useAuthContext();
+  const [commentsVisible, setCommentsVisible] = React.useState(false);
+  const viewerName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Community Member';
 
   const postQuery = useCommunityPost(normalizedPostId || null, user?._id || null);
   const commentsQuery = useCommunityComments(normalizedPostId || null, Boolean(normalizedPostId));
@@ -122,9 +126,8 @@ export default function CommunityPostDeepLinkScreen() {
                 theme={theme}
                 post={mapPostToCardModel(post)}
                 onPressLike={handleLike}
-                onPressComment={() => {}}
+                onPressComment={() => setCommentsVisible(true)}
                 onPressShare={handleShare}
-                commentDisabled
               />
               <Text style={[styles.commentHeading, { color: theme.text }]}>Comments</Text>
             </View>
@@ -143,6 +146,15 @@ export default function CommunityPostDeepLinkScreen() {
           contentContainerStyle={styles.contentContainer}
         />
       )}
+      <CommentsSheet
+        postId={normalizedPostId || null}
+        visible={commentsVisible}
+        viewerId={user?._id || null}
+        viewerName={viewerName}
+        viewerAvatar={user?.profilePicture || null}
+        onClose={() => setCommentsVisible(false)}
+        onOpenAuthor={(authorId) => router.push(`/user/${authorId}` as any)}
+      />
     </SafeAreaView>
   );
 }

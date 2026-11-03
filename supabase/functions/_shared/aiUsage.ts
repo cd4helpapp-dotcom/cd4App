@@ -11,6 +11,8 @@ const envInt = (name: string, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+const PRO_PLAN_ENABLED = (Deno.env.get("PRO_PLAN_ENABLED") || "").trim() !== "false"
+
 const FREE_DAILY_LIMIT = Math.max(1, Math.min(1000, envInt("CHAT_AI_MESSAGE_LIMIT_PER_WINDOW", 20)))
 // Pro is always strictly higher than Free, even if an env value is misconfigured.
 const PRO_DAILY_LIMIT = Math.max(FREE_DAILY_LIMIT + 1, Math.min(3000, envInt("CHAT_AI_PRO_MESSAGE_LIMIT_PER_WINDOW", 100)))
@@ -151,7 +153,9 @@ export const quotaBlockedReply = (quota: AiQuota): string => {
   }
   return quota.isPro
     ? `You've reached today's Pro limit of **${quota.limit}** AI messages. It resets in about **${wait}**.`
-    : `You've used all **${quota.limit}** free AI messages for today. **Upgrade to Pro** for a higher daily limit, or try again in about **${wait}**.`
+    : PRO_PLAN_ENABLED
+      ? `You've used all **${quota.limit}** free AI messages for today. **Upgrade to Pro** for a higher daily limit, or try again in about **${wait}**.`
+      : `You've used all **${quota.limit}** free AI messages for today. Please try again in about **${wait}**.`
 }
 
 export const voiceQuotaBlockedReply = (quota: AiQuota): string => {
@@ -161,5 +165,7 @@ export const voiceQuotaBlockedReply = (quota: AiQuota): string => {
   if (quota.blockType === "burst") return `You're starting voice sessions too quickly. Please wait about ${wait} and try again.`
   return quota.isPro
     ? `You've used all ${quota.limit} voice sessions for today. They reset in about ${wait}. You can still chat by text.`
-    : `You've used all ${quota.limit} free voice sessions for today. Upgrade to Pro for more, or continue by text chat.`
+    : PRO_PLAN_ENABLED
+      ? `You've used all ${quota.limit} free voice sessions for today. Upgrade to Pro for more, or continue by text chat.`
+      : `You've used all ${quota.limit} free voice sessions for today. You can continue by text chat.`
 }

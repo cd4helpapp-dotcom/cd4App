@@ -44,6 +44,7 @@ import {
 } from 'lucide-react-native';
 import { useNotificationsSystem } from '../../hooks/useNotificationsSystem';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { PRO_PLAN_ENABLED } from '../../constants/Config';
 import { elevation, Radius, Spacing, Typography } from '../../constants/Design';
 import ClayIcon, { ArtBadge, iconForConcern, useClayTones, type IconComponent } from '../common/ClayIcon';
 import DoctorAvatar from '../common/DoctorAvatar';
@@ -354,12 +355,12 @@ export function PatientHomeShowcase({
                                 <BadgeCheck size={13} color="#0B4F4C" />
                                 <Text style={styles.proPillText}>PRO</Text>
                             </View>
-                        ) : (
+                        ) : PRO_PLAN_ENABLED ? (
                             <Pressable onPress={onUpgrade} accessibilityRole="button" style={styles.proPill}>
                                 <Sparkles size={13} color="#0B4F4C" />
                                 <Text style={styles.proPillText}>Go Pro</Text>
                             </Pressable>
-                        )}
+                        ) : null}
                     </View>
 
                     <Text style={styles.heroTitle}>{aiTitle || 'How can I help you today?'}</Text>

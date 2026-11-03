@@ -12,6 +12,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cd4.app",
+      "associatedDomains": [
+        "applinks:cd4.app"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSSpeechRecognitionUsageDescription": "CD4 uses speech recognition to convert your voice into text for AI guidance.",
@@ -26,6 +29,23 @@
       "package": "com.cd4.app",
       "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "resize",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "cd4.app",
+              "pathPrefix": "/community/post"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",

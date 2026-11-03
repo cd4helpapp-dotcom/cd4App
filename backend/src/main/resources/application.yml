@@ -1,0 +1,78 @@
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: cd4-backend
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5433/cd4}
+    username: ${DATABASE_USERNAME:cd4}
+    password: ${DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:10}
+      connection-timeout: 10000
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Prisma owns the schema. This only checks that the Java models still match it.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 25MB
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /docs
+
+cd4:
+  security:
+    jwt-secret: ${JWT_SECRET}
+    access-token-minutes: 15
+    refresh-token-days: 30
+    max-failed-logins: 5
+    lock-minutes: 15
+    cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8082}
+  booking:
+    time-zone: Asia/Kolkata
+    slot-hold-minutes: 5
+    rebook-cooldown-days: 30
+    patient-change-cutoff-hours: 2
+    default-fee-inr: 500
+    doctor-share: 0.70
+  razorpay:
+    key-id: ${RAZORPAY_KEY_ID:}
+    key-secret: ${RAZORPAY_KEY_SECRET:}
+    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+  agora:
+    app-id: ${AGORA_APP_ID:}
+    app-certificate: ${AGORA_APP_CERTIFICATE:}
+  ai:
+    openai-api-key: ${OPENAI_API_KEY:}
+    chat-model: ${AI_CHAT_MODEL:gpt-5.6-terra}
+    quality-model: ${AI_QUALITY_MODEL:gpt-5.6-sol}
+    free-messages-per-day: 20
+    pro-messages-per-day: 100
+  storage:
+    dir: ${STORAGE_DIR:./uploads}

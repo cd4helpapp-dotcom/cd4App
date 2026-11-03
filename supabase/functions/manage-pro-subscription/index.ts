@@ -17,6 +17,7 @@ const YEARLY_PRICE_INR = Math.max(1, Number(Deno.env.get("PRO_YEARLY_PRICE_INR")
 const RAZORPAY_KEY_ID = Deno.env.get("RAZORPAY_KEY_ID") || "";
 const RAZORPAY_KEY_SECRET = Deno.env.get("RAZORPAY_KEY_SECRET") || "";
 const IS_RAZORPAY_LIVE = Boolean(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET);
+const PRO_PLAN_ENABLED = (Deno.env.get("PRO_PLAN_ENABLED") || "").trim() !== "false";
 
 const jsonResponse = (payload: Record<string, unknown>, status: number = 200) =>
   new Response(JSON.stringify(payload), {
@@ -183,6 +184,10 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (!PRO_PLAN_ENABLED && ["create_order", "verify_payment", "activate_test"].includes(action)) {
+      return jsonResponse({ success: false, message: "pro_plan_unavailable" }, 403);
+    }
+
     if (action === "create_order") {
       const billingCycleRaw = typeof body?.billingCycle === "string" ? body.billingCycle.trim().toLowerCase() : "yearly";
       const billingCycle = billingCycleRaw === "monthly" ? "monthly" : "yearly";
@@ -206,7 +211,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (action === "verify_payment" || action === "activate_test") {
+    if (action === "verify_payment") {
+      if (!RAZORPAY_KEY_SECRET) {
+        return jsonResponse({ success: false, message: "payments_not_configured" }, 503);
+      }
+
       const billingCycleRaw = typeof body?.billingCycle === "string" ? body.billingCycle.trim().toLowerCase() : "yearly";
       const billingCycle = billingCycleRaw === "monthly" ? "monthly" : "yearly";
       const amount = billingCycle === "monthly" ? MONTHLY_PRICE_INR : YEARLY_PRICE_INR;
@@ -217,14 +226,12 @@ Deno.serve(async (req: Request) => {
       const orderId = typeof body?.orderId === "string" && body.orderId.trim() ? body.orderId.trim() : fallback.orderId;
       const signature = typeof body?.signature === "string" ? body.signature.trim() : "";
 
-      if (action === "verify_payment" && (!paymentId || !orderId || !signature)) {
+      if (!paymentId || !orderId || !signature) {
         return jsonResponse({ success: false, message: "order_payment_signature_required" }, 400);
       }
-      if (action === "verify_payment" && RAZORPAY_KEY_SECRET) {
-        const expected = await computeHmacSha256Hex(`${orderId}|${paymentId}`, RAZORPAY_KEY_SECRET);
-        if (expected !== signature) {
-          return jsonResponse({ success: false, message: "invalid_payment_signature" }, 400);
-        }
+      const expected = await computeHmacSha256Hex(`${orderId}|${paymentId}`, RAZORPAY_KEY_SECRET);
+      if (expected !== signature) {
+        return jsonResponse({ success: false, message: "invalid_payment_signature" }, 400);
       }
 
       const existingActive = await fetchActiveSubscription(serviceClient, userId);

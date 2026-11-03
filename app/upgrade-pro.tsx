@@ -10,9 +10,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { ArrowLeft, Bot, CheckCircle, Star } from 'lucide-react-native';
 import Colors from '../constants/Colors';
+import { PRO_PLAN_ENABLED } from '../constants/Config';
 import { useAuthContext } from '../context/AuthContext';
 import { supabase } from '../src/lib/supabase';
 import { openRazorpayCheckout } from '../services/razorpay';
@@ -74,7 +75,11 @@ const PRO_FEATURES = [
   'Hindi + English support for day-to-day health questions',
 ];
 
-export default function UpgradeProScreen() {
+export default function UpgradeProRoute() {
+  return PRO_PLAN_ENABLED ? <UpgradeProScreen /> : <Redirect href="/" />;
+}
+
+function UpgradeProScreen() {
   const router = useRouter();
   const { user, refetchUser } = useAuthContext();
   const colorScheme = useColorScheme();

@@ -132,6 +132,25 @@ const resolveCommunityMediaPath = (rawValue: unknown): { path: string | null; di
   return { path: null, directUrl: value };
 };
 
+const getCommunityMediaRows = (row: any): { url: string; type: 'image' }[] => {
+  const rawMedia = Array.isArray(row?.media) ? row.media : [];
+  const media = rawMedia
+    .filter((item: any) => item?.type !== 'video' && typeof item?.url === 'string' && item.url.trim().length > 0)
+    .map((item: any) => ({ url: item.url.trim(), type: 'image' as const }));
+
+  // Older posts only have image_url. New posts retain it as the cover as well.
+  if (!media.length && typeof row?.image_url === 'string' && row.image_url.trim()) {
+    media.push({ url: row.image_url.trim(), type: 'image' });
+  }
+  return media;
+};
+
+const getCommunityMediaValues = (row: any): string[] => {
+  const values = getCommunityMediaRows(row).map((item) => item.url);
+  if (typeof row?.image_url === 'string' && row.image_url.trim()) values.push(row.image_url.trim());
+  return Array.from(new Set(values));
+};
+
 // Fetches every picture link on a feed page in one request. getCommunityMediaAccessUrl then finds them in the cache.
 const primeCommunitySignedUrls = async (values: unknown[]) => {
   const now = Date.now();
@@ -363,9 +382,9 @@ const safeDeleteCommunityImage = async (filePath: string | null) => {
   }
 };
 
-export const validateCommunityDraft = (content: string): { valid: boolean; message?: string } => {
+export const validateCommunityDraft = (content: string, hasMedia = false): { valid: boolean; message?: string } => {
   const normalized = normalizeText(content || '');
-  if (!normalized || normalized.length < 8) {
+  if (normalized.length < 8 && !hasMedia) {
     return { valid: false, message: 'Please write at least 8 characters.' };
   }
   if (normalized.length > 1800) {
@@ -457,12 +476,16 @@ const mapCommunityPostRowToModel = async (args: {
     role: 'unknown',
     isVerified: false,
   };
+  const rawMedia = getCommunityMediaRows(row);
+  const media = await Promise.all(
+    rawMedia.map(async (item) => ({ ...item, url: (await getCommunityMediaAccessUrl(item.url)) || item.url }))
+  );
 
   return {
     id: String(row.id),
     authorId,
     content: typeof row?.body === 'string' ? row.body : '',
-    imageUrl: await getCommunityMediaAccessUrl(row?.image_url),
+    imageUrl: media[0]?.url || (await getCommunityMediaAccessUrl(row?.image_url)),
     category:
       row?.category === 'success_stories' || row?.category === 'challenges' || row?.category === 'mentor_tips'
         ? row.category
@@ -480,6 +503,7 @@ const mapCommunityPostRowToModel = async (args: {
     likedByMe: likedSet.has(String(row.id)),
     followedByMe: Boolean(followingSet?.has(authorId)),
     author: authorMap.get(authorId) || fallbackAuthor,
+    media,
   };
 };
 
@@ -600,7 +624,7 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
   let regularQuery = supabase
     .from('community_posts')
     .select(
-      'id, author_id, body, image_url, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
+      'id, author_id, body, image_url, media, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
     )
     .is('deleted_at', null)
     .eq('status', 'published')
@@ -609,8 +633,8 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
     .order('id', { ascending: false })
     .limit(FEED_PAGE_SIZE);
 
-  if (cursor?.createdAt) {
-    regularQuery = regularQuery.lt('created_at', cursor.createdAt);
+  if (cursor?.createdAt && cursor.id) {
+    regularQuery = regularQuery.or(`created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`);
   }
 
   const [{ blockedUserIds, mutedKeywords }, regularResult, pinnedResult] = await Promise.all([
@@ -620,7 +644,7 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
       ? supabase
           .from('community_posts')
           .select(
-            'id, author_id, body, image_url, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
+            'id, author_id, body, image_url, media, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
           )
           .is('deleted_at', null)
           .eq('status', 'published')
@@ -667,7 +691,7 @@ const fetchCommunityFeedPage = async (userId: string, cursor: CommunityFeedCurso
     authorIds.length > 0
       ? supabase.from('community_follows').select('following_id').eq('follower_id', userId).in('following_id', authorIds)
       : Promise.resolve({ data: [], error: null }),
-    primeCommunitySignedUrls(combinedRows.map((row: any) => row?.image_url)),
+    primeCommunitySignedUrls(combinedRows.flatMap(getCommunityMediaValues)),
   ]);
 
   if (likeResult.error) {
@@ -894,14 +918,18 @@ const bumpFeedCommentCountCache = (queryClient: ReturnType<typeof useQueryClient
 };
 
 const fetchCommunityPostById = async (postId: string, userId: string | null): Promise<CommunityPost> => {
-  const { data: row, error } = await supabase
+  const [preferences, postResult] = await Promise.all([
+    userId ? loadCommunityUserPreferences(userId) : null,
+    supabase
     .from('community_posts')
     .select(
-      'id, author_id, body, image_url, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
+      'id, author_id, body, image_url, media, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
     )
     .eq('id', postId)
     .is('deleted_at', null)
-    .single();
+    .single(),
+  ]);
+  const { data: row, error } = postResult;
 
   if (error) {
     throw error;
@@ -912,6 +940,9 @@ const fetchCommunityPostById = async (postId: string, userId: string | null): Pr
   }
 
   const authorId = typeof row?.author_id === 'string' ? row.author_id : '';
+  if (authorId && preferences?.blockedUserIds.has(authorId)) {
+    throw new Error('Post is not available.');
+  }
   const authorMap = await loadAuthorMap(authorId ? [authorId] : []);
   const likedSet = new Set<string>();
 
@@ -937,16 +968,21 @@ const fetchCommunityPostById = async (postId: string, userId: string | null): Pr
 };
 
 const fetchCommunityAuthorPosts = async (authorId: string, userId: string | null): Promise<CommunityPost[]> => {
-  const { data: rows, error } = await supabase
+  const [preferences, postsResult] = await Promise.all([
+    userId ? loadCommunityUserPreferences(userId) : null,
+    supabase
     .from('community_posts')
     .select(
-      'id, author_id, body, image_url, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
+      'id, author_id, body, image_url, media, category, status, moderation_reason, like_count, comment_count, share_count, is_pinned, created_at'
     )
     .eq('author_id', authorId)
     .is('deleted_at', null)
     .eq('status', 'published')
     .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(20),
+  ]);
+  if (preferences?.blockedUserIds.has(authorId)) return [];
+  const { data: rows, error } = postsResult;
   if (error) throw error;
 
   const postRows = rows || [];
@@ -956,7 +992,7 @@ const fetchCommunityAuthorPosts = async (authorId: string, userId: string | null
     userId && postIds.length
       ? supabase.from('community_post_likes').select('post_id').eq('user_id', userId).in('post_id', postIds)
       : Promise.resolve({ data: [], error: null }),
-    primeCommunitySignedUrls(postRows.map((row: any) => row?.image_url)),
+    primeCommunitySignedUrls(postRows.flatMap(getCommunityMediaValues)),
   ]);
   if (likeResult.error) throw likeResult.error;
 
@@ -1476,7 +1512,7 @@ export const useEditCommunityPost = (userId: string | null) => {
       const postId = (payload?.postId || '').trim();
       if (!postId) throw new Error('Invalid post id.');
 
-      const validation = validateCommunityDraft(payload.content);
+      const validation = validateCommunityDraft(payload.content, Boolean(payload.assets?.length));
       if (!validation.valid) {
         throw new Error(validation.message || 'Post validation failed.');
       }
@@ -1490,36 +1526,16 @@ export const useEditCommunityPost = (userId: string | null) => {
       
       if (fetchError) throw fetchError;
 
-      const mediaItems: { url: string; type: 'image' | 'video'; thumbnail?: string }[] = [];
+      const mediaItems: { url: string; type: 'image' }[] = [];
       const uploadedPaths: string[] = [];
       const isUpdatingMedia = payload.assets && payload.assets.length > 0;
 
       try {
         if (isUpdatingMedia && payload.assets) {
-          for (const asset of payload.assets) {
-            const isVideo = (asset.mimeType || '').startsWith('video/');
-            const fileExt = asset.uri.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
-            const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-            const path = `${userId}/${fileName}`;
-
-            const formData = new FormData();
-            formData.append('file', {
-              uri: asset.uri,
-              name: fileName,
-              type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-            } as any);
-
-            const { error: uploadError } = await supabase.storage
-              .from('community-posts')
-              .upload(path, formData);
-
-            if (uploadError) throw uploadError;
-            uploadedPaths.push(path);
-
-            mediaItems.push({
-              url: path,
-              type: isVideo ? 'video' : 'image',
-            });
+          for (const asset of payload.assets.slice(0, 10)) {
+            const uploaded = await uploadToCommunityMediaBucket({ userId, asset });
+            uploadedPaths.push(uploaded.filePath);
+            mediaItems.push({ url: uploaded.filePath, type: 'image' });
           }
         }
 
@@ -1529,9 +1545,11 @@ export const useEditCommunityPost = (userId: string | null) => {
         if (isUpdatingMedia) {
           updateData.media = mediaItems;
           updateData.image_url = mediaItems.length > 0 ? mediaItems[0].url : null;
-          // When media changes, we should ideally re-trigger moderation status, 
-          // but for now we follow the same status or reset to pending if needed.
-          // Let's assume content update keeps status as is unless we add scan here too.
+          const scanResults = await Promise.all(mediaItems.map((item) => scanCommunityImage(item.url)));
+          const blocked = scanResults.find((result) => !result.safe);
+          updateData.status = blocked ? 'pending_review' : 'published';
+          updateData.moderation_reason = blocked?.reason || null;
+          updateData.moderation_meta = blocked?.meta || {};
         }
 
         const { error: updateError } = await supabase
@@ -1544,10 +1562,9 @@ export const useEditCommunityPost = (userId: string | null) => {
         if (updateError) throw updateError;
 
         // Cleanup old media if successful replacement
-        if (isUpdatingMedia && existingPost?.media) {
-          const oldMedia = Array.isArray(existingPost.media) ? existingPost.media : [];
-          for (const item of oldMedia) {
-            const oldPath = resolveCommunityMediaPath(item.url).path;
+        if (isUpdatingMedia) {
+          for (const value of getCommunityMediaValues(existingPost)) {
+            const oldPath = resolveCommunityMediaPath(value).path;
             if (oldPath && oldPath.startsWith(`${userId}/`)) {
               await safeDeleteCommunityImage(oldPath);
             }
@@ -1599,35 +1616,15 @@ export const useCreateCommunityPost = (userId: string | null) => {
         throw new Error('Post content or media is required.');
       }
 
-      const mediaItems: { url: string; type: 'image' | 'video'; thumbnail?: string }[] = [];
+      const mediaItems: { url: string; type: 'image' }[] = [];
       const uploadedPaths: string[] = [];
 
       try {
         if (payload.assets && payload.assets.length > 0) {
-          for (const asset of payload.assets) {
-            const isVideo = (asset.mimeType || '').startsWith('video/');
-            const fileExt = asset.uri.split('.').pop() || (isVideo ? 'mp4' : 'jpg');
-            const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-            const path = `${userId}/${fileName}`;
-
-            const formData = new FormData();
-            formData.append('file', {
-              uri: asset.uri,
-              name: fileName,
-              type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-            } as any);
-
-            const { error: uploadError } = await supabase.storage
-              .from('community-posts')
-              .upload(path, formData);
-
-            if (uploadError) throw uploadError;
-            uploadedPaths.push(path);
-
-            mediaItems.push({
-              url: path,
-              type: isVideo ? 'video' : 'image',
-            });
+          for (const asset of payload.assets.slice(0, 10)) {
+            const uploaded = await uploadToCommunityMediaBucket({ userId, asset });
+            uploadedPaths.push(uploaded.filePath);
+            mediaItems.push({ url: uploaded.filePath, type: 'image' });
           }
         }
 
@@ -1635,20 +1632,13 @@ export const useCreateCommunityPost = (userId: string | null) => {
         let moderationReason: string | null = null;
         let moderationMeta: any = {};
 
-        // Scan first image for safety if available
-        const firstImage = mediaItems.find(m => m.type === 'image');
-        if (firstImage) {
-          try {
-            const scanResult = await scanCommunityImage(firstImage.url);
-            if (!scanResult.safe) {
-              targetStatus = 'pending_review';
-              moderationReason = scanResult.reason || 'Safety scan flagged content';
-              moderationMeta = scanResult.meta || {};
-            }
-          } catch (e) {
-            console.warn('Scan failed, defaulting to pending_review', e);
+        if (mediaItems.length) {
+          const scanResults = await Promise.all(mediaItems.map((item) => scanCommunityImage(item.url)));
+          const blocked = scanResults.find((result) => !result.safe);
+          if (blocked) {
             targetStatus = 'pending_review';
-            moderationReason = 'Automatic safety scan failed';
+            moderationReason = blocked.reason || 'Safety scan flagged content';
+            moderationMeta = blocked.meta || {};
           }
         }
 
@@ -1689,7 +1679,7 @@ export const useDeleteCommunityPost = (userId: string | null) => {
 
       const { data: postRow, error: postError } = await supabase
         .from('community_posts')
-        .select('id, author_id, image_url, deleted_at')
+        .select('id, author_id, image_url, media, deleted_at')
         .eq('id', postId)
         .single();
       if (postError) throw postError;
@@ -1717,10 +1707,8 @@ export const useDeleteCommunityPost = (userId: string | null) => {
         throw new Error('Could not delete this post right now.');
       }
 
-      const imagePath = resolveCommunityMediaPath(postRow.image_url).path;
-      if (imagePath && imagePath.startsWith(`${userId}/`)) {
-        await safeDeleteCommunityImage(imagePath);
-      }
+      const mediaPaths = Array.from(new Set(getCommunityMediaValues(postRow).map((value) => resolveCommunityMediaPath(value).path).filter(Boolean)));
+      await Promise.all(mediaPaths.map((path) => path && path.startsWith(`${userId}/`) ? safeDeleteCommunityImage(path) : Promise.resolve()));
 
       return { postId };
     },
@@ -1771,6 +1759,6 @@ const scanCommunityImage = async (filePath: string): Promise<{ safe: boolean; re
     };
   } catch (error) {
     console.warn('Moderation helper failed:', error);
-    return { safe: true }; 
+    return { safe: false, reason: 'Automatic safety scan failed' };
   }
 };
