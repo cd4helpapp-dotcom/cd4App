@@ -33,7 +33,7 @@ export default function OngoingCallBanner() {
     const isOnChatDetailScreen = pathname.endsWith('/chat-detail');
 
     if (!hasOngoingCall || !activeCallRoomId) return null;
-    if (callStatus !== 'ringing') return null;
+    if (callStatus !== 'ringing' && !(callStatus === 'active' && callType === 'audio')) return null;
     if (isOnChatDetailScreen) return null;
 
     const label = getBannerLabel(callStatus, callType);

@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Toast from 'react-native-toast-message';
-import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView, LayoutAnimation, UIManager } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image, KeyboardAvoidingView, Modal, Alert, Linking, Keyboard, ScrollView, LayoutAnimation, UIManager, Dimensions } from 'react-native';
 import type { TextInputInstance } from 'react-native';
 import { AppState, useColorScheme } from 'react-native';
 import Colors from '../constants/Colors';
 import { getImageUrl } from '../constants/Config';
-import { ArrowLeft, Check, Video, Phone, PhoneOff, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, ChevronUp, ChevronDown, Maximize2, MessageCircle } from 'lucide-react-native';
+import { ArrowLeft, Check, Video, Phone, PhoneOff, Send, Paperclip, MoreVertical, FileText, X, Mic, MicOff, VideoOff, Volume2, VolumeX, CheckCheck, ChevronRight, ChevronUp, ChevronDown, Maximize2, MessageCircle, SwitchCamera, AlertCircle } from 'lucide-react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { PanResponder, Animated } from 'react-native';
 import { useFocusEffect } from 'expo-router';
@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthContext } from '../context/AuthContext';
 import { useAppLanguage } from '../context/AppLanguageContext';
-import { useChatMessages, useSendMessage, useGetOrCreateRoom, useMarkAsRead, useChatRooms, useSendPrescriptionPdfToChat } from '../hooks/useChat';
+import { useChatMessages, useSendMessage, useGetOrCreateRoom, useMarkAsRead, useChatRooms, useSendPrescriptionPdfToChat, removeLocalChatMessage } from '../hooks/useChat';
 import { useCall } from '../hooks/useCall';
 import { useOnlineStatus } from '../hooks/usePresence';
 import { useFileTransfer } from '../hooks/useFileTransfer';
@@ -526,11 +526,19 @@ const resolveChatAttachmentPathForOpen = (rawUrl?: string | null): { path: strin
 
 const ensureOpenableAttachmentUrl = async (attachmentUrl?: string | null): Promise<string | null> => {
     const resolved = resolveChatAttachmentPathForOpen(attachmentUrl);
+    if (resolved.path) {
+        const { data, error } = await supabase.storage
+            .from('chat-attachments')
+            .createSignedUrl(resolved.path, 60 * 60 * 24 * 7);
+        if (!error && data?.signedUrl) {
+            return data.signedUrl;
+        }
+    }
     if (resolved.directUrl && /^https?:\/\//i.test(resolved.directUrl)) return resolved.directUrl;
     if (!resolved.path) return null;
     const { data, error } = await supabase.storage
         .from('chat-attachments')
-        .createSignedUrl(resolved.path, 60 * 30);
+        .createSignedUrl(resolved.path, 60 * 60 * 24 * 7);
     if (error || !data?.signedUrl) {
         throw error || new Error('Could not generate secure file link.');
     }
@@ -587,7 +595,9 @@ const PiPView = ({
     isRemoteVideoMuted,
     headerAvatarUrl
 }: any) => {
-    const pan = useRef(new Animated.ValueXY({ x: 200, y: 150 })).current;
+    const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+    const initialX = Math.max(16, screenWidth - 120 - 16);
+    const pan = useRef(new Animated.ValueXY({ x: initialX, y: 120 })).current;
 
     const panResponder = useRef(
         PanResponder.create({
@@ -601,6 +611,23 @@ const PiPView = ({
             ),
             onPanResponderRelease: () => {
                 pan.flattenOffset();
+                const currentX = (pan.x as any)._value ?? 0;
+                const currentY = (pan.y as any)._value ?? 0;
+                const minX = 16;
+                const maxX = Math.max(minX, screenWidth - 120 - 16);
+                const minY = 60;
+                const maxY = Math.max(minY, screenHeight - 180 - 100);
+
+                const clampedX = Math.min(Math.max(currentX, minX), maxX);
+                const clampedY = Math.min(Math.max(currentY, minY), maxY);
+
+                if (currentX !== clampedX || currentY !== clampedY) {
+                    Animated.spring(pan, {
+                        toValue: { x: clampedX, y: clampedY },
+                        useNativeDriver: false,
+                        bounciness: 4,
+                    }).start();
+                }
             },
         })
     ).current;
@@ -655,7 +682,7 @@ const PiPView = ({
 
 
 
-const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress, onImagePress }: any) => {
+const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress, onImagePress, onPress }: any) => {
     const attachmentUri = msg.attachment_access_url || msg.attachment_url;
     const systemMessageSet = new Set([
         'Waiting for this message. This may take a while.',
@@ -678,7 +705,13 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
          );
     }
     return (
-        <TouchableOpacity onLongPress={() => onLongPress(msg)} delayLongPress={300} activeOpacity={0.9} style={[styles.messageBubble, isMe ? styles.myMessage : styles.theirMessage, { backgroundColor: isMe ? theme.tint : theme.cardBackground }]}>
+        <TouchableOpacity
+            onPress={() => onPress ? onPress(msg) : undefined}
+            onLongPress={() => onLongPress(msg)}
+            delayLongPress={300}
+            activeOpacity={0.9}
+            style={[styles.messageBubble, isMe ? styles.myMessage : styles.theirMessage, { backgroundColor: isMe ? theme.tint : theme.cardBackground }]}
+        >
             {msg.reply_to && (
                 <View style={[styles.replyBubble, { backgroundColor: isMe ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.05)' }]}>
                     <Text style={[styles.replyText, { color: isMe ? 'rgba(255,255,255,0.7)' : theme.textSecondary }]} numberOfLines={1}>
@@ -716,14 +749,38 @@ const MessageItem = React.memo(({ msg, isMe, theme, otherPartyName, onLongPress,
             {msg.is_pending ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}><Text style={{ fontSize: 11, color: isMe ? 'rgba(255,255,255,0.75)' : theme.textSecondary }}>{msg.type === 'text' ? 'Sending...' : 'Uploading...'}</Text></View>
             ) : null}
+            {msg.is_failed ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 4 }}>
+                    <AlertCircle size={12} color="#FF3B30" />
+                    <Text style={{ fontSize: 11, color: '#FF3B30' }}>
+                        {msg.error_message || 'Failed to send. Tap to retry'}
+                    </Text>
+                </View>
+            ) : null}
             <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 4, gap: 4 }}>
                 <Text style={[styles.timeText, { color: isMe ? 'rgba(255,255,255,0.7)' : theme.textSecondary, marginTop: 0 }]}>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-                {isMe && !msg.is_pending && (msg.is_read ? <CheckCheck size={14} color="#34B7F1" /> : <Check size={14} color="rgba(255,255,255,0.7)" />)}
+                {isMe && !msg.is_pending && !msg.is_failed && (
+                    msg.is_read ? (
+                        <CheckCheck size={14} color="#34B7F1" />
+                    ) : msg.is_delivered ? (
+                        <CheckCheck size={14} color="rgba(255,255,255,0.7)" />
+                    ) : (
+                        <Check size={14} color="rgba(255,255,255,0.7)" />
+                    )
+                )}
+                {isMe && msg.is_failed && (
+                    <AlertCircle size={14} color="#FF3B30" />
+                )}
             </View>
         </TouchableOpacity>
     );
 }, (prevProps, nextProps) => {
-    return prevProps.msg.id === nextProps.msg.id && prevProps.msg.is_read === nextProps.msg.is_read && prevProps.msg.is_pending === nextProps.msg.is_pending && prevProps.msg.text === nextProps.msg.text
+    return prevProps.msg.id === nextProps.msg.id
+        && prevProps.msg.is_read === nextProps.msg.is_read
+        && prevProps.msg.is_pending === nextProps.msg.is_pending
+        && prevProps.msg.is_failed === nextProps.msg.is_failed
+        && prevProps.msg.is_delivered === nextProps.msg.is_delivered
+        && prevProps.msg.text === nextProps.msg.text
         && prevProps.msg.attachment_access_url === nextProps.msg.attachment_access_url
         && prevProps.msg.reply_to?.id === nextProps.msg.reply_to?.id
         && prevProps.theme === nextProps.theme
@@ -929,6 +986,7 @@ export default function ChatDetailScreen() {
         toggleAudio,
         toggleVideo,
         toggleSpeaker,
+        flipCamera,
     } = useCall(roomId);
 
     const hasLiveCall = callStatus === 'ringing' || callStatus === 'active';
@@ -1570,6 +1628,34 @@ export default function ChatDetailScreen() {
         return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
     };
 
+    const handleMessagePress = useCallback((msg: any) => {
+        if (msg.is_failed) {
+            Alert.alert('Message Failed', 'Would you like to retry or delete this message?', [
+                {
+                    text: 'Retry',
+                    onPress: () => {
+                        if (msg.type === 'text') {
+                            sendMessageMutation.mutate({
+                                roomId: msg.room_id,
+                                text: msg.text,
+                                replyToId: msg.reply_to_id,
+                                clientTempId: msg.id,
+                            });
+                        }
+                    }
+                },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => {
+                        removeLocalChatMessage(queryClient, msg.room_id, msg.id);
+                    }
+                },
+                { text: 'Cancel', style: 'cancel' }
+            ]);
+        }
+    }, [queryClient, sendMessageMutation]);
+
     const renderMessageItem = useCallback(({ item, index }: { item: any; index: number }) => {
         const isMe = item.sender_id === user?.id;
         const startsNewDay = dayKey(item.created_at) !== dayKey(messages[index + 1]?.created_at);
@@ -1587,19 +1673,20 @@ export default function ChatDetailScreen() {
                     otherPartyName={otherPartyName}
                     onLongPress={handleLongPress}
                     onImagePress={setSelectedImage}
+                    onPress={handleMessagePress}
                 />
             </>
         );
-    }, [user?.id, theme, otherPartyName, handleLongPress, messages, t]);
+    }, [user?.id, theme, otherPartyName, handleLongPress, messages, t, handleMessagePress]);
 
-    // On Android, use a plain View with manual keyboard padding
+    // On Android, use a plain View with native windowSoftInputMode handling
     // On iOS, use KeyboardAvoidingView with padding behavior
     const Wrapper = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
     const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: 0 } : {};
 
     return (
         <Wrapper
-            style={[styles.container, { backgroundColor: theme.background, paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0 }]}
+            style={[styles.container, { backgroundColor: theme.background }]}
             {...wrapperProps}
         >
             {/* Header */}
@@ -1924,6 +2011,12 @@ export default function ChatDetailScreen() {
                                         {isVideoMuted ? <VideoOff size={24} color="#fff" /> : <Video size={24} color="#fff" />}
                                     </TouchableOpacity>
                                 )}
+
+                                {callType === 'video' && callStatus === 'active' && (
+                                    <TouchableOpacity onPress={flipCamera} style={styles.controlButton}>
+                                        <SwitchCamera size={24} color="#fff" />
+                                    </TouchableOpacity>
+                                )}
                                 
                                 {callStatus === 'active' && (
                                     <TouchableOpacity onPress={toggleAudio} style={[styles.controlButton, isAudioMuted && styles.controlButtonActive]}>
@@ -1942,7 +2035,7 @@ export default function ChatDetailScreen() {
                                             Keyboard.dismiss();
                                             toggleSpeaker();
                                         }}
-                                        style={[styles.controlButton, !isSpeakerOn && styles.controlButtonActive]}
+                                        style={[styles.controlButton, isSpeakerOn && styles.controlButtonActive]}
                                     >
                                         {isSpeakerOn ? <Volume2 size={24} color="#fff" /> : <VolumeX size={24} color="#fff" />}
                                     </TouchableOpacity>
@@ -2538,7 +2631,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 20,
+        gap: 14,
     },
     controlButton: {
         width: 50,
@@ -2549,7 +2642,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     controlButtonActive: {
-        backgroundColor: 'rgba(255,255,255,0.6)',
+        backgroundColor: 'rgba(5,150,105,0.95)',
     },
     minimizeButton: {
         position: 'absolute',

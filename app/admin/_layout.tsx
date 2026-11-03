@@ -57,7 +57,18 @@ export default function AdminLayout() {
     return (
         <Tabs
             detachInactiveScreens={false}
-            tabBar={(props) => <SmoothTabBar {...props} visibleRouteNames={ADMIN_VISIBLE_TABS} />}
+            tabBar={(props) => (
+                <SmoothTabBar
+                    {...props}
+                    visibleRouteNames={ADMIN_VISIBLE_TABS}
+                    themeColors={{
+                        background: theme.background,
+                        border: theme.borderColor,
+                        active: theme.tint,
+                        inactive: theme.tabIconDefault,
+                    }}
+                />
+            )}
             screenOptions={{
                 animation: 'shift',
                 lazy: true,

@@ -87,7 +87,7 @@ export const getPlainSummary = (report: ReportLike, maxChars = 220): string => {
 
 const normalizeFlag = (value: string): HighlightFlag => {
   const text = value.toLowerCase();
-  if (/\b(high|elevated|raised|above|increased|positive)\b/.test(text)) return 'high';
+  if (/\b(high|elevated|raised|above|increased|positive|reactive|detected|present|trace)\b/.test(text)) return 'high';
   if (/\b(low|decreased|reduced|below|deficient)\b/.test(text)) return 'low';
   if (/\b(normal|within|ok|negative|optimal)\b/.test(text)) return 'normal';
   return 'unknown';
@@ -101,6 +101,7 @@ export const formatValue = (value: string): string => (/^[<>]?\s*-?\d+(\.\d+)?$/
 export const formatReference = (reference: string): string => {
   // The model writes these when a paper prints no range; they are not a range to show.
   if (/^(not |n\/a|none\b|clinical|unknown)/i.test(reference.trim())) return '';
+  if (QUALITATIVE_VALUE_PATTERN.test(reference.trim())) return reference.trim().replace(/\s+/g, ' ');
   const text = trimZeros(reference.trim())
     .replace(/^reference\s*/i, '')
     .replace(/\s*[-–—]\s*/g, ' – ');
@@ -124,16 +125,28 @@ const splitValueAndUnit = (text: string): [string, string] | null => {
   return match ? [match[1].replace(/\s+/g, ''), match[2].trim()] : null;
 };
 
+const QUALITATIVE_VALUE_PATTERN = /\b(not detected|non[- ]?reactive|positive|negative|reactive|nil|trace|detected|present|absent)\b/i;
+
+const splitHighlightValue = (text: string): [string, string] | null => {
+  const numeric = splitValueAndUnit(text);
+  if (numeric) return numeric;
+  const match = text.trim().match(QUALITATIVE_VALUE_PATTERN);
+  if (!match || match.index === undefined) return null;
+  const value = match[0].replace(/\s+/g, ' ').trim();
+  return [value, ''];
+};
+
 // The model writes highlights in two shapes; both are seen in production data:
 //   "LDL cholesterol / 180.12 / mg/dL / reference <100.00 / high"
 //   "LDL cholesterol, calculated: 180.12 mg/dL | reference <100.00 | High; at-risk range"
 export const parseHighlightLine = (line: string): ReportHighlight | null => {
   if (isEmptyFinding(line)) return null;
-  if (line.includes(' | ') || /^[^/|]+:\s*[<>≤≥]?\s*-?\d/.test(line)) {
+  const valueStart = '(?:[<>≤≥]?\\s*-?\\d|not detected|non[- ]?reactive|positive|negative|reactive|nil|trace|detected|present|absent)';
+  if (line.includes(' | ') || new RegExp(`^[^/|]+:\\s*${valueStart}`, 'i').test(line)) {
     const [head, referenceText = '', flagText = ''] = line.split(' | ').map((part) => part.trim());
-    const colon = head.search(/:\s*[<>≤≥]?\s*-?\d/);
+    const colon = head.search(new RegExp(`:\\s*${valueStart}`, 'i'));
     if (colon < 1) return null;
-    const valueUnit = splitValueAndUnit(head.slice(colon + 1));
+    const valueUnit = splitHighlightValue(head.slice(colon + 1));
     if (!valueUnit) return null;
     const reference = referenceText.replace(/^references?\s*/i, '').split(' / ')[0];
     return {
@@ -147,14 +160,23 @@ export const parseHighlightLine = (line: string): ReportHighlight | null => {
   const parts = line.split(' / ').map((part) => part.trim());
   if (parts.length < 2 || isEmptyFinding(line)) return null;
   // Names can contain " / " themselves ("Creatinine / eGFR"); the value is the first part that starts with a number.
-  const valueIndex = parts.findIndex((part, index) => index > 0 && /^[<>≤≥]?\s*-?\d/.test(part));
+  const valueIndex = parts.findIndex((part, index) => index > 0 && (splitHighlightValue(part) !== null));
   if (valueIndex < 1) return null;
   const name = parts.slice(0, valueIndex).join(' / ');
-  const [value, unit = '', reference = '', flagText = ''] = parts.slice(valueIndex);
-  if (!name || !value) return null;
+  const [rawValue, nextPart = '', thirdPart = '', fourthPart = ''] = parts.slice(valueIndex);
+  const numericValue = /^[<>≤≥]?\s*-?\d/.test(rawValue);
+  const valueUnit = splitHighlightValue(rawValue);
+  if (!name || !valueUnit) return null;
+  const unit = numericValue ? nextPart : valueUnit[1];
+  const reference = numericValue
+    ? thirdPart
+    : (/^references?\s*/i.test(nextPart) ? nextPart : thirdPart);
+  const flagText = numericValue
+    ? fourthPart
+    : (/^references?\s*/i.test(nextPart) ? thirdPart : fourthPart);
   return {
     name: formatLabel(name),
-    value: formatValue(value),
+    value: formatValue(valueUnit[0]),
     unit,
     reference: formatReference(reference),
     flag: normalizeFlag(flagText || reference),

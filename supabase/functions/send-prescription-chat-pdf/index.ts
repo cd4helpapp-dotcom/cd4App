@@ -11,8 +11,8 @@ const corsHeaders = {
 const DEFAULT_OPENAI_MODEL = "gpt-5.6-sol";
 const DEFAULT_OPENAI_FALLBACK_MODEL = "gpt-5.6-terra";
 const APP_BRAND_NAME = "CD4";
-const APP_EMAIL_DOMAIN = "cd4.app";
-const APP_EMAIL_FROM = `${APP_BRAND_NAME} <no-reply@${APP_EMAIL_DOMAIN}>`;
+const APP_EMAIL_DOMAIN = "cd4.co.in";
+const APP_EMAIL_FROM = `${APP_BRAND_NAME} <noreply@${APP_EMAIL_DOMAIN}>`;
 const APP_TELECONSULTATION_LABEL = `${APP_BRAND_NAME} Teleconsultation`;
 
 const clipText = (value: string, maxLength: number): string => {
@@ -101,15 +101,97 @@ const sendPrescriptionEmail = async (args: {
   if (!resendApiKey) return { sent: false, reason: "resend_api_key_missing" };
   if (!args.toEmail) return { sent: false, reason: "patient_email_missing" };
 
-  const subject = `New Prescription Received - ${APP_BRAND_NAME}`;
+  const subject = `Your Medical Prescription - Dr. ${sanitizePdfText(args.doctorName)} | ${APP_BRAND_NAME}`;
+  const deepLink = `https://${APP_EMAIL_DOMAIN}/chat-detail?roomId=${encodeURIComponent(args.consultationId || '')}`;
   const html = `
-    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#16313a">
-      <h2 style="margin:0 0 10px 0;color:#0c7a61">Prescription Shared</h2>
-      <p>Hi ${sanitizePdfText(args.patientName || "Patient")},</p>
-      <p>Your doctor <strong>${sanitizePdfText(args.doctorName)}</strong> has shared a new prescription on ${APP_BRAND_NAME}.</p>
-      <p>Please open the ${APP_BRAND_NAME} app chat to view/download your prescription PDF.</p>
-      <p style="margin-top:20px;color:#4f6268">Team ${APP_BRAND_NAME}</p>
-    </div>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>${subject}</title>
+    </head>
+    <body style="margin:0;padding:0;background-color:#F3F6F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1E293B;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F3F6F8;padding:32px 12px;">
+        <tr>
+          <td align="center">
+            <table role="presentation" width="100%" style="max-width:560px;background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);border:1px solid #E2E8F0;" cellpadding="0" cellspacing="0">
+              <!-- Header -->
+              <tr>
+                <td style="background:linear-gradient(135deg, #0C7A61 0%, #085241 100%);padding:28px 24px;text-align:center;">
+                  <div style="display:inline-block;padding:8px 16px;background:rgba(255,255,255,0.15);border-radius:30px;color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:1px;margin-bottom:8px;">
+                    ✚ CD4 HEALTH
+                  </div>
+                  <h1 style="margin:4px 0 0;color:#FFFFFF;font-size:22px;font-weight:700;">Digital Prescription</h1>
+                  <p style="margin:6px 0 0;color:#A7F3D0;font-size:13px;">Official Consult Slip & Medical Summary</p>
+                </td>
+              </tr>
+              <!-- Body -->
+              <tr>
+                <td style="padding:28px 24px;">
+                  <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#334155;">
+                    Dear <strong>${sanitizePdfText(args.patientName || "Patient")}</strong>,
+                  </p>
+                  <p style="margin:0 0 20px;font-size:14px;line-height:22px;color:#475569;">
+                    Your consulting specialist has issued your verified digital prescription. You can view, download, or share this document directly from the CD4 App.
+                  </p>
+
+                  <!-- Details Card -->
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;margin-bottom:24px;">
+                    <tr>
+                      <td style="padding:16px 20px;">
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Consulting Doctor:</td>
+                            <td style="padding:6px 0;font-size:14px;font-weight:700;color:#0F172A;text-align:right;">Dr. ${sanitizePdfText(args.doctorName)}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Date Issued:</td>
+                            <td style="padding:6px 0;font-size:13px;font-weight:600;color:#0F172A;text-align:right;">${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Consultation ID:</td>
+                            <td style="padding:6px 0;font-size:12px;font-family:monospace;color:#0C7A61;font-weight:600;text-align:right;">${sanitizePdfText(args.consultationId || 'Active Room')}</td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <!-- Primary Button -->
+                  <div style="text-align:center;margin:28px 0 20px;">
+                    <a href="${deepLink}" target="_blank" style="display:inline-block;background-color:#0C7A61;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:14px 32px;border-radius:10px;box-shadow:0 2px 8px rgba(12,122,97,0.3);">
+                      Open in CD4 App to View PDF
+                    </a>
+                  </div>
+
+                  <!-- Fallback Link -->
+                  <p style="margin:20px 0 0;font-size:12px;line-height:18px;color:#64748B;text-align:center;">
+                    If the button does not open directly, copy and paste this link in your browser:<br />
+                    <span style="font-family:monospace;color:#0C7A61;word-break:break-all;">${deepLink}</span>
+                  </p>
+                </td>
+              </tr>
+              <!-- Footer -->
+              <tr>
+                <td style="background:#F8FAFC;border-top:1px solid #E2E8F0;padding:20px 24px;text-align:center;">
+                  <p style="margin:0 0 6px;font-size:12px;font-weight:600;color:#334155;">
+                    Need assistance? We're available 24/7
+                  </p>
+                  <p style="margin:0;font-size:12px;color:#64748B;">
+                    WhatsApp Support: <a href="https://wa.me/917050417766" style="color:#0C7A61;font-weight:600;text-decoration:none;">+91 7050417766</a> &bull; Email: <a href="mailto:support@cd4.co.in" style="color:#0C7A61;text-decoration:none;">support@cd4.co.in</a>
+                  </p>
+                  <p style="margin:12px 0 0;font-size:11px;color:#94A3B8;">
+                    &copy; ${new Date().getFullYear()} CD4 Health. All rights reserved.
+                  </p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
   `;
 
   try {

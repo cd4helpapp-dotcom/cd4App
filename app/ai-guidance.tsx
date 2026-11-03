@@ -188,6 +188,11 @@ function useSpeechRecognitionEventSafe<TEvent>(
   eventName: SpeechRecognitionEventName,
   listener: (event: TEvent) => void
 ) {
+  const listenerRef = useRef(listener);
+  useEffect(() => {
+    listenerRef.current = listener;
+  }, [listener]);
+
   useEffect(() => {
     if (!ExpoSpeechRecognitionModule?.addListener) {
       return;
@@ -195,13 +200,15 @@ function useSpeechRecognitionEventSafe<TEvent>(
 
     const subscription = ExpoSpeechRecognitionModule.addListener(
       eventName,
-      listener as (event: unknown) => void
+      (event: unknown) => {
+        listenerRef.current?.(event as TEvent);
+      }
     );
 
     return () => {
       subscription?.remove?.();
     };
-  }, [eventName, listener]);
+  }, [eventName]);
 }
 
 interface ChatMessage {
@@ -792,8 +799,28 @@ const extractReplyFromStructuredText = (value: string): string => {
         // Leave the original text untouched if the model output is malformed.
       }
     }
+    const partialMatch = normalized.match(/"reply"\s*:\s*"((?:\\.|[^"\\])*)$/s);
+    if (partialMatch) {
+      try {
+        return JSON.parse(`"${partialMatch[1]}"`);
+      } catch {
+        return partialMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+      }
+    }
   }
   return text;
+};
+
+const sanitizeMarkdownText = (raw: string): string => {
+  if (!raw) return '';
+  // Escape unescaped '<' before digits, spaces, or symbols so markdown parser doesn't swallow them as HTML tags
+  let sanitized = raw.replace(/<(?=\s|\d|[=<>])/g, '\\<');
+  // Balance unclosed code blocks if odd count of triple backticks
+  const codeBlockCount = (sanitized.match(/```/g) || []).length;
+  if (codeBlockCount % 2 !== 0) {
+    sanitized += '\n```';
+  }
+  return sanitized;
 };
 
 const hasConsultCueInText = (rawText: string): boolean => {
@@ -2362,9 +2389,10 @@ export default function AiGuidanceScreen() {
       }
 
       const asset = result.assets[0];
+      const uriFileName = asset.uri ? asset.uri.split('/').pop()?.split('?')[0] : null;
       const nextAttachment: PendingAttachment = {
         uri: asset.uri,
-        name: asset.fileName || `image_${Date.now()}.jpg`,
+        name: asset.fileName || uriFileName || `image_${Date.now()}.jpg`,
         mimeType: asset.mimeType || 'image/jpeg',
         size: typeof asset.fileSize === 'number' ? asset.fileSize : null,
         source: 'image',
@@ -2399,9 +2427,10 @@ export default function AiGuidanceScreen() {
       }
 
       const asset = result.assets[0];
+      const uriDocName = asset.uri ? asset.uri.split('/').pop()?.split('?')[0] : null;
       const nextAttachment: PendingAttachment = {
         uri: asset.uri,
-        name: asset.name || `document_${Date.now()}`,
+        name: asset.name || uriDocName || `document_${Date.now()}`,
         mimeType: asset.mimeType || 'application/octet-stream',
         size: typeof asset.size === 'number' ? asset.size : null,
         source: 'document',
@@ -2553,6 +2582,23 @@ export default function AiGuidanceScreen() {
     }
   }, [setVoiceStage]);
 
+  useEffect(() => {
+    return () => {
+      void stopActiveVoicePlayback();
+      try {
+        void Speech.stop();
+      } catch {
+        // noop
+      }
+      try {
+        ExpoSpeechRecognitionModule?.abort?.();
+        ExpoSpeechRecognitionModule?.stop?.();
+      } catch {
+        // noop
+      }
+    };
+  }, [stopActiveVoicePlayback]);
+
   const interruptActiveResponse = React.useCallback((showToast?: boolean | GestureResponderEvent) => {
     const shouldShowToast = typeof showToast === 'boolean' ? showToast : true;
     const hadActiveSend = isSendingRef.current;
@@ -2592,7 +2638,17 @@ export default function AiGuidanceScreen() {
 
     const streamingMessageId = streamingMessageIdRef.current;
     if (streamingMessageId) {
-      setMessages((prev) => prev.filter((msg) => msg.id !== streamingMessageId));
+      setMessages((prev) =>
+        prev
+          .map((msg) => {
+            if (msg.id !== streamingMessageId) return msg;
+            // Only drop the draft if it contains no real text yet (e.g. placeholder)
+            if (isPendingReply(msg.text) || !msg.text.trim()) return null;
+            // Freeze the partial response so user doesn't lose what was already generated
+            return msg;
+          })
+          .filter((msg): msg is ChatMessage => msg !== null)
+      );
       streamingMessageIdRef.current = null;
     }
 
@@ -3038,7 +3094,7 @@ export default function AiGuidanceScreen() {
     const requestExtras = pendingRequestExtrasRef.current;
     pendingRequestExtrasRef.current = {};
     const baseText = rawText.trim();
-    const activeAttachment = attachmentOverride || null;
+    const activeAttachment = attachmentOverride !== undefined ? attachmentOverride : pendingAttachment;
     if ((!baseText && !activeAttachment) || isLoadingConversation) {
       return;
     }
@@ -3300,14 +3356,14 @@ export default function AiGuidanceScreen() {
         const flushPendingStreamText = () => {
           if (!pendingStreamChunk) return;
           const candidateText = `${streamedText}${pendingStreamChunk}`;
-          // Only unwrap JSON; plain streamed text must keep its newlines and spaces exactly. Trimming here removed
-          // the newline between list items whenever a chunk happened to end on one.
-          const cleanText = /^\s*(```|\{)/.test(candidateText) ? extractReplyFromStructuredText(candidateText) : candidateText;
-          const looksLikeUnfinishedStructuredOutput =
-            candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}');
-          if (looksLikeUnfinishedStructuredOutput) {
-            // Hold raw model JSON until the complete payload can be unwrapped.
-            return;
+          const isModelJsonObject = /^\s*\{\s*"(?:reply|message|decision|success)"/i.test(candidateText);
+          let cleanText = candidateText;
+          if (isModelJsonObject || /^\s*```(?:json)?\s*\{/i.test(candidateText)) {
+            cleanText = extractReplyFromStructuredText(candidateText);
+            // If it is raw JSON and we haven't extracted any reply text yet, hold it until the "reply" key begins
+            if (cleanText === candidateText && candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}')) {
+              return;
+            }
           }
           streamedText = cleanText;
           pendingStreamChunk = '';
@@ -3328,11 +3384,27 @@ export default function AiGuidanceScreen() {
           streamFlushTimer = setTimeout(() => {
             streamFlushTimer = null;
             flushPendingStreamText();
-          }, 24);
+          }, 48);
+        };
+
+        const readWithTimeout = async (promise: Promise<any>, timeoutMs: number = 20_000): Promise<any> => {
+          let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+              reject(new Error('AI stream read timed out: network connection dropped.'));
+            }, timeoutMs);
+          });
+          try {
+            return await Promise.race([promise, timeoutPromise]);
+          } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+          }
         };
 
         while (!shouldStopReading) {
-          const { value, done } = await reader.read();
+          const readResult: any = await readWithTimeout(reader.read(), 20_000);
+          const value = readResult?.value;
+          const done = readResult?.done;
           if (done) {
             break;
           }
@@ -3486,14 +3558,14 @@ export default function AiGuidanceScreen() {
         const flushPendingStreamText = () => {
           if (!pendingStreamChunk) return;
           const candidateText = `${streamedText}${pendingStreamChunk}`;
-          // Only unwrap JSON; plain streamed text must keep its newlines and spaces exactly. Trimming here removed
-          // the newline between list items whenever a chunk happened to end on one.
-          const cleanText = /^\s*(```|\{)/.test(candidateText) ? extractReplyFromStructuredText(candidateText) : candidateText;
-          const looksLikeUnfinishedStructuredOutput =
-            candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}');
-          if (looksLikeUnfinishedStructuredOutput) {
-            // Hold raw model JSON until the complete payload can be unwrapped.
-            return;
+          const isModelJsonObject = /^\s*\{\s*"(?:reply|message|decision|success)"/i.test(candidateText);
+          let cleanText = candidateText;
+          if (isModelJsonObject || /^\s*```(?:json)?\s*\{/i.test(candidateText)) {
+            cleanText = extractReplyFromStructuredText(candidateText);
+            // If it is raw JSON and we haven't extracted any reply text yet, hold it until the "reply" key begins
+            if (cleanText === candidateText && candidateText.trimStart().startsWith('{') && !candidateText.trimEnd().endsWith('}')) {
+              return;
+            }
           }
           streamedText = cleanText;
           pendingStreamChunk = '';
@@ -3515,7 +3587,7 @@ export default function AiGuidanceScreen() {
           streamFlushTimer = setTimeout(() => {
             streamFlushTimer = null;
             flushPendingStreamText();
-          }, 24);
+          }, 48);
         };
 
         const wsRequestId = `chat-${requestToken}`;
@@ -4775,7 +4847,7 @@ export default function AiGuidanceScreen() {
   };
 
   const handleSend = () => {
-    if (isLoadingConversation) return;
+    if (isLoadingConversation || isSending || isSendingRef.current) return;
     if (isVoiceEnabledOnThisScreen && !pendingAttachment) {
       void sendVoiceMessage(input);
       return;
@@ -5036,10 +5108,10 @@ export default function AiGuidanceScreen() {
     });
   }, [draftMessage, sessionSeed, isLoadingConversation, conversationId]);
 
-  // On Android, use a plain View with manual keyboard padding
-  // On iOS, use KeyboardAvoidingView with padding behavior
+  // On Android, softwareKeyboardLayoutMode: "resize" already handles keyboard inset; manual padding creates double inset.
+  // On iOS, use KeyboardAvoidingView with header offset
   const Wrapper = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
-  const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: 0 } : {};
+  const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: insets.top } : {};
   const canSendMessage = (input.trim().length > 0 || Boolean(pendingAttachment)) && !isSending && !isLoadingConversation;
   const voiceStageIndexMap: Record<Exclude<VoiceLiveStage, 'idle'>, number> = {
     listening: 0,
@@ -5086,12 +5158,12 @@ export default function AiGuidanceScreen() {
           ) : isPendingReply(msg.text) && (isStreamingDraft || isSending) ? (
             <TypingIndicator />
           ) : isStreamingDraft ? (
-            <Markdown style={aiMarkdownStyles}>
+            <Text style={[styles.messageText, { color: palette.aiBubbleText, lineHeight: 22 }]}>
               {msg.text}
-            </Markdown>
+            </Text>
           ) : (
             <Markdown style={aiMarkdownStyles}>
-              {msg.text}
+              {sanitizeMarkdownText(msg.text)}
             </Markdown>
           )}
           <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 4, gap: 4 }}>
@@ -5194,7 +5266,7 @@ export default function AiGuidanceScreen() {
 
   return (
     <Wrapper
-      style={[styles.screen, { backgroundColor: palette.pageBg, paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0 }]}
+      style={[styles.screen, { backgroundColor: palette.pageBg, paddingBottom: 0 }]}
       {...wrapperProps}
     >
       {/* Header (Matching chat-detail) */}

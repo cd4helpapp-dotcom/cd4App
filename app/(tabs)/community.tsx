@@ -123,8 +123,10 @@ export default function CommunityScreen() {
   const [editPostId, setEditPostId] = React.useState<string | null>(null);
   const [editPostText, setEditPostText] = React.useState('');
   const [editPostAssets, setEditPostAssets] = React.useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [editPostAssetsModified, setEditPostAssetsModified] = React.useState(false);
   const [likesVisible, setLikesVisible] = React.useState(false);
   const [activeLikesPostId, setActiveLikesPostId] = React.useState<string | null>(null);
+  const feedListRef = React.useRef<FlatList<FeedItem> | null>(null);
   const tabSwipeHandlers = useTabSwipeNavigation('community', {
     disabled: commentsVisible || postActionsVisible || editPostVisible || likesVisible,
   });
@@ -358,17 +360,20 @@ export default function CommunityScreen() {
       await editPostMutation.mutateAsync({
         postId: editPostId,
         content: editPostText,
-        assets: editPostAssets.length > 0 ? editPostAssets.map(a => ({
-          uri: a.uri,
-          fileName: a.fileName || `edit_${Date.now()}`,
-          mimeType: a.mimeType || 'image/jpeg',
-          fileSize: a.fileSize || 0,
-        })) : undefined,
+        assets: editPostAssetsModified
+          ? editPostAssets.map((a) => ({
+              uri: a.uri,
+              fileName: a.fileName || `edit_${Date.now()}`,
+              mimeType: a.mimeType || 'image/jpeg',
+              fileSize: a.fileSize || 0,
+            }))
+          : undefined,
       });
       setEditPostVisible(false);
       setEditPostId(null);
       setEditPostText('');
       setEditPostAssets([]);
+      setEditPostAssetsModified(false);
       Toast.show({ type: 'success', text1: t('community.updated') });
     } catch (error: any) {
       showActionError(error);
@@ -418,7 +423,28 @@ export default function CommunityScreen() {
         onPress: () => {
           setEditPostId(target.id);
           setEditPostText(target.content);
-          setEditPostAssets([]); // Reset assets when opening edit
+          const initialAssets: ImagePicker.ImagePickerAsset[] = [];
+          if (target.media && target.media.length > 0) {
+            target.media.forEach((m, idx) => {
+              initialAssets.push({
+                uri: m.url,
+                width: 0,
+                height: 0,
+                mimeType: m.type === 'video' ? 'video/mp4' : 'image/jpeg',
+                fileName: `existing_media_${idx}`,
+              } as ImagePicker.ImagePickerAsset);
+            });
+          } else if (target.imageUrl) {
+            initialAssets.push({
+              uri: target.imageUrl,
+              width: 0,
+              height: 0,
+              mimeType: 'image/jpeg',
+              fileName: 'existing_image',
+            } as ImagePicker.ImagePickerAsset);
+          }
+          setEditPostAssets(initialAssets);
+          setEditPostAssetsModified(false);
           setEditPostVisible(true);
           closePostActionsModal();
         },
@@ -595,7 +621,10 @@ export default function CommunityScreen() {
                     borderColor: selected ? theme.buttonPrimary : theme.borderColor,
                   },
                 ]}
-                onPress={() => setActiveFilter(item.value)}
+                onPress={() => {
+                  setActiveFilter(item.value);
+                  feedListRef.current?.scrollToOffset({ offset: 0, animated: true });
+                }}
               >
                 <Text style={[styles.filterText, { color: selected ? '#FFFFFF' : theme.textSecondary }]}>{t(item.labelKey)}</Text>
               </TouchableOpacity>
@@ -635,6 +664,7 @@ export default function CommunityScreen() {
   return (
     <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
       <FlatList
+        ref={feedListRef}
         data={showFeedSkeleton ? [] : feedItems}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={headerComponent}
@@ -785,7 +815,10 @@ export default function CommunityScreen() {
                       <Image source={{ uri: item.uri }} style={styles.composerAssetPreview} />
                       <TouchableOpacity
                         style={[styles.composerAssetRemove, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
-                        onPress={() => setEditPostAssets(prev => prev.filter((_, i) => i !== index))}
+                        onPress={() => {
+                          setEditPostAssets((prev) => prev.filter((_, i) => i !== index));
+                          setEditPostAssetsModified(true);
+                        }}
                       >
                         <X size={12} color={theme.textSecondary} />
                       </TouchableOpacity>
@@ -805,6 +838,7 @@ export default function CommunityScreen() {
                     });
                     if (!result.canceled && result.assets?.length) {
                       setEditPostAssets(result.assets);
+                      setEditPostAssetsModified(true);
                     }
                   } catch (error: any) {
                     showActionError(error);
@@ -820,7 +854,10 @@ export default function CommunityScreen() {
               <View style={styles.editActionsRow}>
                 <TouchableOpacity
                   style={[styles.editCancelBtn, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                  onPress={() => setEditPostVisible(false)}
+                  onPress={() => {
+                    setEditPostVisible(false);
+                    setEditPostAssetsModified(false);
+                  }}
                 >
                   <Text style={[styles.editCancelText, { color: theme.textSecondary }]}>{t('community.cancel')}</Text>
                 </TouchableOpacity>

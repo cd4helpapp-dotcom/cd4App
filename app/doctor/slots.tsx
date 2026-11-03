@@ -4,7 +4,7 @@ import {
     Modal, ActivityIndicator, Alert, Platform, ScrollView, TextInput, SectionList
 } from 'react-native';
 import Colors from '../../constants/Colors';
-import { Calendar, Clock, Plus, X, ChevronDown, ListFilter, Archive, Trash2 } from 'lucide-react-native';
+import { Calendar, Check, Clock, Plus, X, ChevronDown, ListFilter, Archive, Trash2 } from 'lucide-react-native';
 import { useDoctorSlots, useAddSlot, useDeleteSlot } from '../../hooks/useAppointment';
 import { confirmAction } from '../../src/utils/confirm';
 import { Slot } from '../../src/types';
@@ -131,8 +131,13 @@ export default function DoctorSlots() {
 
         const todayStr = formatDateForAPI(new Date());
         const nowMs = Date.now();
-        const endMs = (slot: Slot) => slotMoment(slot.date, slot.endTime || slot.startTime);
         const startMs = (slot: Slot) => slotMoment(slot.date, slot.startTime);
+        const endMs = (slot: Slot) => {
+            const start = startMs(slot);
+            const end = slotMoment(slot.date, slot.endTime || slot.startTime);
+            // The final 11:30 PM slot ends at 12:00 AM on the following day.
+            return end <= start ? end + 24 * 60 * 60 * 1000 : end;
+        };
 
         const filtered = [...slots]
             .filter((slot) => (filterMode === 'upcoming' ? endMs(slot) >= nowMs : endMs(slot) < nowMs))
@@ -141,7 +146,8 @@ export default function DoctorSlots() {
         // Group by human-readable date string
         const groups: { [key: string]: Slot[] } = {};
         filtered.forEach(s => {
-            const d = new Date(s.date);
+            const [year, month, day] = String(s.date).slice(0, 10).split('-').map(Number);
+            const d = new Date(year, month - 1, day);
             const dStr = formatDateForAPI(d);
             
             // Format group title
@@ -418,11 +424,12 @@ export default function DoctorSlots() {
                                 </>
                             )}
 
-                            {/* ---- Time Slot Dropdown ---- */}
+                            {/* ---- Time Slot Picker Trigger ---- */}
                             <Text style={[styles.label, { color: theme.text }]}>Time Slot (30 min)</Text>
                             <TouchableOpacity
                                 style={[styles.pickerButton, { borderColor: theme.borderColor, backgroundColor: theme.background }]}
-                                onPress={() => setShowStartTimePicker(!showStartTimePicker)}
+                                onPress={() => setShowStartTimePicker(true)}
+                                activeOpacity={0.8}
                             >
                                 <Clock size={18} color={theme.tint} style={{ marginRight: 10 }} />
                                 <Text style={[styles.pickerButtonText, {
@@ -434,34 +441,6 @@ export default function DoctorSlots() {
                                 </Text>
                                 <ChevronDown size={18} color={theme.textSecondary} />
                             </TouchableOpacity>
-
-                            {showStartTimePicker && (
-                                <View style={[styles.dropdownContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                                    <ScrollView style={{ maxHeight: 220 }} nestedScrollEnabled={true}>
-                                        {TIME_OPTIONS.map((time) => (
-                                            <TouchableOpacity
-                                                key={time}
-                                                style={[
-                                                    styles.dropdownItem,
-                                                    selectedStartTime === time && { backgroundColor: theme.tint + '20' }
-                                                ]}
-                                                onPress={() => {
-                                                    setSelectedStartTime(time);
-                                                    setShowStartTimePicker(false);
-                                                }}
-                                            >
-                                                <Text style={[
-                                                    styles.dropdownItemText,
-                                                    { color: theme.text },
-                                                    selectedStartTime === time && { color: theme.tint, fontWeight: '700' }
-                                                ]}>
-                                                    {time} – {getEndTime(time)}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        ))}
-                                    </ScrollView>
-                                </View>
-                            )}
                         </ScrollView>
 
                         {/* Submit Button */}
@@ -476,6 +455,69 @@ export default function DoctorSlots() {
                                 <Text style={styles.submitButtonText}>Create Slot</Text>
                             )}
                         </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* ---- Bug 6.16: Dedicated Time Slot Modal (eliminates nested ScrollView conflict on Android) ---- */}
+            <Modal
+                visible={showStartTimePicker}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setShowStartTimePicker(false)}
+            >
+                <View style={styles.timeModalOverlay}>
+                    <View style={[styles.timeModalContent, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                        <View style={styles.timeModalHeader}>
+                            <View>
+                                <Text style={[styles.timeModalTitle, { color: theme.text }]}>Select Time Slot</Text>
+                                <Text style={[styles.timeModalSubtitle, { color: theme.textSecondary }]}>30-minute consultation window</Text>
+                            </View>
+                            <TouchableOpacity
+                                onPress={() => setShowStartTimePicker(false)}
+                                hitSlop={10}
+                                style={styles.timeModalCloseBtn}
+                            >
+                                <X size={22} color={theme.textSecondary} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView
+                            style={styles.timeListScroll}
+                            showsVerticalScrollIndicator={true}
+                            contentContainerStyle={styles.timeListContent}
+                        >
+                            {TIME_OPTIONS.map((time) => {
+                                const isSelected = selectedStartTime === time;
+                                return (
+                                    <TouchableOpacity
+                                        key={time}
+                                        style={[
+                                            styles.timeOptionItem,
+                                            { borderColor: theme.borderColor, backgroundColor: isSelected ? theme.tint + '18' : theme.background },
+                                            isSelected && { borderColor: theme.tint }
+                                        ]}
+                                        onPress={() => {
+                                            setSelectedStartTime(time);
+                                            setShowStartTimePicker(false);
+                                        }}
+                                        activeOpacity={0.7}
+                                    >
+                                        <View style={styles.timeOptionLeft}>
+                                            <Clock size={16} color={isSelected ? theme.tint : theme.textSecondary} style={{ marginRight: 10 }} />
+                                            <Text style={[
+                                                styles.timeOptionText,
+                                                { color: theme.text },
+                                                isSelected && { color: theme.tint, fontWeight: '700' }
+                                            ]}>
+                                                {time} – {getEndTime(time)}
+                                            </Text>
+                                        </View>
+                                        {isSelected && <Check size={18} color={theme.tint} />}
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </ScrollView>
                     </View>
                 </View>
             </Modal>
@@ -735,5 +777,69 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '700',
-    }
+    },
+    timeModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+    },
+    timeModalContent: {
+        width: '100%',
+        maxWidth: 420,
+        maxHeight: '80%',
+        borderRadius: 24,
+        borderWidth: 1,
+        padding: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.25,
+        shadowRadius: 16,
+        elevation: 8,
+    },
+    timeModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 16,
+        paddingBottom: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(128,128,128,0.2)',
+    },
+    timeModalTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+    },
+    timeModalSubtitle: {
+        fontSize: 12,
+        marginTop: 2,
+    },
+    timeModalCloseBtn: {
+        padding: 4,
+    },
+    timeListScroll: {
+        maxHeight: 380,
+    },
+    timeListContent: {
+        paddingVertical: 4,
+        gap: 8,
+    },
+    timeOptionItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        borderWidth: 1,
+    },
+    timeOptionLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    timeOptionText: {
+        fontSize: 15,
+        fontWeight: '500',
+    },
 });

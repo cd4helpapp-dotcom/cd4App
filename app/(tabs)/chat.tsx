@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useColorScheme, FlatList, TextInput, RefreshControl, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
 import { getImageUrl } from '../../constants/Config';
 import { Search, MessageCircle, X } from 'lucide-react-native';
@@ -16,6 +17,7 @@ import { useDeferredFocusSync } from '../../hooks/useDeferredFocusSync';
 export default function ChatScreen() {
     const router = useRouter();
     const colorScheme = useColorScheme();
+    const insets = useSafeAreaInsets();
     const theme = Colors[colorScheme ?? 'light'];
     const { t, language } = useAppLanguage();
     const tabSwipeHandlers = useTabSwipeNavigation('chat');
@@ -98,7 +100,9 @@ export default function ChatScreen() {
         if (!dateString) return '';
         const date = new Date(dateString);
         const now = new Date();
-        const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+        const diffDays = Math.round((todayStart - dateStart) / (1000 * 60 * 60 * 24));
 
         if (diffDays === 0) {
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -112,7 +116,8 @@ export default function ChatScreen() {
     };
 
     const renderRoom = ({ item }: { item: any }) => {
-        const unreadCount = item.unread_count_patient || 0;
+        const isPatient = user?.id === item.patient_id;
+        const unreadCount = (isPatient ? item.unread_count_patient : item.unread_count_doctor) || 0;
         const fullName = getRoomDoctorDisplayName(item);
         const isRoomEnabled = item.chat_enabled !== false;
         const previewText = item.last_message_text || (isRoomEnabled ? t('chat.noMessagesYet') : item.chat_disabled_reason || t('chat.disabled'));
@@ -192,7 +197,7 @@ export default function ChatScreen() {
     return (
         <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
             {/* Header */}
-            <View style={styles.headerContainer}>
+            <View style={[styles.headerContainer, { paddingTop: insets.top + 8 }]}>
                 <Text style={[styles.headerTitle, { color: theme.text }]}>{t('tab.chat')}</Text>
             </View>
 

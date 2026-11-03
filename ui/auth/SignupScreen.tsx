@@ -118,12 +118,13 @@ const SignupScreen: React.FC = () => {
   };
 
   const handleResend = async () => {
-    if (!pendingVerificationEmail || isResending) return;
+    const email = normalizeAuthEmail(pendingVerificationEmail || '');
+    if (!email || isResending) return;
     setIsResending(true);
     try {
       const { error } = await supabase.auth.resend({
         type: 'signup',
-        email: pendingVerificationEmail,
+        email,
         options: { emailRedirectTo: createRedirectUrl('auth/login') },
       });
       if (error) throw error;

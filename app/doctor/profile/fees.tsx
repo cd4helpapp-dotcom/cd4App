@@ -37,17 +37,19 @@ export default function ConsultationFeesScreen() {
     }, [profileResponse]);
 
     const handleSave = async () => {
-        if (!fee.trim()) {
+        const normalizedFee = fee.trim().replace(/,/g, '');
+        const numericFee = Number(normalizedFee);
+        if (!Number.isFinite(numericFee) || numericFee <= 0) {
             Toast.show({
                 type: 'error',
                 text1: 'Invalid Input',
-                text2: 'Please enter a valid consultation fee',
+                text2: 'Please enter a consultation fee greater than zero.',
             });
             return;
         }
 
         setSaving(true);
-        updateProfileMutation.mutate({ fee: `₹${fee.trim()}` }, {
+        updateProfileMutation.mutate({ fee: `₹${numericFee}` }, {
             onSuccess: () => {
                 Toast.show({
                     type: 'success',
@@ -79,7 +81,7 @@ export default function ConsultationFeesScreen() {
     }
 
     return (
-            <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']}>
+            <DoctorSafeScreen backgroundColor={theme.background} edges={['top', 'bottom']}>
             <KeyboardAvoidingView
                 style={[styles.container, { backgroundColor: theme.background }]}
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}

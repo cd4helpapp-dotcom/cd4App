@@ -41,6 +41,19 @@ const parseTimeParts = (value: string): { hour: number; minute: number; second: 
   const raw = value.trim();
   if (!raw) return null;
 
+  const twelveHourMatch = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (twelveHourMatch) {
+    const [, hourText, minuteText, secondText = '0', period] = twelveHourMatch;
+    const hour12 = Number(hourText);
+    const minute = Number(minuteText);
+    const second = Number(secondText);
+    if (hour12 < 1 || hour12 > 12 || minute > 59 || second > 59) return null;
+    const hour = period.toUpperCase() === 'PM'
+      ? (hour12 === 12 ? 12 : hour12 + 12)
+      : (hour12 === 12 ? 0 : hour12);
+    return { hour, minute, second };
+  }
+
   const parts = raw.split(':').map((part) => Number(part));
   if (parts.length < 2 || parts.length > 3 || parts.some((part) => !Number.isFinite(part))) {
     return null;
@@ -108,19 +121,25 @@ const removeSyncRecord = async (storageKey: string) => {
 };
 
 const ensureCalendarPermission = async (): Promise<boolean> => {
-  const existing = await Calendar.getCalendarPermissionsAsync();
-  if (existing.status === 'granted') return true;
-
-  const requested = await Calendar.requestCalendarPermissionsAsync();
-  return requested.status === 'granted';
+  try {
+    const existing = await Calendar.getCalendarPermissionsAsync();
+    if (existing.status === 'granted') return true;
+    const requested = await Calendar.requestCalendarPermissionsAsync();
+    return requested.status === 'granted';
+  } catch {
+    return false;
+  }
 };
 
 const ensureNotificationPermission = async (): Promise<boolean> => {
-  const existing = await Notifications.getPermissionsAsync();
-  if (existing.status === 'granted') return true;
-
-  const requested = await Notifications.requestPermissionsAsync();
-  return requested.status === 'granted';
+  try {
+    const existing = await Notifications.getPermissionsAsync();
+    if (existing.status === 'granted') return true;
+    const requested = await Notifications.requestPermissionsAsync();
+    return requested.status === 'granted';
+  } catch {
+    return false;
+  }
 };
 
 const ensureAndroidAppointmentChannel = async () => {
@@ -235,7 +254,7 @@ export const syncAppointmentWithDeviceCalendar = async (
   const existingRecord = await readSyncRecord(storageKey);
   const startsAtIso = startDate.toISOString();
 
-  if (existingRecord?.startsAtIso === startsAtIso) {
+  if (existingRecord?.startsAtIso === startsAtIso && existingRecord.calendarEventId) {
     return {
       synced: false,
       calendarEventId: existingRecord.calendarEventId,

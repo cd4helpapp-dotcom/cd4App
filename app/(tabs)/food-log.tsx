@@ -1,6 +1,5 @@
 import React from 'react';
 import { View, Text, StyleSheet, useColorScheme } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 
@@ -10,7 +9,7 @@ export default function FoodLogScreen() {
   const tabSwipeHandlers = useTabSwipeNavigation('food-log');
 
   return (
-    <SafeAreaView {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
+    <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={styles.content}>
         <Text style={[styles.title, { color: theme.text }]}>Food Log</Text>
         <Text style={[styles.subtitle, { color: theme.textSecondary }]}>Track your meals and macros here.</Text>
@@ -18,7 +17,7 @@ export default function FoodLogScreen() {
           <Text style={{ color: theme.textSecondary }}>Full Food Logger Coming Soon</Text>
         </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -12,8 +12,8 @@ import { SUPABASE_PROFILE_MEDIA_BUCKET } from '../constants/Config';
 const DEFAULT_CHAT_PAGE_SIZE = 40;
 const E2EE_ALLOW_PLAINTEXT_FALLBACK =
     (process.env.EXPO_PUBLIC_CHAT_E2EE_ALLOW_PLAINTEXT_FALLBACK || 'true').trim().toLowerCase() === 'true';
-const CHAT_ATTACHMENT_SIGNED_URL_TTL_SECONDS = 60 * 30;
-const CHAT_ATTACHMENT_SIGNED_URL_RENEW_BUFFER_MS = 60 * 1000;
+const CHAT_ATTACHMENT_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
+const CHAT_ATTACHMENT_SIGNED_URL_RENEW_BUFFER_MS = 60 * 1000 * 60;
 const PROFILE_IMAGE_BUCKET = SUPABASE_PROFILE_MEDIA_BUCKET;
 const PROFILE_IMAGE_SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
 const CHAT_MESSAGE_REALTIME_INVALIDATE_DEBOUNCE_MS = 180;
@@ -106,11 +106,19 @@ export interface ChatMessage {
         encryption_version?: number | null;
     };
     is_pending?: boolean;
+    is_failed?: boolean;
+    is_delivered?: boolean;
+    error_message?: string;
 }
+
+export type ChatMessageCursor = {
+    createdAt: string;
+    id: string;
+};
 
 type ChatMessagePage = {
     items: ChatMessage[];
-    nextCursor: string | null;
+    nextCursor: ChatMessageCursor | null;
 };
 
 const mergeAndSortMessages = (rows: ChatMessage[]): ChatMessage[] => {
@@ -280,6 +288,29 @@ export const removeLocalChatMessage = (
         const pages = data.pages.map((page) => ({
             ...page,
             items: removeMessageFromPage(page.items || [], messageId),
+        }));
+
+        return {
+            ...data,
+            pages,
+        };
+    });
+};
+
+export const markLocalChatMessageFailed = (
+    queryClient: QueryClient,
+    roomId: string,
+    messageId: string,
+    errorMessage?: string
+) => {
+    updateMessageCachesForRoom(queryClient, roomId, (data) => {
+        const pages = data.pages.map((page) => ({
+            ...page,
+            items: (page.items || []).map((item) =>
+                item.id === messageId
+                    ? { ...item, is_pending: false, is_failed: true, error_message: errorMessage }
+                    : item
+            ),
         }));
 
         return {
@@ -657,7 +688,7 @@ const resolveChatAttachmentPath = (rawUrl?: string | null): { path: string | nul
     return { path: value };
 };
 
-const getSignedChatAttachmentUrl = async (attachmentUrl?: string | null): Promise<string | null> => {
+export const getSignedChatAttachmentUrl = async (attachmentUrl?: string | null): Promise<string | null> => {
     const resolved = resolveChatAttachmentPath(attachmentUrl);
     if (resolved.directUrl) return resolved.directUrl;
     if (!resolved.path) return typeof attachmentUrl === 'string' ? attachmentUrl : null;
@@ -752,17 +783,6 @@ export const useChatRooms = () => {
                 },
                 scheduleInvalidate
             )
-            // Fallback signal for environments where chat_rooms realtime publication is inconsistent.
-            // chat_messages inserts are enough to refresh room previews/order without manual pull-to-refresh.
-            .on(
-                'postgres_changes',
-                {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'chat_messages',
-                },
-                scheduleInvalidate
-            )
             .subscribe();
 
         // Nothing arrives while the app is in the background, so catch up on return.
@@ -821,7 +841,7 @@ export const useChatMessages = (roomId: string, pageSize: number = DEFAULT_CHAT_
 
     const query = useInfiniteQuery({
         queryKey: CHAT_QUERY_KEYS.messages(roomId, normalizedPageSize),
-        initialPageParam: null as string | null,
+        initialPageParam: null as ChatMessageCursor | null,
         queryFn: async ({ pageParam }): Promise<ChatMessagePage> => {
             if (!user?.id) return { items: [], nextCursor: null };
 
@@ -837,7 +857,20 @@ export const useChatMessages = (roomId: string, pageSize: number = DEFAULT_CHAT_
                 .limit(normalizedPageSize + 1);
 
             if (pageParam) {
-                request = request.lt('created_at', pageParam);
+                if (typeof pageParam === 'object' && (pageParam as any).createdAt && (pageParam as any).id) {
+                    const cursor = pageParam as ChatMessageCursor;
+                    request = request.or(
+                        `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`
+                    );
+                } else if (typeof (pageParam as any) === 'string') {
+                    const raw = pageParam as unknown as string;
+                    if (raw.includes('|')) {
+                        const [cAt, cId] = raw.split('|');
+                        request = request.or(`created_at.lt.${cAt},and(created_at.eq.${cAt},id.lt.${cId})`);
+                    } else {
+                        request = request.lt('created_at', raw);
+                    }
+                }
             }
 
             const { data, error } = await request;
@@ -848,7 +881,11 @@ export const useChatMessages = (roomId: string, pageSize: number = DEFAULT_CHAT_
             const rows = hasMore ? fetchedRows.slice(0, normalizedPageSize) : fetchedRows;
             const decryptedRows = await decryptMessagesForUser(rows, user.id);
             const resolvedRows = await resolveAttachmentUrlsForMessages(decryptedRows);
-            const nextCursor = hasMore ? rows[rows.length - 1]?.created_at || null : null;
+            const lastRow = rows[rows.length - 1];
+            const nextCursor: ChatMessageCursor | null =
+                hasMore && lastRow?.created_at && lastRow?.id
+                    ? { createdAt: lastRow.created_at, id: lastRow.id }
+                    : null;
 
             return { items: resolvedRows, nextCursor };
         },
@@ -993,7 +1030,7 @@ export const prefetchChatMessages = async (
     const normalizedPageSize = Math.max(10, pageSize || DEFAULT_CHAT_PAGE_SIZE);
     await queryClient.prefetchInfiniteQuery({
         queryKey: CHAT_QUERY_KEYS.messages(roomId, normalizedPageSize),
-        initialPageParam: null as string | null,
+        initialPageParam: null as ChatMessageCursor | null,
         queryFn: async (): Promise<ChatMessagePage> => {
             const { data, error } = await supabase
                 .from('chat_messages')
@@ -1017,11 +1054,15 @@ export const prefetchChatMessages = async (
             }
 
             const resolvedRows = await resolveAttachmentUrlsForMessages(hydratedRows);
-            const nextCursor = hasMore ? rows[rows.length - 1]?.created_at || null : null;
+            const lastRow = rows[rows.length - 1];
+            const nextCursor: ChatMessageCursor | null =
+                hasMore && lastRow?.created_at && lastRow?.id
+                    ? { createdAt: lastRow.created_at, id: lastRow.id }
+                    : null;
 
             return { items: resolvedRows, nextCursor };
         },
-        getNextPageParam: (lastPage:any) => lastPage.nextCursor,
+        getNextPageParam: (lastPage: any) => lastPage.nextCursor,
         staleTime: 5 * 60 * 1000,
     });
 };
@@ -1219,7 +1260,12 @@ export const useSendMessage = () => {
         },
         onError: (_error, variables, context) => {
             if (context?.optimisticId) {
-                removeLocalChatMessage(queryClient, variables.roomId, context.optimisticId);
+                markLocalChatMessageFailed(
+                    queryClient,
+                    variables.roomId,
+                    context.optimisticId,
+                    typeof (_error as any)?.message === 'string' ? (_error as any).message : 'Failed to send'
+                );
             }
         }
     });

@@ -38,7 +38,7 @@ type RowProps = {
 
 const CommentRow = React.memo(function CommentRow({ item, parentName, isOwn, onReply, onDelete, onOpenAuthor }: RowProps) {
   const { theme } = useAppTheme();
-  const { t } = useAppLanguage();
+  const { t, language } = useAppLanguage();
   const isReply = Boolean(parentName);
   const isDoctor = item.author.role === 'doctor';
 
@@ -48,7 +48,7 @@ const CommentRow = React.memo(function CommentRow({ item, parentName, isOwn, onR
         <CommunityAvatar name={item.author.fullName} uri={item.author.profilePicture} size={isReply ? 28 : 34} />
       </TouchableOpacity>
       <View style={styles.flex}>
-        <View style={[styles.bubble, { backgroundColor: theme.surfaceMuted }]}>
+        <View style={[styles.bubble, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderColor, borderWidth: StyleSheet.hairlineWidth * 1.5 }]}>
           <View style={styles.nameRow}>
             <Text style={[Typography.label, styles.name, { color: theme.text }]} numberOfLines={1} onPress={() => onOpenAuthor(item.authorId)}>
               {item.author.fullName}
@@ -63,7 +63,7 @@ const CommentRow = React.memo(function CommentRow({ item, parentName, isOwn, onR
           <Text style={[styles.body, { color: theme.text }]}>{item.content}</Text>
         </View>
         <View style={styles.meta}>
-          <Text style={[Typography.caption, { color: theme.textTertiary }]}>{formatCommunityTime(item.createdAt, t)}</Text>
+          <Text style={[Typography.caption, { color: theme.textSecondary }]}>{formatCommunityTime(item.createdAt, t, language)}</Text>
           {!item.isPending ? (
             <TouchableOpacity onPress={() => onReply(item)} hitSlop={10} accessibilityRole="button">
               <Text style={[styles.metaAction, { color: theme.textSecondary }]}>{t('community.reply')}</Text>
@@ -215,19 +215,19 @@ export default function CommentsSheet({ postId, visible, viewerId, viewerName, v
               value={text}
               onChangeText={setText}
               placeholder={t('community.writeComment')}
-              placeholderTextColor={theme.textTertiary}
-              style={[styles.input, { color: theme.text, backgroundColor: theme.surfaceMuted }]}
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text, backgroundColor: theme.surfaceMuted, borderColor: theme.borderColor, borderWidth: StyleSheet.hairlineWidth }]}
               maxLength={500}
               multiline
             />
             <TouchableOpacity
               onPress={submit}
               disabled={!canSend}
-              style={[styles.send, { backgroundColor: canSend ? theme.buttonPrimary : theme.surfaceMuted }]}
+              style={[styles.send, { backgroundColor: canSend ? theme.buttonPrimary : theme.surfaceMuted, borderColor: theme.borderColor, borderWidth: canSend ? 0 : StyleSheet.hairlineWidth }]}
               accessibilityRole="button"
               accessibilityLabel={t('community.comment')}
             >
-              <Send size={16} color={canSend ? '#FFFFFF' : theme.textTertiary} />
+              <Send size={16} color={canSend ? '#FFFFFF' : theme.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>

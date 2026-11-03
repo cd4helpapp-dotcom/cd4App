@@ -38,7 +38,7 @@ import { getLocalizedDoctorName } from '../../src/i18n/nameLocalization';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
 import { useDeferredFocusSync } from '../../hooks/useDeferredFocusSync';
 import { formatCityName, isCityMatch } from '../../src/utils/city';
-import { formatClock } from '../../src/utils/slotTime';
+import { formatClock, slotMoment } from '../../src/utils/slotTime';
 
 type Doctor = {
   _id?: string;
@@ -203,6 +203,7 @@ const formatMonthLabel = (value: Date): string =>
 
 // Slot times come from the database as "13:00:00"; patients should read "1:00 PM".
 const formatSlotClock = (value?: string | null): string => {
+  if (!value?.trim()) return '';
   const [h = '0', m = '0'] = String(value || '').split(':');
   const hours = parseInt(h, 10) || 0;
   const minutes = parseInt(m, 10) || 0;
@@ -506,7 +507,18 @@ export default function AppointmentsScreen() {
     });
     return (myAppointments as any[]).map((apt) => {
       const doctorId = typeof apt.doctor === 'string' ? apt.doctor : String(apt.doctor?._id || apt.doctor?.id || '');
-      const doctor = doctorById.get(doctorId);
+      const doctor = doctorById.get(doctorId) || (apt.doctor && typeof apt.doctor === 'object' ? apt.doctor : undefined);
+      const doctorName =
+        doctorNameById[doctorId] ||
+        (doctor
+          ? getLocalizedDoctorName(
+              { firstName: doctor.firstName, lastName: doctor.lastName },
+              language,
+              { includePrefix: true, fallbackName: t('appointments.yourDoctor') }
+            )
+          : '') ||
+        t('appointments.yourDoctor');
+
       return {
         id: String(apt._id || apt.id),
         status: apt.status,
@@ -515,21 +527,21 @@ export default function AppointmentsScreen() {
         startTime: apt.slot?.startTime,
         endTime: apt.slot?.endTime,
         doctorId,
-        doctorName: doctorNameById[doctorId] || t('appointments.yourDoctor'),
+        doctorName,
         specialization: doctor?.specialization || null,
         city: doctor?.city || null,
         image: getImageUrl(doctor?.image) || null,
       };
     });
-  }, [doctorNameById, doctorsData, myAppointments, t]);
+  }, [doctorNameById, doctorsData, language, myAppointments, t]);
   const upcomingCount = React.useMemo(
     () =>
       appointmentItems.filter((item) => {
         if (item.status !== 'pending' && item.status !== 'confirmed') return false;
-        const [y, m, d] = String(item.date || '').split('-').map(Number);
-        if (!y) return true;
-        const [hh = 0, mm = 0] = String(item.endTime || item.startTime || '23:59').split(':').map(Number);
-        return new Date(y, m - 1, d, hh, mm).getTime() >= Date.now();
+        if (!item.date) return true;
+        const timeStr = item.endTime || item.startTime || '23:59';
+        const moment = slotMoment(item.date, timeStr);
+        return moment > 0 ? moment >= Date.now() : true;
       }).length,
     [appointmentItems]
   );
@@ -915,7 +927,19 @@ export default function AppointmentsScreen() {
           isLoading={showAppointmentsSkeleton}
           isRefreshing={isRefreshing}
           onRefresh={handleRefresh}
-          onMessageDoctor={() => router.push('/(tabs)/chat')}
+          onMessageDoctor={(item) => {
+            if (item.doctorId) {
+              router.push({
+                pathname: '/chat-detail',
+                params: {
+                  otherId: item.doctorId,
+                  name: item.doctorName || t('appointments.yourDoctor'),
+                },
+              });
+            } else {
+              router.push('/(tabs)/chat');
+            }
+          }}
           onBookAgain={(item) => {
             const doctor = doctorsData.find((candidate) => getEntityId(candidate) === item.doctorId);
             if (doctor) openBookingModal(doctor);
@@ -1439,7 +1463,7 @@ export default function AppointmentsScreen() {
                           <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                             <Clock size={15} color={isSelected ? theme.primary : theme.textSecondary} style={{ marginRight: 8 }} />
                             <Text style={{ fontSize: 15, fontWeight: '700', color: isSelected ? theme.primary : theme.text }}>
-                              {formatSlotClock(slot.startTime)} – {formatSlotClock(slot.endTime)}
+                              {formatSlotClock(slot.startTime)}{slot.endTime ? ` – ${formatSlotClock(slot.endTime)}` : ''}
                             </Text>
                           </View>
                           {isSelected && <Check size={18} color={theme.primary} />}

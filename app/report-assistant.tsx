@@ -813,6 +813,8 @@ export default function ReportAssistantScreen() {
   const [onlyAttention, setOnlyAttention] = React.useState(false);
   const [showAllNotes, setShowAllNotes] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<ReportTab>('summary');
+  // Android softwareKeyboardLayoutMode: "resize" already resizes the window on keyboard open;
+  // manual keyboardHeight padding creates double inset on Android.
   const [keyboardHeight, setKeyboardHeight] = React.useState(0);
   const [nowMs, setNowMs] = React.useState(() => Date.now());
   const scrollRef = React.useRef<ScrollViewInstance | null>(null);
@@ -994,10 +996,10 @@ export default function ReportAssistantScreen() {
         : { bg: theme.surfaceMuted, fg: theme.textSecondary, label: '' };
 
   const Wrapper: any = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
-  const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const } : {};
+  const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: insets.top } : {};
 
   return (
-    <Wrapper style={[styles.screen, { backgroundColor: theme.background, paddingBottom: Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight + 2 : 0 }]} {...wrapperProps}>
+    <Wrapper style={[styles.screen, { backgroundColor: theme.background, paddingBottom: 0 }]} {...wrapperProps}>
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.divider, backgroundColor: theme.background }]}>
         <Pressable onPress={handleBack} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={8} style={[styles.backBtn, { backgroundColor: theme.surfaceMuted }]}>
           <ArrowLeft size={20} color={theme.text} />

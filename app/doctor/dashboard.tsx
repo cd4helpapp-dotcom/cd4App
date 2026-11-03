@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Bot, Calendar, CalendarX, ChevronRight, Clock, FileText, IndianRupee, MessageCircle, Users, Video } from 'lucide-react-native';
+import { AlertCircle, Bot, Calendar, CalendarX, ChevronRight, Clock, FileText, IndianRupee, MessageCircle, Users, Video } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
 import { useAuthContext } from '../../context/AuthContext';
@@ -54,7 +54,14 @@ export default function DoctorDashboard() {
     const { theme } = useAppTheme();
     const { user } = useAuthContext();
 
-    const { data: appointments = [], isLoading, refetch: refetchAppointments, isRefetching } = useDoctorAppointments();
+    const {
+        data: appointments = [],
+        isLoading,
+        isError: isAppointmentsError,
+        error: appointmentsError,
+        refetch: refetchAppointments,
+        isRefetching,
+    } = useDoctorAppointments();
     const { data: chatRooms = [], refetch: refetchRooms } = useChatRooms();
     const { data: doctorProfileResponse, refetch: refetchDoctorProfile } = useDoctorProfile();
     const { data: earnings, refetch: refetchEarnings } = useDoctorEarnings();
@@ -112,8 +119,14 @@ export default function DoctorDashboard() {
         }
     };
 
-    const openConsult = (item: Appointment, patientName: string) =>
-        router.push({ pathname: '/chat-detail', params: { otherId: item.patient._id, name: patientName } });
+    const openConsult = (item: Appointment, patientName: string) => {
+        const patientId = item.patient?._id || item.patient?.id;
+        if (!patientId) {
+            Toast.show({ type: 'error', text1: 'Patient unavailable', text2: 'This patient profile is no longer available.' });
+            return;
+        }
+        router.push({ pathname: '/chat-detail', params: { otherId: patientId, name: patientName } });
+    };
 
     const openPdf = (item: Appointment) => {
         void openAiReport(item.aiReport?.pdf_url || '').catch((error) => {
@@ -154,11 +167,21 @@ export default function DoctorDashboard() {
 
     const renderAppointment = ({ item }: { item: Appointment }) => {
         const slot = item.slot as any;
+        const patient = item.patient;
         const when = `${dayLabel(slot?.date)} · ${slot?.startTime ? formatClock(slot.startTime) : 'Time not set'}${slot?.endTime ? ` – ${formatClock(slot.endTime)}` : ''}`;
-        const patientName = buildDisplayName(item.patient.firstName, item.patient.lastName, 'Patient');
+        const patientName = buildDisplayName(patient?.firstName, patient?.lastName, 'Patient');
         const summary = readableSummary(item.aiReport?.summary);
         const hasPdf = Boolean(item.aiReport?.pdf_url);
-        const patientMeta = [item.patient.age ? `${item.patient.age} years` : '', item.appointmentType === 'second_opinion' ? 'Second opinion' : ''].filter(Boolean).join(' · ');
+        const patientMeta = [patient?.age ? `${patient.age} years` : '', item.appointmentType === 'second_opinion' ? 'Second opinion' : ''].filter(Boolean).join(' · ');
+        const patientAvailable = Boolean(patient?._id || patient?.id);
+        const status = String(item.status || 'pending').toLowerCase();
+        const statusTone = status === 'confirmed'
+            ? { backgroundColor: theme.successLight, color: theme.success, label: 'Confirmed' }
+            : status === 'completed'
+                ? { backgroundColor: theme.primarySoft, color: theme.primary, label: 'Completed' }
+                : status === 'cancelled'
+                    ? { backgroundColor: theme.dangerSoft, color: theme.danger, label: 'Cancelled' }
+                    : { backgroundColor: theme.warningSoft, color: theme.warning, label: 'Pending' };
 
         return (
             <View style={[styles.card, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }, elevation(1)]}>
@@ -167,6 +190,9 @@ export default function DoctorDashboard() {
                     <View style={styles.flex}>
                         <Text style={[Typography.subheading, { color: theme.text }]} numberOfLines={1}>{patientName}</Text>
                         {patientMeta ? <Text style={[Typography.caption, { color: theme.textSecondary }]}>{patientMeta}</Text> : null}
+                    </View>
+                    <View style={[styles.statusBadge, { backgroundColor: statusTone.backgroundColor }]}>
+                        <Text style={[styles.statusBadgeText, { color: statusTone.color }]}>{statusTone.label}</Text>
                     </View>
                 </View>
 
@@ -190,11 +216,13 @@ export default function DoctorDashboard() {
                 <View style={styles.actions}>
                     <Pressable
                         onPress={() => openConsult(item, patientName)}
+                        disabled={!patientAvailable}
                         accessibilityRole="button"
-                        style={({ pressed }) => [styles.primaryAction, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary }]}
+                        accessibilityState={{ disabled: !patientAvailable }}
+                        style={({ pressed }) => [styles.primaryAction, { backgroundColor: pressed ? theme.primaryPressed : theme.buttonPrimary }, !patientAvailable && { opacity: 0.55 }]}
                     >
                         <Video size={16} color="#FFFFFF" />
-                        <Text style={styles.primaryActionText}>Consult</Text>
+                        <Text style={styles.primaryActionText}>{patientAvailable ? 'Consult' : 'Unavailable'}</Text>
                     </Pressable>
                     {hasPdf ? (
                         <Pressable
@@ -297,16 +325,38 @@ export default function DoctorDashboard() {
                         </View>
                     }
                     ListEmptyComponent={
-                        <View style={[styles.empty, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                            <View style={[styles.emptyIcon, { backgroundColor: theme.primarySoft }]}>
-                                <Calendar size={26} color={theme.primary} />
+                        isAppointmentsError ? (
+                            <View style={[styles.empty, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                                <View style={[styles.emptyIcon, { backgroundColor: theme.dangerSoft || '#FEE2E2' }]}>
+                                    <AlertCircle size={26} color={theme.danger} />
+                                </View>
+                                <Text style={[Typography.subheading, { color: theme.text }]}>Could not load consultations</Text>
+                                <Text style={[Typography.body, styles.emptyText, { color: theme.textSecondary }]}>
+                                    {appointmentsError?.message || 'Something went wrong while fetching your appointments.'}
+                                </Text>
+                                <Pressable
+                                    onPress={() => {
+                                        void refetchAppointments();
+                                        void refetchEarnings();
+                                    }}
+                                    accessibilityRole="button"
+                                    style={[styles.emptyCta, { backgroundColor: theme.buttonPrimary }]}
+                                >
+                                    <Text style={styles.primaryActionText}>Retry</Text>
+                                </Pressable>
                             </View>
-                            <Text style={[Typography.subheading, { color: theme.text }]}>No upcoming consultations</Text>
-                            <Text style={[Typography.body, styles.emptyText, { color: theme.textSecondary }]}>Add open slots so patients can book you.</Text>
-                            <Pressable onPress={() => router.push('/doctor/slots')} accessibilityRole="button" style={[styles.emptyCta, { backgroundColor: theme.buttonPrimary }]}>
-                                <Text style={styles.primaryActionText}>Manage slots</Text>
-                            </Pressable>
-                        </View>
+                        ) : (
+                            <View style={[styles.empty, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                                <View style={[styles.emptyIcon, { backgroundColor: theme.primarySoft }]}>
+                                    <Calendar size={26} color={theme.primary} />
+                                </View>
+                                <Text style={[Typography.subheading, { color: theme.text }]}>No upcoming consultations</Text>
+                                <Text style={[Typography.body, styles.emptyText, { color: theme.textSecondary }]}>Add open slots so patients can book you.</Text>
+                                <Pressable onPress={() => router.push('/doctor/slots')} accessibilityRole="button" style={[styles.emptyCta, { backgroundColor: theme.buttonPrimary }]}>
+                                    <Text style={styles.primaryActionText}>Manage slots</Text>
+                                </Pressable>
+                            </View>
+                        )
                     }
                 />
             )}
@@ -321,6 +371,8 @@ const styles = StyleSheet.create({
     header: { paddingTop: Spacing.lg, gap: Spacing.lg },
     tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.md },
     row: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+    statusBadge: { borderRadius: Radius.pill, paddingHorizontal: Spacing.sm, paddingVertical: 4 },
+    statusBadgeText: { fontSize: 10, fontWeight: '800' },
     earnings: { borderWidth: 1, borderRadius: Radius.lg, padding: Spacing.lg, gap: Spacing.md },
     earningsIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.xs },
     earningsRow: { flexDirection: 'row', gap: Spacing.sm, borderTopWidth: StyleSheet.hairlineWidth * 2, paddingTop: Spacing.md },

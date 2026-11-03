@@ -505,7 +505,7 @@ export default function AdminAppSettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 30, gap: 14 },
+  content: { padding: 16, paddingBottom: 100, gap: 14 },
   header: { gap: 6 },
   title: { fontSize: 26, fontWeight: '800' },
   subtitle: { fontSize: 13, lineHeight: 18 },

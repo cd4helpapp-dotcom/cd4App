@@ -39,13 +39,19 @@ const buildFallbackUserFromSession = (
   const metadata = (sessionUser.user_metadata || {}) as Record<string, unknown>;
   const email = sessionUser.email || '';
   const role = fallbackRole ?? normalizeRoleSlug(metadata.role);
+  const fallbackName =
+    (typeof metadata.full_name === 'string' ? metadata.full_name.trim() : '') ||
+    (typeof metadata.name === 'string' ? metadata.name.trim() : '');
+  const [fallbackFirstName = '', ...fallbackLastNameParts] = fallbackName.split(/\s+/).filter(Boolean);
   const firstName =
     (typeof metadata.first_name === 'string' ? metadata.first_name.trim() : '') ||
     (typeof metadata.firstName === 'string' ? metadata.firstName.trim() : '') ||
+    fallbackFirstName ||
     'User';
   const lastName =
     (typeof metadata.last_name === 'string' ? metadata.last_name.trim() : '') ||
-    (typeof metadata.lastName === 'string' ? metadata.lastName.trim() : '');
+    (typeof metadata.lastName === 'string' ? metadata.lastName.trim() : '') ||
+    fallbackLastNameParts.join(' ');
   const phoneNumber =
     (typeof metadata.phone_number === 'string' ? metadata.phone_number.trim() : '') ||
     (typeof metadata.phoneNumber === 'string' ? metadata.phoneNumber.trim() : '') ||
@@ -56,7 +62,11 @@ const buildFallbackUserFromSession = (
       ? metadata.profile_picture
       : typeof metadata.profilePicture === 'string'
         ? metadata.profilePicture
-        : undefined;
+        : typeof metadata.avatar_url === 'string'
+          ? metadata.avatar_url
+          : typeof metadata.picture === 'string'
+            ? metadata.picture
+            : undefined;
   const nowIso = new Date().toISOString();
 
   return {
@@ -274,8 +284,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const queryStr = url.split('#')[1] || url.split('?')[1];
       if (!queryStr) return;
       const params = new URLSearchParams(queryStr);
+      const code = params.get('code');
       const accessToken = params.get('access_token');
       const refreshToken = params.get('refresh_token');
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error && __DEV__) console.error('[Auth] Error exchanging auth code from URL:', error.message);
+        return;
+      }
       if (accessToken && refreshToken) {
         const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
         if (error && __DEV__) console.error('[Auth] Error setting session from URL:', error.message);
@@ -421,7 +437,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data, error } = await supabase.auth.refreshSession();
     if (error) {
       const message = error.message || '';
-      if (/auth session missing/i.test(message)) {
+      if (/auth session missing|invalid_grant|refresh_token_not_found|refresh token.*(expired|invalid)|jwt expired/i.test(message)) {
         setSession(null);
         setUser(null);
         return;

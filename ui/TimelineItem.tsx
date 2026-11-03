@@ -42,7 +42,7 @@ export default function TimelineItem({ type, time, title, subtitle, isLast, them
           <>
             {time && <Text style={[styles.timelineTime, { color: theme.success }]}>{type === 'completed' ? 'COMPLETED • ' : ''}{time}</Text>}
             <View style={[styles.timelineCard, { backgroundColor: type === 'skipped' ? theme.background : theme.cardBackground, borderColor: type === 'skipped' ? 'transparent' : theme.borderColor }]}>
-              <View>
+              <View style={styles.timelineText}>
                 <Text style={[styles.timelineTitle, { color: type === 'skipped' ? theme.textSecondary : theme.text }]}>{title}</Text>
                 <Text style={[styles.timelineSubtitle, { color: theme.textSecondary }]}>{subtitle}</Text>
               </View>
@@ -68,9 +68,10 @@ const styles = StyleSheet.create({
   timelineDotFuture: { width: 14, height: 14, borderRadius: 7, borderWidth: 3, marginTop: 2 },
   timelineDotSkipped: { width: 12, height: 12, borderRadius: 6, marginTop: 4 },
   timelineLine: { width: 2, flex: 1, marginTop: 10, marginBottom: -10 },
-  timelineContent: { flex: 1 },
+  timelineContent: { flex: 1, minWidth: 0 },
   timelineTime: { fontSize: 11, fontWeight: '800', marginBottom: 8, letterSpacing: 0.5, textTransform: 'uppercase' },
-  timelineCard: { padding: 18, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1 },
+  timelineCard: { padding: 18, borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, gap: 12 },
+  timelineText: { flex: 1, minWidth: 0 },
   timelineTitle: { fontSize: 15, fontWeight: '700', marginBottom: 4 },
   timelineSubtitle: { fontSize: 12, fontWeight: '500' },
   checkIcon: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

@@ -358,10 +358,10 @@ export const useUpdateProfile = () => {
 
             const optionalUpdates: any = {};
             if (data.age !== undefined) optionalUpdates.age = data.age;
-            if (data.gender) optionalUpdates.gender = data.gender;
-            if (data.address) optionalUpdates.address = data.address;
+            if (data.gender !== undefined) optionalUpdates.gender = data.gender || null;
+            if (data.address !== undefined) optionalUpdates.address = data.address || null;
             if (data.weight !== undefined) optionalUpdates.weight = data.weight;
-            if (data.bloodPressure) optionalUpdates.blood_pressure = data.bloodPressure;
+            if (data.bloodPressure !== undefined) optionalUpdates.blood_pressure = data.bloodPressure || null;
             if (data.pulse !== undefined) optionalUpdates.pulse = data.pulse;
 
             if (Object.keys(optionalUpdates).length > 0) {
@@ -406,7 +406,22 @@ export const useUpdateSettings = () => {
                 .single();
 
             const currentSettings = profile?.settings || {};
-            const newSettings = { ...currentSettings, ...data };
+            const mergeSection = (key: string) => {
+                const current = currentSettings?.[key];
+                const incoming = data?.[key as keyof UpdateSettingsData];
+                return {
+                    ...(current && typeof current === 'object' ? current as Record<string, unknown> : {}),
+                    ...(incoming && typeof incoming === 'object' ? incoming as Record<string, unknown> : {}),
+                };
+            };
+            const newSettings = {
+                ...currentSettings,
+                ...data,
+                notifications: mergeSection('notifications'),
+                privacy: mergeSection('privacy'),
+                appearance: mergeSection('appearance'),
+                chats: mergeSection('chats'),
+            };
 
             const { error } = await supabase
                 .from('profiles')

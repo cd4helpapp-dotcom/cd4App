@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { Animated, PanResponder, StyleSheet, Text, TouchableOpacity, View, useColorScheme } from 'react-native';
+import { Animated, Dimensions, PanResponder, StyleSheet, Text, TouchableOpacity, View, useColorScheme } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
 import { Maximize2, Phone, Video, X } from 'lucide-react-native';
 import Colors from '../constants/Colors';
@@ -29,7 +29,7 @@ export default function GlobalCallPiP() {
 
     const isOnChatDetailScreen = pathname.endsWith('/chat-detail');
 
-    if (callStatus !== 'active' || !activeCallRoomId || isOnChatDetailScreen) return null;
+    if (callStatus !== 'active' || callType === 'audio' || !activeCallRoomId || isOnChatDetailScreen) return null;
 
     const pan = useRef(new Animated.ValueXY({ x: 220, y: 160 })).current;
     const panResponder = useRef(
@@ -44,8 +44,9 @@ export default function GlobalCallPiP() {
             }),
             onPanResponderRelease: (_evt, gestureState) => {
                 pan.flattenOffset();
-                const snapX = clamp((pan.x as any).__getValue(), 8, 280);
-                const snapY = clamp((pan.y as any).__getValue(), 80, 520);
+                const { width, height } = Dimensions.get('window');
+                const snapX = clamp((pan.x as any).__getValue(), 8, Math.max(8, width - 124 - 8));
+                const snapY = clamp((pan.y as any).__getValue(), 80, Math.max(80, height - 188 - 16));
                 Animated.spring(pan, {
                     toValue: { x: snapX, y: snapY },
                     useNativeDriver: false,
@@ -107,6 +108,7 @@ export default function GlobalCallPiP() {
                             params: { roomId: activeCallRoomId, resumeCall: 'true' },
                         });
                     }}
+                    hitSlop={10}
                 >
                     <Maximize2 size={14} color="#fff" />
                 </TouchableOpacity>
@@ -115,6 +117,7 @@ export default function GlobalCallPiP() {
                     onPress={() => {
                         void endCall(activeCallRoomId);
                     }}
+                    hitSlop={10}
                 >
                     <X size={14} color="#fff" />
                 </TouchableOpacity>

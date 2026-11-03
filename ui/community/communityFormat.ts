@@ -7,7 +7,7 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-export const formatCommunityTime = (iso: string, t: Translate): string => {
+export const formatCommunityTime = (iso: string, t: Translate, locale?: string): string => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return t('community.justNow');
   const diffMs = Math.max(0, Date.now() - date.getTime());
@@ -15,7 +15,8 @@ export const formatCommunityTime = (iso: string, t: Translate): string => {
   if (diffMs < HOUR_MS) return t('community.minutesAgo', { count: Math.floor(diffMs / MINUTE_MS) });
   if (diffMs < DAY_MS) return t('community.hoursAgo', { count: Math.floor(diffMs / HOUR_MS) });
   if (diffMs < 7 * DAY_MS) return t('community.daysAgo', { count: Math.floor(diffMs / DAY_MS) });
-  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const resolvedLocale = locale === 'hi' ? 'hi-IN' : locale ? (locale.includes('-') ? locale : `${locale}-IN`) : undefined;
+  return date.toLocaleDateString(resolvedLocale, { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
 export const communityCategoryLabel = (category: CommunityCategory, t: Translate): string => {

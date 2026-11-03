@@ -16,17 +16,30 @@ type Props = {
   userId: string | null;
   userName: string;
   userAvatar?: string | null;
+  initialText?: string;
+  initialCategory?: CommunityCategory;
+  initialAssets?: ImagePicker.ImagePickerAsset[];
 };
 
 // Holds its own typing state. Kept in the feed screen, every letter re-rendered every post.
-function CommunityComposer({ userId, userName, userAvatar }: Props) {
+function CommunityComposer({ userId, userName, userAvatar, initialText, initialCategory, initialAssets }: Props) {
   const { theme } = useAppTheme();
   const { t } = useAppLanguage();
-  const [text, setText] = React.useState('');
-  const [category, setCategory] = React.useState<CommunityCategory>('general');
-  const [assets, setAssets] = React.useState<ImagePicker.ImagePickerAsset[]>([]);
+  const [text, setText] = React.useState(initialText ?? '');
+  const [category, setCategory] = React.useState<CommunityCategory>(initialCategory ?? 'general');
+  const [assets, setAssets] = React.useState<ImagePicker.ImagePickerAsset[]>(initialAssets ?? []);
   const [focused, setFocused] = React.useState(false);
   const createPost = useCreateCommunityPost(userId);
+
+  React.useEffect(() => {
+    if (initialText !== undefined) setText(initialText);
+  }, [initialText]);
+  React.useEffect(() => {
+    if (initialCategory !== undefined) setCategory(initialCategory);
+  }, [initialCategory]);
+  React.useEffect(() => {
+    if (initialAssets !== undefined) setAssets(initialAssets);
+  }, [initialAssets]);
 
   const isOpen = focused || text.length > 0 || assets.length > 0;
   const canPost = (text.trim().length > 0 || assets.length > 0) && !createPost.isPending;

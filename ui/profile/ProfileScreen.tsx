@@ -7,15 +7,22 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuthContext } from '../../context/AuthContext';
 import { useLogout, useProfile } from '../../hooks/useAuth';
 import { User, LogOut, Mail, Phone, Calendar, CheckCircle, FileText } from 'lucide-react-native';
 import { usePatientHospitalVoiceIntakes } from '../../hooks/useHospital';
 import { openAiReport } from '../../src/utils/reportDownload';
+import { useAppTheme } from '../../hooks/useAppTheme';
+import { getImageUrl } from '../../constants/Config';
+import { normalizeIndianMobile } from '../../src/utils/validation';
 
 const ProfileScreen: React.FC = () => {
+  const { theme } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const { user, refreshAuth } = useAuthContext();
   const logoutMutation = useLogout();
   const { data: profileData, isLoading: profileLoading, refetch: refetchProfile } = useProfile();
@@ -46,14 +53,17 @@ const ProfileScreen: React.FC = () => {
   const handleRefreshProfile = async () => {
     try {
       await refetchProfile();
-      refreshAuth();
+      await refreshAuth();
     } catch (error) {
       Alert.alert('Error', 'Failed to refresh profile');
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'Recently';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Recently';
+    return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -62,69 +72,69 @@ const ProfileScreen: React.FC = () => {
 
   if (!user) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>No user data available</Text>
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <Text style={[styles.errorText, { color: theme.danger }]}>No user data available</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <View style={styles.avatarContainer}>
-          <User size={60} color="#4CAF50" />
+    <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={[styles.content, { paddingTop: insets.top + 20 }]}>
+      <View style={[styles.header, { backgroundColor: theme.cardBackground, shadowColor: theme.shadow }]}>
+        <View style={[styles.avatarContainer, { backgroundColor: theme.primarySoft }]}>
+          {user.profilePicture ? <Image source={{ uri: getImageUrl(user.profilePicture) }} style={styles.avatarImage} /> : <User size={60} color={theme.primary} />}
         </View>
-        <Text style={styles.name}>
+        <Text style={[styles.name, { color: theme.text }]}>
           {user.firstName} {user.lastName}
         </Text>
-        <View style={styles.verificationBadge}>
-          <CheckCircle size={16} color="#4CAF50" />
-          <Text style={styles.verificationText}>Verified Account</Text>
+        <View style={[styles.verificationBadge, { backgroundColor: theme.successLight }]}>
+          <CheckCircle size={16} color={theme.success} />
+          <Text style={[styles.verificationText, { color: theme.success }]}>Verified Account</Text>
         </View>
       </View>
 
-      <View style={styles.infoSection}>
-        <Text style={styles.sectionTitle}>Account Information</Text>
+      <View style={[styles.infoSection, { backgroundColor: theme.cardBackground, shadowColor: theme.shadow }]}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Account Information</Text>
 
         <View style={styles.infoItem}>
-          <Mail size={20} color="#666" />
+          <Mail size={20} color={theme.textSecondary} />
           <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Email</Text>
-            <Text style={styles.infoValue}>{user.email}</Text>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Email</Text>
+            <Text style={[styles.infoValue, { color: theme.text }]}>{user.email}</Text>
           </View>
         </View>
 
         <View style={styles.infoItem}>
-          <Phone size={20} color="#666" />
+          <Phone size={20} color={theme.textSecondary} />
           <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Phone Number</Text>
-            <Text style={styles.infoValue}>+91 {user.phoneNumber}</Text>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Phone Number</Text>
+            <Text style={[styles.infoValue, { color: theme.text }]}>{normalizeIndianMobile(user.phoneNumber || '') ? `+91 ${normalizeIndianMobile(user.phoneNumber || '')}` : 'Not added'}</Text>
           </View>
         </View>
 
         <View style={styles.infoItem}>
-          <Calendar size={20} color="#666" />
+          <Calendar size={20} color={theme.textSecondary} />
           <View style={styles.infoContent}>
-            <Text style={styles.infoLabel}>Member Since</Text>
-            <Text style={styles.infoValue}>{formatDate(user.createdAt)}</Text>
+            <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Member Since</Text>
+            <Text style={[styles.infoValue, { color: theme.text }]}>{formatDate(user.createdAt)}</Text>
           </View>
         </View>
       </View>
 
-      <View style={styles.infoSection}>
-        <Text style={styles.sectionTitle}>Hospital clinical history</Text>
+      <View style={[styles.infoSection, { backgroundColor: theme.cardBackground, shadowColor: theme.shadow }]}>
+        <Text style={[styles.sectionTitle, { color: theme.text }]}>Hospital clinical history</Text>
         {hospitalHistoryQuery.isLoading ? (
-          <ActivityIndicator size="small" color="#4CAF50" />
+          <ActivityIndicator size="small" color={theme.primary} />
         ) : hospitalHistoryQuery.data?.length ? (
           hospitalHistoryQuery.data.map((item) => (
-            <View key={item.id} style={styles.historyItem}>
-              <FileText size={19} color="#4CAF50" />
+            <View key={item.id} style={[styles.historyItem, { borderTopColor: theme.borderColor }]}>
+              <FileText size={19} color={theme.primary} />
               <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>{item.title}</Text>
-                <Text style={styles.infoValue}>{item.aiSummary || 'Clinical history saved for doctor review.'}</Text>
+                <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>{item.title}</Text>
+                <Text style={[styles.infoValue, { color: theme.text }]}>{item.aiSummary || 'Clinical history saved for doctor review.'}</Text>
                 {item.pdfUrl ? (
                   <TouchableOpacity
-                    style={styles.historyReportButton}
+                    style={[styles.historyReportButton, { backgroundColor: theme.primarySoft }]}
                     onPress={async () => {
                       try {
                         await openAiReport(item.pdfUrl!);
@@ -133,32 +143,32 @@ const ProfileScreen: React.FC = () => {
                       }
                     }}
                   >
-                    <Text style={styles.historyReportButtonText}>View hospital report</Text>
+                    <Text style={[styles.historyReportButtonText, { color: theme.primary }]}>View hospital report</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
             </View>
           ))
         ) : (
-          <Text style={styles.emptyHistoryText}>No hospital clinical history is available yet.</Text>
+          <Text style={[styles.emptyHistoryText, { color: theme.textSecondary }]}>No hospital clinical history is available yet.</Text>
         )}
       </View>
 
       <View style={styles.actionsSection}>
         <TouchableOpacity
-          style={styles.refreshButton}
+          style={[styles.refreshButton, { backgroundColor: theme.cardBackground, borderColor: theme.primary }]}
           onPress={handleRefreshProfile}
           disabled={profileLoading}
         >
           {profileLoading ? (
-            <ActivityIndicator size="small" color="#4CAF50" />
+            <ActivityIndicator size="small" color={theme.primary} />
           ) : (
-            <Text style={styles.refreshButtonText}>Refresh Profile</Text>
+            <Text style={[styles.refreshButtonText, { color: theme.primary }]}>Refresh Profile</Text>
           )}
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.logoutButton}
+          style={[styles.logoutButton, { backgroundColor: theme.danger }]}
           onPress={handleLogout}
           disabled={logoutMutation.isPending}
         >
@@ -174,8 +184,8 @@ const ProfileScreen: React.FC = () => {
       </View>
 
       <View style={styles.footer}>
-        <Text style={styles.footerText}>CD4 v1.0.0</Text>
-        <Text style={styles.footerText}>Your wellness companion</Text>
+        <Text style={[styles.footerText, { color: theme.textTertiary }]}>CD4 v1.0.0</Text>
+        <Text style={[styles.footerText, { color: theme.textTertiary }]}>Your wellness companion</Text>
       </View>
     </ScrollView>
   );
@@ -212,6 +222,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 50,
   },
   name: {
     fontSize: 24,

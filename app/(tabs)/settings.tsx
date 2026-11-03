@@ -7,10 +7,12 @@ import {
   Bell,
   ChevronRight,
   CreditCard,
+  Database,
   FileText,
   Globe,
   HelpCircle,
   Image as ImageIcon,
+  Lock,
   LogOut,
   MessageCircle,
   Receipt,
@@ -146,6 +148,8 @@ export default function SettingsScreen() {
           <SettingsRow icon={Bell} tone="accent" label={t('notifications.title')} badge={unreadCount} onPress={() => router.push('/settings/notifications')} />
           <SettingsRow icon={Globe} tone="accent" label={t('language.title')} value={languageLabel} onPress={() => router.push('/settings/language')} />
           <SettingsRow icon={MessageCircle} tone="accent" label={t('settings.chats')} onPress={() => router.push('/settings/chats')} />
+          <SettingsRow icon={Lock} tone="accent" label={t('settings.privacy')} onPress={() => router.push('/settings/privacy')} />
+          <SettingsRow icon={Database} tone="accent" label={t('settings.storageData')} value={storageInsights.totalFormatted} onPress={() => router.push('/settings/storage')} />
         </SettingsGroup>
 
         <SettingsGroup title="Support & legal">

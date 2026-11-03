@@ -79,6 +79,15 @@ eq('size: unknown', t.formatFileSize(0), '');
 eq('followups: drops AI self-reference', t.getFollowUps({ ...base, aiStructured: { suggested_followups: ["Provide detailed answers to the AI's questions to help guide next steps.", 'Book a non-urgent appointment with a physician.'] } }), ['Book a non-urgent appointment with a physician.']);
 
 eq('highlights: name with slash + no numeric value', [t.parseHighlightLine('Creatinine / eGFR / 1.03 / mg/dL / reference 0.67-1.17 / normal')?.name, t.parseHighlightLine('Urine colour / Pale yellow / - / - / normal')], ['Creatinine / eGFR', null]);
+eq('highlights: qualitative lab values retained', [
+  t.parseHighlightLine('Dengue NS1 / Positive / reference negative / positive'),
+  t.parseHighlightLine('Urine protein: Trace | reference negative | Trace'),
+  t.parseHighlightLine('HIV screen: Non-reactive | reference non-reactive | Normal'),
+], [
+  { name: 'Dengue NS1', value: 'Positive', unit: '', reference: 'negative', flag: 'high' },
+  { name: 'Urine protein', value: 'Trace', unit: '', reference: 'negative', flag: 'high' },
+  { name: 'HIV screen', value: 'Non-reactive', unit: '', reference: 'non-reactive', flag: 'normal' },
+]);
 
 // Second format, copied from a live analysis on 2026-11-01.
 eq('highlights: pipe format (live data)', [

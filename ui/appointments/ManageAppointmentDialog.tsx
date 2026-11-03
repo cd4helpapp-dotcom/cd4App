@@ -1,6 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { CalendarClock, CalendarX } from 'lucide-react-native';
+import { CalendarClock, CalendarX, Check } from 'lucide-react-native';
 import Toast from 'react-native-toast-message';
 import { Radius, Spacing, Typography, elevation } from '../../constants/Design';
 import { useAppLanguage } from '../../context/AppLanguageContext';
@@ -124,7 +124,10 @@ export default function ManageAppointmentDialog({ item, mode, onClose }: Props) 
                       style={[styles.slot, { borderColor: active ? theme.primary : theme.borderColor, backgroundColor: active ? theme.primarySoft : theme.cardBackground }]}
                     >
                       <Text style={[Typography.bodyStrong, { color: theme.text }]}>{dayLabel(slot.date)}</Text>
-                      <Text style={[Typography.body, { color: theme.textSecondary }]}>{formatClock(slot.startTime)}</Text>
+                      <View style={styles.slotEnd}>
+                        <Text style={[Typography.body, { color: theme.textSecondary }]}>{formatClock(slot.startTime)}</Text>
+                        {active ? <Check size={17} color={theme.primary} /> : null}
+                      </View>
                     </Pressable>
                   );
                 })}
@@ -171,6 +174,7 @@ const styles = StyleSheet.create({
   slotList: { maxHeight: 260 },
   slotListContent: { gap: Spacing.sm },
   slot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderRadius: Radius.md, paddingHorizontal: Spacing.md, height: 48 },
+  slotEnd: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   actions: { flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.xs },
   action: { flex: 1, height: 46, borderRadius: Radius.md, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.sm },
   actionPrimaryText: { color: '#FFFFFF' },

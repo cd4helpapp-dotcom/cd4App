@@ -170,7 +170,7 @@ function PostCard({
   onPressFollow,
   commentDisabled,
 }: PostCardProps) {
-  const { t } = useAppLanguage();
+  const { t, language } = useAppLanguage();
   const likeScale = React.useRef(new Animated.Value(1)).current;
   const prevLikedRef = React.useRef<boolean>(post.likedByMe);
   const [expanded, setExpanded] = React.useState(false);
@@ -229,7 +229,7 @@ function PostCard({
               ) : null}
             </View>
             <Text style={[Typography.caption, { color: theme.textSecondary }]} numberOfLines={1}>
-              {communityCategoryLabel(post.category, t)} · {formatCommunityTime(post.createdAt, t)}
+              {communityCategoryLabel(post.category, t)} · {formatCommunityTime(post.createdAt, t, language)}
             </Text>
           </View>
         </TouchableOpacity>

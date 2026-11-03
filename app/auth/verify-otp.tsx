@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 import type { TextInputInstance } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { ShieldCheck } from 'lucide-react-native';
-import { supabase } from '../../src/lib/supabase';
+import { createRedirectUrl, supabase } from '../../src/lib/supabase';
 import { routeAfterSuccessfulAuth } from '../../src/utils/authRouting';
 import { Radius, Spacing, Typography } from '../../constants/Design';
 import { useAppTheme } from '../../hooks/useAppTheme';
@@ -20,8 +21,9 @@ const OTP_TYPES: OtpType[] = ['email', 'signup', 'recovery', 'magiclink', 'invit
 
 export default function VerifyOtpScreen() {
   const { theme } = useAppTheme();
+  const router = useRouter();
   const params = useLocalSearchParams<{ email?: string; type?: string }>();
-  const email = typeof params.email === 'string' ? params.email : '';
+  const email = typeof params.email === 'string' ? params.email.trim() : '';
   const type: OtpType = OTP_TYPES.includes(params.type as OtpType) ? (params.type as OtpType) : 'email';
 
   const inputRef = useRef<TextInputInstance | null>(null);
@@ -29,6 +31,30 @@ export default function VerifyOtpScreen() {
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
+
+  const cooldownStorageKey = email ? `cd4_otp_cooldown_${email.toLowerCase()}` : null;
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!cooldownStorageKey) return;
+
+    void AsyncStorage.getItem(cooldownStorageKey).then((saved) => {
+      if (!isMounted) return;
+      if (saved) {
+        const remaining = Math.max(0, Math.ceil((Number(saved) - Date.now()) / 1000));
+        setCooldown(remaining);
+      } else {
+        // First entry right after OTP was sent from signup or login
+        const expiresAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+        void AsyncStorage.setItem(cooldownStorageKey, String(expiresAt));
+        setCooldown(RESEND_COOLDOWN_SECONDS);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [cooldownStorageKey]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -46,24 +72,67 @@ export default function VerifyOtpScreen() {
     try {
       const { data, error: verifyError } = await supabase.auth.verifyOtp({ email, token: value, type });
       if (verifyError) throw verifyError;
-      if (data.user) await routeAfterSuccessfulAuth(data.user.id);
+      if (type === 'recovery') {
+        router.replace('/auth/reset-password');
+        return;
+      }
+      if (data?.user || data?.session) {
+        try {
+          await routeAfterSuccessfulAuth(data.user?.id || data.session?.user?.id || '');
+        } catch (routeError: any) {
+          if (__DEV__) console.warn('Post-auth routing failed after successful OTP verification:', routeError);
+          // Fallback gracefully so the authenticated session is not stranded on OTP screen
+          Toast.show({
+            type: 'success',
+            text1: 'Signed in successfully',
+            text2: 'Opening your dashboard...',
+          });
+          router.replace('/');
+        }
+        return;
+      }
     } catch (err: any) {
-      setError('That code is incorrect or has expired. Check the latest email and try again.');
-      setCode('');
-      if (__DEV__) console.warn('verifyOtp failed:', err?.message);
+      const msg = String(err?.message || '');
+      if (/network|fetch|connection/i.test(msg)) {
+        setError('Network connection error. Please check your internet and try again.');
+      } else if (/rate limit/i.test(msg)) {
+        setError('Too many attempts. Please wait a minute before trying again.');
+      } else {
+        setError('That code is incorrect or has expired. Check the latest email and try again.');
+      }
+      if (__DEV__) console.warn('verifyOtp failed:', msg);
     } finally {
       setIsVerifying(false);
     }
   };
 
   const handleResend = async () => {
-    if (cooldown > 0 || !email) return;
+    if (!email) return;
+
+    if (cooldownStorageKey) {
+      const saved = await AsyncStorage.getItem(cooldownStorageKey);
+      const remaining = saved ? Math.max(0, Math.ceil((Number(saved) - Date.now()) / 1000)) : 0;
+      if (remaining > 0) {
+        setCooldown(remaining);
+        return;
+      }
+    }
+
+    if (cooldown > 0) return;
+
     try {
       const { error: resendError } =
-        type === 'signup'
-          ? await supabase.auth.resend({ type: 'signup', email })
-          : await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+        type === 'signup' || type === 'email_change'
+          ? await supabase.auth.resend({ type, email })
+          : type === 'recovery'
+            ? await supabase.auth.resetPasswordForEmail(email, { redirectTo: createRedirectUrl('auth/reset-password') })
+            : await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
       if (resendError) throw resendError;
+
+      const expiresAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+      if (cooldownStorageKey) {
+        await AsyncStorage.setItem(cooldownStorageKey, String(expiresAt));
+      }
       setCooldown(RESEND_COOLDOWN_SECONDS);
       Toast.show({ type: 'success', text1: 'New code sent', text2: `Check ${email}` });
     } catch (err: any) {
@@ -82,42 +151,45 @@ export default function VerifyOtpScreen() {
     >
       <FormErrorBanner message={error} />
 
-      {/* One hidden input drives six visual boxes; this keeps paste and SMS/email autofill working. */}
-      <Pressable onPress={() => inputRef.current?.focus()} style={styles.codeRow} accessibilityLabel="Verification code">
-        {Array.from({ length: CODE_LENGTH }).map((_, index) => {
-          const isActive = index === Math.min(code.length, CODE_LENGTH - 1);
-          return (
-            <View
-              key={index}
-              style={[
-                styles.codeBox,
-                {
-                  borderColor: error ? theme.danger : isActive ? theme.primary : theme.borderColor,
-                  backgroundColor: theme.inputBackground,
-                },
-              ]}
-            >
-              <Text style={[Typography.title, { color: theme.text }]}>{digits[index] || ''}</Text>
-            </View>
-          );
-        })}
-      </Pressable>
-      <TextInput
-        ref={inputRef}
-        value={code}
-        onChangeText={(value) => {
-          const clean = value.replace(/\D/g, '').slice(0, CODE_LENGTH);
-          setCode(clean);
-          setError(null);
-          if (clean.length === CODE_LENGTH) void handleVerify(clean);
-        }}
-        keyboardType="number-pad"
-        textContentType="oneTimeCode"
-        autoComplete="one-time-code"
-        maxLength={CODE_LENGTH}
-        autoFocus
-        style={styles.hiddenInput}
-      />
+      {/* Full-width interactive overlay drives six visual boxes; ensures full touch target, accessibility & autofill */}
+      <View style={styles.codeContainer}>
+        <View style={styles.codeRow} pointerEvents="none" accessible={false} importantForAccessibility="no">
+          {Array.from({ length: CODE_LENGTH }).map((_, index) => {
+            const isActive = index === Math.min(code.length, CODE_LENGTH - 1);
+            return (
+              <View
+                key={index}
+                style={[
+                  styles.codeBox,
+                  {
+                    borderColor: error ? theme.danger : isActive ? theme.primary : theme.borderColor,
+                    backgroundColor: theme.inputBackground,
+                  },
+                ]}
+              >
+                <Text style={[Typography.title, { color: theme.text }]}>{digits[index] || ''}</Text>
+              </View>
+            );
+          })}
+        </View>
+        <TextInput
+          ref={inputRef}
+          value={code}
+          onChangeText={(value) => {
+            const clean = value.replace(/\D/g, '').slice(0, CODE_LENGTH);
+            setCode(clean);
+            setError(null);
+            if (clean.length === CODE_LENGTH) void handleVerify(clean);
+          }}
+          keyboardType="number-pad"
+          textContentType="oneTimeCode"
+          autoComplete="one-time-code"
+          maxLength={CODE_LENGTH}
+          autoFocus
+          accessibilityLabel="Verification code"
+          style={styles.hiddenInput}
+        />
+      </View>
 
       <AppButton title="Verify" onPress={() => handleVerify()} loading={isVerifying} />
 
@@ -138,6 +210,11 @@ export default function VerifyOtpScreen() {
 const styles = StyleSheet.create({
   center: { textAlign: 'center' },
   link: { fontWeight: '600' },
+  codeContainer: {
+    position: 'relative',
+    justifyContent: 'center',
+    alignItems: 'stretch',
+  },
   codeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -154,8 +231,10 @@ const styles = StyleSheet.create({
   },
   hiddenInput: {
     position: 'absolute',
-    width: 1,
-    height: 1,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     opacity: 0,
   },
 });

@@ -74,7 +74,7 @@ export default function DoctorSignatureScreen() {
   };
 
   return (
-    <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']}>
+    <DoctorSafeScreen backgroundColor={theme.background} edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={8} style={[styles.back, { backgroundColor: theme.surfaceMuted }]}>

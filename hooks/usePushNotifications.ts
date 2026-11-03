@@ -217,6 +217,19 @@ export const usePushNotifications = () => {
         }
     };
 
+    const getEffectiveUserRole = async (): Promise<string> => {
+        const hydratedRole = user?.role?.trim();
+        if (hydratedRole) return hydratedRole.toLowerCase();
+
+        try {
+            const { data } = await supabase.auth.getSession();
+            const metadataRole = data?.session?.user?.user_metadata?.role;
+            return typeof metadataRole === 'string' ? metadataRole.trim().toLowerCase() : '';
+        } catch {
+            return '';
+        }
+    };
+
     const handleNotificationResponse = async (response: Notifications.NotificationResponse) => {
         try {
             const notificationIdentifier = response?.notification?.request?.identifier || 'unknown';
@@ -254,7 +267,7 @@ export const usePushNotifications = () => {
                     return;
                 }
 
-                const isDoctor = (user?.role || '').toLowerCase() === 'doctor';
+                const isDoctor = (await getEffectiveUserRole()) === 'doctor';
                 router.push(isDoctor ? '/doctor/slots' : '/(tabs)/appointments');
                 return;
             }
@@ -616,9 +629,14 @@ async function registerForPushNotificationsAsync() {
             if (__DEV__) console.warn('[PushNotifications] Project ID not found in expo config.');
         }
 
-        token = (await Notifications.getExpoPushTokenAsync({
-            projectId: projectId,
-        })).data;
+        try {
+            token = (await Notifications.getExpoPushTokenAsync({
+                projectId: projectId,
+            })).data;
+        } catch (error) {
+            if (__DEV__) console.warn('[PushNotifications] Could not get Expo push token:', error);
+            return;
+        }
         if (__DEV__) console.log('[PushNotifications] Expo Push Token:', token);
     } else {
         if (__DEV__) console.log('[PushNotifications] Must use physical device for Push Notifications');

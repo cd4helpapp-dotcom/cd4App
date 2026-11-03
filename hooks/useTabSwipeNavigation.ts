@@ -13,12 +13,20 @@ type SwipeTabKey =
   | 'community'
   | 'admin-dashboard'
   | 'admin-doctors'
+  | 'admin-medicines'
+  | 'admin-revenue'
   | 'admin-settings'
+  | 'admin-app-settings'
   | 'doctor-dashboard'
   | 'doctor-slots'
   | 'doctor-chats'
   | 'doctor-community'
-  | 'doctor-patients';
+  | 'doctor-patients'
+  | 'hospital-dashboard'
+  | 'hospital-stats'
+  | 'hospital-doctors'
+  | 'hospital-patients'
+  | 'hospital-settings';
 
 const TAB_PATHS: Record<SwipeTabKey, string> = {
   index: '/(tabs)',
@@ -30,18 +38,27 @@ const TAB_PATHS: Record<SwipeTabKey, string> = {
   community: '/community',
   'admin-dashboard': '/admin/dashboard',
   'admin-doctors': '/admin/doctors',
-  'admin-settings': '/admin/settings',
+  'admin-medicines': '/admin/medicines',
+  'admin-revenue': '/admin/revenue',
+  'admin-settings': '/admin/app-settings',
+  'admin-app-settings': '/admin/app-settings',
   'doctor-dashboard': '/doctor/dashboard',
   'doctor-slots': '/doctor/slots',
   'doctor-chats': '/doctor/chats',
   'doctor-community': '/doctor/community',
   'doctor-patients': '/doctor/patients',
+  'hospital-dashboard': '/hospital/dashboard',
+  'hospital-stats': '/hospital/stats',
+  'hospital-doctors': '/hospital/doctors',
+  'hospital-patients': '/hospital/patients',
+  'hospital-settings': '/hospital/settings',
 };
 
 const REVERSAL_TAB_ORDER: SwipeTabKey[] = ['index', 'daily-engine', 'food-log', 'community'];
 const TELECONSULT_TAB_ORDER: SwipeTabKey[] = ['index', 'appointments', 'records', 'chat', 'community'];
-const ADMIN_TAB_ORDER: SwipeTabKey[] = ['admin-dashboard', 'admin-doctors', 'admin-settings'];
+const ADMIN_TAB_ORDER: SwipeTabKey[] = ['admin-dashboard', 'admin-doctors', 'admin-medicines', 'admin-revenue', 'admin-settings'];
 const DOCTOR_TAB_ORDER: SwipeTabKey[] = ['doctor-dashboard', 'doctor-slots', 'doctor-chats', 'doctor-community', 'doctor-patients'];
+const HOSPITAL_TAB_ORDER: SwipeTabKey[] = ['hospital-dashboard', 'hospital-stats', 'hospital-doctors', 'hospital-patients', 'hospital-settings'];
 
 const SWIPE_CAPTURE_DISTANCE = 12;
 const SWIPE_TRIGGER_DISTANCE = 54;
@@ -69,6 +86,7 @@ export const useTabSwipeNavigation = (
   const tabOrder = React.useMemo(() => {
     if (String(currentTab).startsWith('admin-')) return ADMIN_TAB_ORDER;
     if (String(currentTab).startsWith('doctor-')) return DOCTOR_TAB_ORDER;
+    if (String(currentTab).startsWith('hospital-')) return HOSPITAL_TAB_ORDER;
     return mode === 'reversal' ? REVERSAL_TAB_ORDER : TELECONSULT_TAB_ORDER;
   }, [mode, currentTab]);
 
@@ -104,8 +122,10 @@ export const useTabSwipeNavigation = (
           return canCaptureHorizontalSwipe(gestureState.dx, gestureState.dy);
         },
         onMoveShouldSetPanResponderCapture: (_event, gestureState) => {
-          if (disabled || isLockedRef.current) return false;
-          return canCaptureHorizontalSwipe(gestureState.dx, gestureState.dy);
+          // Native horizontal controls (media carousels, chips and charts) must
+          // get first refusal. The parent can still handle a swipe that no
+          // child claims through onMoveShouldSetPanResponder above.
+          return false;
         },
         onPanResponderRelease: (_event, gestureState) => {
           if (disabled || isLockedRef.current) return;
@@ -123,7 +143,10 @@ export const useTabSwipeNavigation = (
           }
           navigateToNeighborTab('right');
         },
-        onPanResponderTerminationRequest: () => false,
+        onPanResponderTerminationRequest: () => true,
+        onPanResponderTerminate: () => {
+          isLockedRef.current = false;
+        },
         onShouldBlockNativeResponder: () => false,
       }),
     [disabled, navigateToNeighborTab]

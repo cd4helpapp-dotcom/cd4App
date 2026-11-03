@@ -73,6 +73,23 @@ export default function GlobalCallObserver() {
             return true;
         };
 
+        // Realtime delivery for call_sessions is broad, so verify that this user belongs to
+        // the room before binding it or changing its call state.
+        const isRoomParticipant = async (roomId: string): Promise<boolean> => {
+            if (!roomId) return false;
+            const { data, error } = await supabase
+                .from('chat_rooms')
+                .select('id')
+                .eq('id', roomId)
+                .or(`patient_id.eq.${userId},doctor_id.eq.${userId}`)
+                .maybeSingle();
+            if (error) {
+                if (__DEV__) console.warn('Could not verify incoming call room:', error);
+                return false;
+            }
+            return Boolean(data?.id);
+        };
+
         const checkExistingCalls = async () => {
             const { data, error } = await supabase
                 .from('call_sessions')
@@ -82,20 +99,24 @@ export default function GlobalCallObserver() {
                 // Older than this, the caller's phone has already given up, or crashed before it could.
                 .gte('created_at', new Date(Date.now() - 60000).toISOString())
                 .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
+                .limit(10);
                 
             if (data && !error) {
-                if (isBusyWithAnotherRoom(data)) return;
-                bindRoomRef.current(data.room_id);
+                const incoming = await Promise.all(data.map(async (session) =>
+                    (await isRoomParticipant(session.room_id)) ? session : null
+                ));
+                const session = incoming.find(Boolean);
+                if (!session) return;
+                if (isBusyWithAnotherRoom(session)) return;
+                bindRoomRef.current(session.room_id);
 
                 // Don't show global overlay if user is already in that chat room
                 const activeRoom = getActiveRoomId();
-                if (activeRoom && activeRoom === data.room_id) return;
+                if (activeRoom && activeRoom === session.room_id) return;
                 
                 // Instantly show modal while fetching details
-                setIncomingCall(data as IncomingCall);
-                fetchCallerDetails(data);
+                setIncomingCall(session as IncomingCall);
+                fetchCallerDetails(session);
             }
         };
 
@@ -113,6 +134,7 @@ export default function GlobalCallObserver() {
 
                 // 1. If ringing and we are the receiver (not the caller)
                 if (session.status === 'ringing' && session.caller_id !== userId) {
+                    if (!(await isRoomParticipant(session.room_id))) return;
                     if (isBusyWithAnotherRoom(session)) return;
                     bindRoomRef.current(session.room_id);
                     

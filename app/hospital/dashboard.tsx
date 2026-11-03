@@ -1173,7 +1173,7 @@ function EmptyText({ text, theme }: { text: string; theme: any }) {
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     container: { flex: 1 },
-    content: { paddingHorizontal: 18, paddingBottom: 34 },
+    content: { paddingHorizontal: 18, paddingBottom: 100 },
     header: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 18 },
     kicker: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 6 },
     title: { fontSize: 28, fontWeight: '900', lineHeight: 34 },

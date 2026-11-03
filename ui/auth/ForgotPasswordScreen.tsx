@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { KeyRound, Mail, MailCheck } from 'lucide-react-native';
 import { supabase, createRedirectUrl } from '../../src/lib/supabase';
@@ -14,6 +15,7 @@ import AuthLayout from './AuthLayout';
 import { FormErrorBanner } from './AuthParts';
 
 const RESEND_COOLDOWN_SECONDS = 60;
+const getCooldownKey = (target: string) => `cd4_forgot_cooldown_${target.trim().toLowerCase()}`;
 
 const ForgotPasswordScreen: React.FC = () => {
   const { theme } = useAppTheme();
@@ -25,12 +27,38 @@ const ForgotPasswordScreen: React.FC = () => {
   const [cooldown, setCooldown] = useState(0);
 
   React.useEffect(() => {
+    let isMounted = true;
+    if (!sentTo) return;
+    const key = getCooldownKey(sentTo);
+    void AsyncStorage.getItem(key).then((saved) => {
+      if (!isMounted) return;
+      if (saved) {
+        const remaining = Math.max(0, Math.ceil((Number(saved) - Date.now()) / 1000));
+        setCooldown(remaining);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [sentTo]);
+
+  React.useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setTimeout(() => setCooldown((value) => value - 1), 1000);
     return () => clearTimeout(timer);
   }, [cooldown]);
 
   const sendResetLink = async (target: string) => {
+    const key = getCooldownKey(target);
+    const saved = await AsyncStorage.getItem(key);
+    const remaining = saved ? Math.max(0, Math.ceil((Number(saved) - Date.now()) / 1000)) : 0;
+    if (remaining > 0) {
+      setSentTo(target);
+      setCooldown(remaining);
+      setFormError(`Please wait ${remaining}s before requesting another reset link.`);
+      return false;
+    }
+
     setIsLoading(true);
     setFormError(null);
     try {
@@ -39,6 +67,8 @@ const ForgotPasswordScreen: React.FC = () => {
       });
       if (error) throw error;
       setSentTo(target);
+      const expiresAt = Date.now() + RESEND_COOLDOWN_SECONDS * 1000;
+      await AsyncStorage.setItem(key, String(expiresAt));
       setCooldown(RESEND_COOLDOWN_SECONDS);
       return true;
     } catch (err: any) {
@@ -55,7 +85,23 @@ const ForgotPasswordScreen: React.FC = () => {
   const handleSubmit = async () => {
     if (!email.trim()) return setEmailError('Enter your email address.');
     if (!isValidEmail(email)) return setEmailError('Enter a valid email address.');
-    await sendResetLink(normalizeAuthEmail(email));
+    const target = normalizeAuthEmail(email);
+
+    const key = getCooldownKey(target);
+    const saved = await AsyncStorage.getItem(key);
+    const remaining = saved ? Math.max(0, Math.ceil((Number(saved) - Date.now()) / 1000)) : 0;
+    if (remaining > 0) {
+      setSentTo(target);
+      setCooldown(remaining);
+      Toast.show({
+        type: 'info',
+        text1: 'Reset link already sent',
+        text2: `Please wait ${remaining}s before requesting again.`,
+      });
+      return;
+    }
+
+    await sendResetLink(target);
   };
 
   const handleResend = async () => {

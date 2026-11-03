@@ -18,8 +18,9 @@ import { supabase } from '../src/lib/supabase';
 import { openRazorpayCheckout } from '../services/razorpay';
 import { useAuthContext } from '../context/AuthContext';
 import { useAppLanguage } from '../context/AppLanguageContext';
-import { useBookAppointment } from '../hooks/useAppointment';
+import { assertBookingCooldown, useBookAppointment } from '../hooks/useAppointment';
 import { syncAppointmentWithDeviceCalendar } from '../services/appointmentCalendar';
+import { formatClock } from '../src/utils/slotTime';
 
 type QuoteSnapshot = {
   orderId: string;
@@ -80,7 +81,8 @@ export default function ConfirmConsultationScreen() {
 
   const parsedSlotDate = React.useMemo(() => {
     if (!slotDateRaw) return null;
-    const date = new Date(slotDateRaw);
+    const [year, month, day] = slotDateRaw.slice(0, 10).split('-').map(Number);
+    const date = new Date(year, month - 1, day);
     return Number.isFinite(date.getTime()) ? date : null;
   }, [slotDateRaw]);
 
@@ -96,6 +98,7 @@ export default function ConfirmConsultationScreen() {
   const [quote, setQuote] = React.useState<QuoteSnapshot | null>(null);
   const [isPreparing, setIsPreparing] = React.useState(true);
   const [isPaying, setIsPaying] = React.useState(false);
+  const isPayingRef = React.useRef(false);
   const quoteRequestRef = React.useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const loadQuote = React.useCallback(async () => {
@@ -117,6 +120,10 @@ export default function ConfirmConsultationScreen() {
       if (!session?.access_token) {
         throw new Error('Authentication session missing. Please login again and retry booking.');
       }
+      if (!session.user?.id) {
+        throw new Error('Authentication session missing. Please login again and retry booking.');
+      }
+      await assertBookingCooldown(session.user.id, doctorId);
       supabase.functions.setAuth(session.access_token);
       const timeout = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Payment setup timed out. Please retry.')), 15000);
@@ -170,6 +177,7 @@ export default function ConfirmConsultationScreen() {
   }, [isAuthLoading, loadQuote]);
 
   const handlePay = async () => {
+    if (isPayingRef.current) return;
     if (!quote) {
       showUiAlert(t('payment.pleaseWait'), t('payment.stillLoading'));
       return;
@@ -180,6 +188,7 @@ export default function ConfirmConsultationScreen() {
       return;
     }
 
+    isPayingRef.current = true;
     setIsPaying(true);
     let chargedPaymentId = '';
     try {
@@ -212,7 +221,7 @@ export default function ConfirmConsultationScreen() {
           syncKey: `patient:${user.id}`,
           appointmentId: appointment?.id || `${doctorId}:${slotId}`,
           title: `Consultation with ${doctorName}`,
-          date: parsedSlotDate.toISOString(),
+          date: slotDateRaw.slice(0, 10),
           startTime: slotStartTime,
           endTime: slotEndTime || slotStartTime,
           notes: `CD4 consultation with ${doctorName}`,
@@ -232,6 +241,11 @@ export default function ConfirmConsultationScreen() {
         },
       });
     } catch (error: any) {
+      const paymentMessage = String(error?.description || error?.message || '').toLowerCase();
+      const paymentCancelled = error?.code === 0 || /cancelled|canceled|dismissed/.test(paymentMessage);
+      if (paymentCancelled && !chargedPaymentId) {
+        return;
+      }
       if (chargedPaymentId && String(error?.code || '').startsWith('slot_taken')) {
         showUiAlert(t('payment.slotGone'), `${error.code === 'slot_taken_refunded' ? t('payment.slotGoneRefunded') : t('payment.slotGoneRefundPending')}\n\n${t('payment.paymentId', { id: chargedPaymentId })}`);
         router.replace('/(tabs)/appointments');
@@ -244,6 +258,7 @@ export default function ConfirmConsultationScreen() {
         showUiAlert(t('payment.failed'), error?.message || t('payment.failedBody'));
       }
     } finally {
+      isPayingRef.current = false;
       setIsPaying(false);
     }
   };
@@ -291,7 +306,7 @@ export default function ConfirmConsultationScreen() {
           <View style={styles.metaRow}>
             <CalendarDays size={14} color={theme.textSecondary} />
             <Text style={[styles.metaText, { color: theme.textSecondary }]} numberOfLines={1}>
-              {slotDateLabel} • {slotEndTime ? `${slotStartTime} - ${slotEndTime}` : slotStartTime}
+              {slotDateLabel} • {slotEndTime ? `${formatClock(slotStartTime)} - ${formatClock(slotEndTime)}` : formatClock(slotStartTime)}
             </Text>
           </View>
           {!!concern && (

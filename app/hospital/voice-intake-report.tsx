@@ -130,26 +130,27 @@ export default function HospitalVoiceIntakeReportScreen() {
                         </TouchableOpacity>
                     </View>
 
-                    <View style={styles.paper}>
-                        <View style={styles.paperHeader}>
+                    <View style={[styles.paper, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                        <View style={[styles.paperHeader, { borderBottomColor: theme.borderColor }]}>
                             <View>
-                                <Text style={styles.brand}>CD4 AI</Text>
-                                <Text style={styles.paperTitle}>Hospital Voice Intake Report</Text>
+                                <Text style={[styles.brand, { color: theme.tint }]}>CD4 AI</Text>
+                                <Text style={[styles.paperTitle, { color: theme.text }]}>Hospital Voice Intake Report</Text>
                             </View>
-                            <FileText size={26} color="#008d80" />
+                            <FileText size={26} color={theme.tint} />
                         </View>
 
-                        <View style={styles.metaBox}>
-                            <MetaItem label="Intake" value={intake.title} />
-                            <MetaItem label="Created" value={formatDateTime(intake.createdAt)} />
-                            <MetaItem label="Status" value={formatStatus(intake.status)} />
-                            <MetaItem label="Language" value={intake.language || 'Hindi / English'} />
+                        <View style={[styles.metaBox, { backgroundColor: theme.surfaceMuted, borderColor: theme.borderColor }]}>
+                            <MetaItem label="Intake" value={intake.title} theme={theme} />
+                            <MetaItem label="Created" value={formatDateTime(intake.createdAt)} theme={theme} />
+                            <MetaItem label="Status" value={formatStatus(intake.status)} theme={theme} />
+                            <MetaItem label="Language" value={intake.language || 'Hindi / English'} theme={theme} />
                         </View>
 
-                        <ReportSection title="AI Doctor Summary" value={intake.aiSummary || 'Summary not available.'} />
+                        <ReportSection title="AI Doctor Summary" value={intake.aiSummary || 'Summary not available.'} theme={theme} />
                         <ReportSection
                             title="Clinical Note"
                             value="This intake is an AI-assisted handoff for doctor review. It is not a diagnosis or prescription. The doctor should verify symptoms, vitals, medicines, allergies, and red flags directly with the patient."
+                            theme={theme}
                         />
                     </View>
                 </>
@@ -158,27 +159,27 @@ export default function HospitalVoiceIntakeReportScreen() {
     );
 }
 
-function MetaItem({ label, value }: { label: string; value: string }) {
+function MetaItem({ label, value, theme }: { label: string; value: string; theme: typeof Colors.light }) {
     return (
         <View style={styles.metaItem}>
-            <Text style={styles.metaLabel}>{label}</Text>
-            <Text style={styles.metaValue}>{value}</Text>
+            <Text style={[styles.metaLabel, { color: theme.textSecondary }]}>{label}</Text>
+            <Text style={[styles.metaValue, { color: theme.text }]}>{value}</Text>
         </View>
     );
 }
 
-function ReportSection({ title, value }: { title: string; value: string }) {
+function ReportSection({ title, value, theme }: { title: string; value: string; theme: typeof Colors.light }) {
     return (
         <View style={styles.reportSection}>
-            <Text style={styles.reportSectionTitle}>{title}</Text>
-            <Text style={styles.reportText}>{value}</Text>
+            <Text style={[styles.reportSectionTitle, { color: theme.tint }]}>{title}</Text>
+            <Text style={[styles.reportText, { color: theme.text }]}>{value}</Text>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    content: { paddingHorizontal: 14, paddingBottom: 24 },
+    content: { paddingHorizontal: 14, paddingBottom: 100 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
     backButton: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
     kicker: { fontSize: 12, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 4 },
@@ -191,15 +192,15 @@ const styles = StyleSheet.create({
     actionButtonText: { fontSize: 14, fontWeight: '900' },
     secondaryButton: { flex: 1, height: 42, borderRadius: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
     secondaryButtonText: { fontSize: 14, fontWeight: '900' },
-    paper: { backgroundColor: '#FFFFFF', borderRadius: 10, padding: 12 },
-    paperHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, borderBottomWidth: 1, borderBottomColor: '#DDE7E4', paddingBottom: 10 },
-    brand: { color: '#008D80', fontSize: 14, fontWeight: '900', letterSpacing: 1.1 },
-    paperTitle: { marginTop: 5, color: '#111827', fontSize: 22, lineHeight: 28, fontWeight: '900' },
-    metaBox: { marginTop: 10, borderWidth: 1, borderColor: '#DDE7E4', borderRadius: 8, padding: 10, gap: 6, backgroundColor: '#F7FBFA' },
+    paper: { borderRadius: 12, borderWidth: 1, padding: 14 },
+    paperHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, borderBottomWidth: 1, paddingBottom: 10 },
+    brand: { fontSize: 14, fontWeight: '900', letterSpacing: 1.1 },
+    paperTitle: { marginTop: 5, fontSize: 22, lineHeight: 28, fontWeight: '900' },
+    metaBox: { marginTop: 10, borderWidth: 1, borderRadius: 10, padding: 10, gap: 6 },
     metaItem: { gap: 2 },
-    metaLabel: { color: '#667085', fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8 },
-    metaValue: { color: '#111827', fontSize: 13, lineHeight: 18, fontWeight: '800' },
+    metaLabel: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8 },
+    metaValue: { fontSize: 13, lineHeight: 18, fontWeight: '800' },
     reportSection: { marginTop: 12 },
-    reportSectionTitle: { color: '#008D80', fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 7 },
-    reportText: { color: '#1F2937', fontSize: 13, lineHeight: 20, fontWeight: '600' },
+    reportSectionTitle: { fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 7 },
+    reportText: { fontSize: 13, lineHeight: 20, fontWeight: '600' },
 });

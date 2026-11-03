@@ -1,78 +1,156 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Clipboard, Alert, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useMemo } from 'react';
+import {
+    Alert,
+    Clipboard,
+    Image,
+    Platform,
+    Share,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import { Redirect, useRouter } from 'expo-router';
 import { ArrowLeft, Copy, Share2 } from 'lucide-react-native';
-import Colors from '../constants/Colors';
+import * as Linking from 'expo-linking';
+import { useAppTheme } from '../hooks/useAppTheme';
+import { useAuthContext } from '../context/AuthContext';
+import { createRedirectUrl } from '../src/lib/supabase';
+import RouteLoadingScreen from '../ui/common/RouteLoadingScreen';
+import DoctorSafeScreen from '../ui/doctor/DoctorSafeScreen';
 
 export default function DoctorRecruitmentScreen() {
     const router = useRouter();
+    const { theme, isDark } = useAppTheme();
+    const { user, isLoading, isProfileResolved } = useAuthContext();
 
-    // Dynamically determining the URL based on environment
-    let REGISTRATION_URL = 'http://192.168.1.5:8081/doctor-register'; // Fallback for Mobile
+    // Dynamically determining the URL based on environment (Bug 6.9)
+    const registrationUrl = useMemo(() => {
+        if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+            return `${window.location.origin}/doctor-register`;
+        }
+        try {
+            return createRedirectUrl('doctor-register');
+        } catch {
+            return Linking.createURL('doctor-register');
+        }
+    }, []);
 
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        REGISTRATION_URL = `${window.location.origin}/doctor-register`;
-    }
+    const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(registrationUrl)}`;
 
-    const QR_API = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(REGISTRATION_URL)}`;
-
-    const copyToClipboard = () => {
-        Clipboard.setString(REGISTRATION_URL);
-        Alert.alert('Copied', 'Registration link copied to clipboard');
+    const copyToClipboard = async () => {
+        try {
+            if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+                await navigator.clipboard.writeText(registrationUrl);
+                Alert.alert('Copied', 'Registration link copied to clipboard');
+                return;
+            }
+            if ((Clipboard as any)?.setString) {
+                (Clipboard as any).setString(registrationUrl);
+                Alert.alert('Copied', 'Registration link copied to clipboard');
+                return;
+            }
+            await Share.share({
+                message: `Join CD4 as a doctor: ${registrationUrl}`,
+                url: registrationUrl,
+                title: 'Doctor Registration',
+            });
+        } catch {
+            await Share.share({
+                message: `Join CD4 as a doctor: ${registrationUrl}`,
+                url: registrationUrl,
+                title: 'Doctor Registration',
+            }).catch(() => {});
+        }
     };
 
+    const shareLink = async () => {
+        try {
+            await Share.share({
+                message: `Join the CD4 healthcare platform as a verified doctor: ${registrationUrl}`,
+                url: registrationUrl,
+                title: 'Doctor Registration',
+            });
+        } catch (error: any) {
+            console.warn('Share error:', error);
+        }
+    };
+
+    // Bug 6.14: Protected Recruitment Screen - only allow doctors and admins
+    if (isLoading || !isProfileResolved) {
+        return <RouteLoadingScreen />;
+    }
+
+    if (!user) {
+        return <Redirect href="/auth/login" />;
+    }
+
+    const roleSlug = typeof user.role === 'string'
+        ? user.role.trim().toLowerCase()
+        : String((user.role as any)?.name || '').trim().toLowerCase();
+
+    if (roleSlug !== 'doctor' && roleSlug !== 'admin') {
+        return <Redirect href="/(tabs)" />;
+    }
+
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <ArrowLeft size={24} color="#333" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Doctor Recruitment</Text>
-            </View>
-
-            <View style={styles.content}>
-                <Text style={styles.description}>
-                    Share this QR code with doctors to onboard them onto the CD4 platform.
-                </Text>
-
-                <View style={styles.qrContainer}>
-                    <Image
-                        source={{ uri: QR_API }}
-                        style={styles.qrImage}
-                        resizeMode="contain"
-                    />
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['top', 'bottom']}>
+            <View style={[styles.container, { backgroundColor: theme.background }]}>
+                <View style={[styles.header, { borderBottomColor: theme.borderColor }]}>
+                    <TouchableOpacity onPress={() => router.back()} style={styles.backButton} hitSlop={10}>
+                        <ArrowLeft size={24} color={theme.text} />
+                    </TouchableOpacity>
+                    <Text style={[styles.headerTitle, { color: theme.text }]}>Doctor Recruitment</Text>
                 </View>
 
-                <Text style={styles.urlLabel}>Registration Link:</Text>
-                <TouchableOpacity style={styles.urlContainer} onPress={copyToClipboard}>
-                    <Text style={styles.urlText} numberOfLines={1}>{REGISTRATION_URL}</Text>
-                    <Copy size={20} color={Colors.light.tint} />
-                </TouchableOpacity>
+                <View style={styles.content}>
+                    <Text style={[styles.description, { color: theme.textSecondary }]}>
+                        Share this QR code or link with doctors to onboard them onto the CD4 platform.
+                    </Text>
 
-                <View style={styles.tipsContainer}>
-                    <Text style={styles.tipsTitle}>💡 How it works</Text>
-                    <Text style={styles.tipText}>1. Doctor scans the QR code.</Text>
-                    <Text style={styles.tipText}>2. Fills out the registration form.</Text>
-                    <Text style={styles.tipText}>3. Instantly appears in the app after verification.</Text>
+                    <View style={[styles.qrContainer, { backgroundColor: '#FFFFFF', borderColor: theme.borderColor }]}>
+                        <Image
+                            source={{ uri: qrApiUrl }}
+                            style={styles.qrImage}
+                            resizeMode="contain"
+                        />
+                    </View>
+
+                    <Text style={[styles.urlLabel, { color: theme.textSecondary }]}>Registration Link:</Text>
+                    <View style={[styles.urlContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                        <Text style={[styles.urlText, { color: theme.text }]} numberOfLines={1}>{registrationUrl}</Text>
+                        <View style={styles.actionRow}>
+                            <TouchableOpacity onPress={copyToClipboard} style={styles.actionBtn} hitSlop={8} accessibilityLabel="Copy link">
+                                <Copy size={19} color={theme.tint} />
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={shareLink} style={styles.actionBtn} hitSlop={8} accessibilityLabel="Share link">
+                                <Share2 size={19} color={theme.tint} />
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+
+                    <View style={[styles.tipsContainer, { backgroundColor: isDark ? 'rgba(245, 124, 0, 0.12)' : '#FFF8E1', borderColor: isDark ? 'rgba(245, 124, 0, 0.25)' : '#FFE082' }]}>
+                        <Text style={[styles.tipsTitle, { color: isDark ? '#FFB74D' : '#F57C00' }]}>💡 How it works</Text>
+                        <Text style={[styles.tipText, { color: isDark ? '#FFE0B2' : '#5D4037' }]}>1. Doctor scans the QR code or clicks the registration link.</Text>
+                        <Text style={[styles.tipText, { color: isDark ? '#FFE0B2' : '#5D4037' }]}>2. Fills out professional credentials and uploads KYC documents.</Text>
+                        <Text style={[styles.tipText, { color: isDark ? '#FFE0B2' : '#5D4037' }]}>3. Instantly verified and enabled for consultations.</Text>
+                    </View>
                 </View>
             </View>
-        </View>
+        </DoctorSafeScreen>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingTop: 60,
         paddingHorizontal: 20,
-        paddingBottom: 20,
+        paddingVertical: 16,
         borderBottomWidth: 1,
-        borderBottomColor: '#eee',
     },
     backButton: {
         marginRight: 15,
@@ -80,37 +158,35 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 20,
         fontWeight: 'bold',
-        color: '#333',
     },
     content: {
-        padding: 30,
+        padding: 24,
         alignItems: 'center',
     },
     description: {
-        fontSize: 16,
-        color: '#666',
+        fontSize: 15,
         textAlign: 'center',
-        marginBottom: 40,
-        lineHeight: 24,
+        marginBottom: 28,
+        lineHeight: 22,
     },
     qrContainer: {
-        padding: 20,
-        backgroundColor: '#fff',
+        padding: 16,
         borderRadius: 20,
+        borderWidth: 1,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.1,
         shadowRadius: 10,
         elevation: 5,
-        marginBottom: 40,
+        marginBottom: 28,
     },
     qrImage: {
-        width: 250,
-        height: 250,
+        width: 220,
+        height: 220,
     },
     urlLabel: {
-        fontSize: 14,
-        color: '#888',
+        fontSize: 13,
+        fontWeight: '600',
         marginBottom: 8,
         alignSelf: 'flex-start',
         width: '100%',
@@ -118,34 +194,41 @@ const styles = StyleSheet.create({
     urlContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F5F5',
-        padding: 15,
+        borderWidth: 1,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
         borderRadius: 12,
         width: '100%',
         justifyContent: 'space-between',
-        marginBottom: 40,
+        marginBottom: 28,
     },
     urlText: {
-        color: '#333',
         flex: 1,
-        marginRight: 10,
-        fontSize: 15,
+        marginRight: 12,
+        fontSize: 14,
+    },
+    actionRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    actionBtn: {
+        padding: 4,
     },
     tipsContainer: {
         width: '100%',
-        backgroundColor: '#FFF8E1',
-        padding: 20,
-        borderRadius: 12,
+        padding: 18,
+        borderRadius: 14,
+        borderWidth: 1,
     },
     tipsTitle: {
         fontWeight: 'bold',
-        color: '#F57C00',
-        marginBottom: 10,
-        fontSize: 16,
+        marginBottom: 8,
+        fontSize: 15,
     },
     tipText: {
-        color: '#5D4037',
         marginBottom: 6,
-        fontSize: 14,
-    }
+        fontSize: 13,
+        lineHeight: 19,
+    },
 });

@@ -20,6 +20,8 @@ export const AGORA_APP_ID = (() => {
 
 const normalizeBaseUrl = (value: string): string => value.trim().replace(/\/+$/, '');
 
+const SUPABASE_URL = (process.env.EXPO_PUBLIC_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+
 export const API_URL = (() => {
     const direct = (process.env.EXPO_PUBLIC_API_URL || '').trim();
     if (direct) return normalizeBaseUrl(direct);
@@ -43,6 +45,21 @@ export const getImageUrl = (value?: string | null): string => {
 
     // Handle Windows-style slashes from legacy values.
     const normalizedPath = raw.replace(/\\/g, '/');
+
+    // Route Supabase storage paths directly to Supabase storage endpoint instead of API_URL
+    const cleanPath = normalizedPath.replace(/^\/+/, '');
+    const isSupabaseStorage =
+        cleanPath.startsWith('profile-pictures/') ||
+        cleanPath.startsWith('cd4-storage/') ||
+        cleanPath.startsWith(`${SUPABASE_PROFILE_MEDIA_BUCKET}/`);
+
+    if (isSupabaseStorage && SUPABASE_URL) {
+        const objectPath = cleanPath.startsWith(`${SUPABASE_PROFILE_MEDIA_BUCKET}/`)
+            ? cleanPath.slice(`${SUPABASE_PROFILE_MEDIA_BUCKET}/`.length)
+            : cleanPath;
+        return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_PROFILE_MEDIA_BUCKET}/${objectPath}`;
+    }
+
     if (!API_URL) return normalizedPath;
 
     if (normalizedPath.startsWith('/')) {
@@ -50,3 +67,9 @@ export const getImageUrl = (value?: string | null): string => {
     }
     return `${API_URL}/${normalizedPath}`;
 };
+
+export const SUPPORT_WHATSAPP_NUMBER = (() => {
+    const raw = (process.env.EXPO_PUBLIC_SUPPORT_WHATSAPP || '917050417766').trim();
+    const clean = raw.replace(/\D/g, '');
+    return clean || '917050417766';
+})();

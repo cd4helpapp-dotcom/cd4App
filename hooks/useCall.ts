@@ -36,6 +36,7 @@ export const useCall = (roomId: string) => {
         toggleAudio: toggleAudioGlobal,
         toggleVideo: toggleVideoGlobal,
         toggleSpeaker: toggleSpeakerGlobal,
+        flipCamera: flipCameraGlobal,
         hasOngoingCall,
     } = useCallContext();
 
@@ -88,6 +89,10 @@ export const useCall = (roomId: string) => {
         toggleSpeaker: () => {
             if (!isRoomLinked) return;
             toggleSpeakerGlobal();
+        },
+        flipCamera: () => {
+            if (!isRoomLinked) return;
+            flipCameraGlobal();
         },
         activeCallRoomId,
         hasOngoingCall,

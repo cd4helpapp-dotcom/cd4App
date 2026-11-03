@@ -8,7 +8,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuthContext } from '../../context/AuthContext';
 import { Redirect } from 'expo-router';
 import { prefetchChatRooms } from '../../hooks/useChat';
-import { useDoctorProfile } from '../../hooks/useDoctor';
+import { useDoctorProfile, DOCTOR_QUERY_KEYS } from '../../hooks/useDoctor';
+import { syncPendingDoctorRegistration } from '../../services/doctorRegistrationSync';
 import { needsDoctorProfileSetup } from '../../utils/profileSetup';
 import { usePathname } from 'expo-router';
 import GlobalHeader from '../../ui/layout/GlobalHeader';
@@ -47,7 +48,12 @@ export default function DoctorTabLayout() {
     React.useEffect(() => {
         if (!user?.id) return;
         void prefetchChatRooms(queryClient, user.id).catch(() => { });
-    }, [queryClient, user?.id]);
+        void syncPendingDoctorRegistration(user.id, user.email).then((synced) => {
+            if (synced) {
+                void queryClient.invalidateQueries({ queryKey: DOCTOR_QUERY_KEYS.profile });
+            }
+        }).catch(() => { });
+    }, [queryClient, user?.id, user?.email]);
 
     if (isLoading || !isProfileResolved) {
         return <RouteLoadingScreen />;
@@ -217,27 +223,32 @@ export default function DoctorTabLayout() {
                 }}
             />
             {/* Hidden screens */}
-            <Tabs.Screen name="help" />
-            <Tabs.Screen name="appearance" />
-            <Tabs.Screen name="language" />
-            <Tabs.Screen name="notifications" />
-            <Tabs.Screen name="profile-details" />
-            <Tabs.Screen name="storage" />
-            <Tabs.Screen name="transactions" />
+            <Tabs.Screen name="help" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
+            <Tabs.Screen name="appearance" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
+            <Tabs.Screen name="language" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
+            <Tabs.Screen name="notifications" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
+            <Tabs.Screen name="profile-details" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
+            <Tabs.Screen name="storage" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
+            <Tabs.Screen name="transactions" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
             <Tabs.Screen
                 name="profile/fees"
                 options={{
+                    headerShown: false,
+                    tabBarStyle: { display: 'none' },
                 }}
             />
-            <Tabs.Screen name="profile/signature" />
+            <Tabs.Screen name="profile/signature" options={{ headerShown: false, tabBarStyle: { display: 'none' } }} />
             <Tabs.Screen
                 name="profile/clinic"
                 options={{
+                    headerShown: false,
+                    tabBarStyle: { display: 'none' },
                 }}
             />
             <Tabs.Screen
                 name="complete-profile"
                 options={{
+                    headerShown: false,
                     tabBarStyle: { display: 'none' },
                 }}
             />

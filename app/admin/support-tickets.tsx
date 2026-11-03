@@ -35,6 +35,18 @@ const nextStatus = (status: TicketStatus): TicketStatus => {
   return STATUS_FLOW[index + 1];
 };
 
+const statusBadgeTheme = (status: TicketStatus, theme: typeof Colors.light) => {
+  switch (status) {
+    case 'open':
+      return { backgroundColor: theme.dangerSoft, borderColor: theme.dangerBorder, color: theme.danger };
+    case 'in_progress':
+      return { backgroundColor: theme.warningSoft, borderColor: theme.warningBorder, color: theme.warning };
+    case 'resolved':
+    case 'closed':
+      return { backgroundColor: theme.successLight, borderColor: theme.successBorder, color: theme.success };
+  }
+};
+
 export default function AdminSupportTicketsScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -121,8 +133,8 @@ export default function AdminSupportTicketsScreen() {
                 <Text style={[styles.subject, { color: theme.text }]} numberOfLines={2}>
                   {ticket.subject}
                 </Text>
-                <View style={[styles.badge, { backgroundColor: theme.successLight, borderColor: theme.successBorder }]}>
-                  <Text style={[styles.badgeText, { color: theme.success }]}>{ticket.status}</Text>
+                <View style={[styles.badge, statusBadgeTheme(ticket.status, theme)]}>
+                  <Text style={[styles.badgeText, { color: statusBadgeTheme(ticket.status, theme).color }]}>{ticket.status}</Text>
                 </View>
               </View>
               <Text style={[styles.meta, { color: theme.textSecondary }]}>{ticket.name} • {ticket.email}</Text>
@@ -157,7 +169,7 @@ export default function AdminSupportTicketsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 24, gap: 12 },
+  content: { paddingHorizontal: 16, paddingBottom: 100, gap: 12 },
   loader: { paddingVertical: 40, alignItems: 'center' },
   card: {
     borderWidth: 1,

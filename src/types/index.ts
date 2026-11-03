@@ -97,7 +97,7 @@ export interface Appointment {
     id: string;
     _id?: string;
     patient: User;
-    doctor: string;
+    doctor: string | Doctor;
     slot: Slot;
     status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
     appointmentType?: 'consultation' | 'second_opinion';

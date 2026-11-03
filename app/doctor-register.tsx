@@ -38,6 +38,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ScreenWrapper from '../ui/common/ScreenWrapper';
 import { useThemePreference } from '../context/ThemePreferenceContext';
 import { SUPABASE_PROFILE_MEDIA_BUCKET } from '../constants/Config';
+import { savePendingDoctorRegistration } from '../services/doctorRegistrationSync';
 import {
   checkEmailRegistrationStatus,
   getEmailAlreadyRegisteredMessage,
@@ -111,6 +112,7 @@ export default function DoctorRegisterScreen() {
   const [profileImage, setProfileImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [kycDocs, setKycDocs] = useState<ImagePicker.ImagePickerAsset[]>([]);
   const [signature, setSignature] = useState<PickedSignature | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [successTitle, setSuccessTitle] = useState('Registration Submitted!');
@@ -118,11 +120,19 @@ export default function DoctorRegisterScreen() {
     'Your profile and documents have been submitted for verification. Please check your email to verify your account. We will notify you once approved.'
   );
 
+  const clearFieldError = (field: string) => {
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
   const closeAllDropdowns = () => {
     setShowGenderDropdown(false);
     setShowSpecializationDropdown(false);
   };
-
 
   const pickImage = async (type: 'profile' | 'kyc') => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -142,6 +152,7 @@ export default function DoctorRegisterScreen() {
     }
 
     setKycDocs((prev) => [...prev, result.assets[0]]);
+    clearFieldError('kycDocs');
   };
 
   const chooseSignature = async () => {
@@ -154,37 +165,52 @@ export default function DoctorRegisterScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!formData.firstName.trim() || !formData.lastName.trim()) {
-      return showAlert('Name Required', 'Please enter your full name.');
+    const newErrors: Record<string, string> = {};
+    if (!formData.firstName.trim()) {
+      newErrors.firstName = 'First name is required.';
     }
-    if (!formData.email.trim() || !formData.email.includes('@')) {
-      return showAlert('Invalid Email', 'Please enter a valid email address.');
-    }
-    if (!formData.phoneNumber.trim() || formData.phoneNumber.length < 10) {
-      return showAlert('Invalid Phone', 'Please enter a valid 10-digit phone number.');
-    }
-    if (!formData.city.trim()) {
-      return showAlert('City Required', 'Please enter your city.');
+    if (!formData.lastName.trim()) {
+      newErrors.lastName = 'Last name is required.';
     }
     if (!formData.gender) {
-      return showAlert('Gender Required', 'Please select your gender.');
+      newErrors.gender = 'Gender is required.';
+    }
+    if (!formData.email.trim() || !formData.email.includes('@')) {
+      newErrors.email = 'Valid email address is required.';
+    }
+    if (!formData.phoneNumber.trim() || formData.phoneNumber.length < 10) {
+      newErrors.phoneNumber = 'Valid 10-digit phone number is required.';
+    }
+    if (!formData.password || formData.password.length < 6) {
+      newErrors.password = 'Password must be at least 6 characters.';
+    }
+    if (!formData.city.trim()) {
+      newErrors.city = 'City is required.';
     }
     if (!formData.registrationNumber.trim()) {
-      return showAlert('Reg. Number Required', 'Please enter your Medical Registration Number.');
+      newErrors.registrationNumber = 'Registration number is required.';
     }
     if (!formData.specialization.trim()) {
-      return showAlert('Specialization Required', 'Please select your medical specialization.');
+      newErrors.specialization = 'Specialization is required.';
+    }
+    if (kycDocs.length === 0) {
+      newErrors.kycDocs = 'Upload at least one KYC document.';
     }
     if (!formData.experience.trim()) {
-      return showAlert('Experience Required', 'Please enter your years of experience.');
+      newErrors.experience = 'Experience is required.';
     }
     const formattedFee = formatDoctorFee(formData.fee);
     if (!formattedFee) {
-      return showAlert('Consultation Fee Required', 'Please enter a valid consultation fee.');
+      newErrors.fee = 'Valid consultation fee is required.';
     }
-    if (!formData.password || formData.password.length < 6) {
-      return showAlert('Password Weak', 'Password must be at least 6 characters.');
+
+    if (Object.keys(newErrors).length > 0) {
+      setFieldErrors(newErrors);
+      const firstErrorMessage = Object.values(newErrors)[0];
+      showAlert('Required Information', firstErrorMessage);
+      return;
     }
+    setFieldErrors({});
 
     setLoading(true);
 
@@ -229,9 +255,27 @@ export default function DoctorRegisterScreen() {
       const hasActiveSession = Boolean(authData.session?.access_token);
 
       if (!hasActiveSession) {
+        // Bug 6.1: Persist registration details and KYC files in AsyncStorage so nothing is dropped.
+        // It will be uploaded automatically to Supabase storage upon first authenticated login.
+        await savePendingDoctorRegistration({
+          userId,
+          email: signupEmail,
+          profileImageUri: profileImage?.uri || null,
+          kycDocUris: kycDocs.map((doc) => doc.uri),
+          signature,
+          formData: {
+            city: formData.city.trim(),
+            specialization: formData.specialization.trim(),
+            experience: formData.experience.trim(),
+            fee: formattedFee || '',
+            registrationNumber: formData.registrationNumber.trim(),
+            bio: formData.bio.trim(),
+          },
+        });
+
         setSuccessTitle('Account Created');
         setSuccessSubText(
-          'Please verify your email first. After login, your account will open as doctor role automatically. Then complete your doctor profile, and add your signature in Settings.'
+          'Please verify your email first. Your registration data and KYC documents have been saved securely. Once you log in, they will be uploaded automatically and submitted for verification.'
         );
         setSuccess(true);
         return;
@@ -278,16 +322,16 @@ export default function DoctorRegisterScreen() {
         const fileName = `${userId}/kyc_${i}.${fileExt}`;
 
         const response = await fetch(doc.uri);
+        if (!response.ok) throw new Error(`Could not read KYC document ${i + 1}.`);
         const blob = await response.blob();
 
         const { error: uploadError } = await supabase.storage
           .from(KYC_BUCKET)
           .upload(fileName, blob, { contentType: 'image/jpeg', upsert: true });
 
-        if (!uploadError) {
-          // Persist with bucket prefix so resolver can always identify target bucket.
-          kycPaths.push(`${KYC_BUCKET}/${fileName}`);
-        }
+        if (uploadError) throw uploadError;
+        // Persist with bucket prefix so resolver can always identify target bucket.
+        kycPaths.push(`${KYC_BUCKET}/${fileName}`);
       }
 
       if (profileImageUrl) {
@@ -417,7 +461,7 @@ export default function DoctorRegisterScreen() {
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>First Name</Text>
-            <View style={[styles.inputContainer, formData.firstName.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.firstName.trim() && styles.inputContainerFilled, fieldErrors.firstName && styles.inputError]}>
               <User size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -426,14 +470,18 @@ export default function DoctorRegisterScreen() {
                 autoCapitalize="words"
                 autoCorrect={false}
                 value={formData.firstName}
-                onChangeText={(value) => setFormData((prev) => ({ ...prev, firstName: value }))}
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, firstName: value }));
+                  clearFieldError('firstName');
+                }}
               />
             </View>
+            {fieldErrors.firstName ? <Text style={styles.errorText}>{fieldErrors.firstName}</Text> : null}
           </View>
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>Last Name</Text>
-            <View style={[styles.inputContainer, formData.lastName.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.lastName.trim() && styles.inputContainerFilled, fieldErrors.lastName && styles.inputError]}>
               <User size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -442,15 +490,19 @@ export default function DoctorRegisterScreen() {
                 autoCapitalize="words"
                 autoCorrect={false}
                 value={formData.lastName}
-                onChangeText={(value) => setFormData((prev) => ({ ...prev, lastName: value }))}
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, lastName: value }));
+                  clearFieldError('lastName');
+                }}
               />
             </View>
+            {fieldErrors.lastName ? <Text style={styles.errorText}>{fieldErrors.lastName}</Text> : null}
           </View>
 
           <View style={[styles.inputWrapper, { zIndex: 100 }]}>
             <Text style={styles.inputLabel}>Gender</Text>
             <TouchableOpacity
-              style={[styles.dropdownButton, formData.gender && styles.dropdownButtonFilled]}
+              style={[styles.dropdownButton, formData.gender && styles.dropdownButtonFilled, fieldErrors.gender && styles.inputError]}
               onPress={() => {
                 setShowGenderDropdown((prev) => !prev);
                 setShowSpecializationDropdown(false);
@@ -462,6 +514,7 @@ export default function DoctorRegisterScreen() {
               </Text>
               <ChevronDown size={20} color={theme.textSecondary} />
             </TouchableOpacity>
+            {fieldErrors.gender ? <Text style={styles.errorText}>{fieldErrors.gender}</Text> : null}
 
             {showGenderDropdown && (
               <View style={styles.dropdownList}>
@@ -472,6 +525,7 @@ export default function DoctorRegisterScreen() {
                     onPress={() => {
                       setFormData((prev) => ({ ...prev, gender }));
                       setShowGenderDropdown(false);
+                      clearFieldError('gender');
                     }}
                   >
                     <Text style={styles.dropdownItemText}>{gender}</Text>
@@ -484,7 +538,7 @@ export default function DoctorRegisterScreen() {
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>Email Address</Text>
-            <View style={[styles.inputContainer, formData.email.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.email.trim() && styles.inputContainerFilled, fieldErrors.email && styles.inputError]}>
               <Mail size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -495,14 +549,18 @@ export default function DoctorRegisterScreen() {
                 autoCorrect={false}
                 textContentType="emailAddress"
                 value={formData.email}
-                onChangeText={(value) => setFormData((prev) => ({ ...prev, email: value }))}
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, email: value }));
+                  clearFieldError('email');
+                }}
               />
             </View>
+            {fieldErrors.email ? <Text style={styles.errorText}>{fieldErrors.email}</Text> : null}
           </View>
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>Phone Number</Text>
-            <View style={[styles.inputContainer, formData.phoneNumber.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.phoneNumber.trim() && styles.inputContainerFilled, fieldErrors.phoneNumber && styles.inputError]}>
               <Phone size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -511,17 +569,19 @@ export default function DoctorRegisterScreen() {
                 keyboardType="phone-pad"
                 maxLength={10}
                 value={formData.phoneNumber}
-                onChangeText={(value) =>
-                  setFormData((prev) => ({ ...prev, phoneNumber: value.replace(/[^\d]/g, '') }))
-                }
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, phoneNumber: value.replace(/[^\d]/g, '') }));
+                  clearFieldError('phoneNumber');
+                }}
               />
             </View>
+            {fieldErrors.phoneNumber ? <Text style={styles.errorText}>{fieldErrors.phoneNumber}</Text> : null}
             <Text style={styles.helperText}>Enter 10-digit mobile number</Text>
           </View>
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>Password</Text>
-            <View style={[styles.inputContainer, formData.password?.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.password?.trim() && styles.inputContainerFilled, fieldErrors.password && styles.inputError]}>
               <FileText size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -532,15 +592,19 @@ export default function DoctorRegisterScreen() {
                 autoCorrect={false}
                 textContentType="newPassword"
                 value={formData.password}
-                onChangeText={(value) => setFormData((prev) => ({ ...prev, password: value }))}
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, password: value }));
+                  clearFieldError('password');
+                }}
               />
             </View>
+            {fieldErrors.password ? <Text style={styles.errorText}>{fieldErrors.password}</Text> : null}
             <Text style={styles.helperText}>Minimum 6 characters</Text>
           </View>
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>City</Text>
-            <View style={[styles.inputContainer, formData.city.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.city.trim() && styles.inputContainerFilled, fieldErrors.city && styles.inputError]}>
               <MapPin size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -549,16 +613,20 @@ export default function DoctorRegisterScreen() {
                 autoCapitalize="words"
                 autoCorrect={false}
                 value={formData.city}
-                onChangeText={(value) => setFormData((prev) => ({ ...prev, city: value }))}
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, city: value }));
+                  clearFieldError('city');
+                }}
               />
             </View>
+            {fieldErrors.city ? <Text style={styles.errorText}>{fieldErrors.city}</Text> : null}
           </View>
 
           <Text style={[styles.sectionHeader, styles.sectionSpacing]}>Professional & KYC Details</Text>
 
           <View style={styles.inputWrapper}>
             <Text style={styles.inputLabel}>Registration Number (MCI/State)</Text>
-            <View style={[styles.inputContainer, formData.registrationNumber.trim() && styles.inputContainerFilled]}>
+            <View style={[styles.inputContainer, formData.registrationNumber.trim() && styles.inputContainerFilled, fieldErrors.registrationNumber && styles.inputError]}>
               <FileText size={18} color={theme.textSecondary} />
               <TextInput
                 style={styles.input}
@@ -567,15 +635,19 @@ export default function DoctorRegisterScreen() {
                 autoCapitalize="characters"
                 autoCorrect={false}
                 value={formData.registrationNumber}
-                onChangeText={(value) => setFormData((prev) => ({ ...prev, registrationNumber: value }))}
+                onChangeText={(value) => {
+                  setFormData((prev) => ({ ...prev, registrationNumber: value }));
+                  clearFieldError('registrationNumber');
+                }}
               />
             </View>
+            {fieldErrors.registrationNumber ? <Text style={styles.errorText}>{fieldErrors.registrationNumber}</Text> : null}
           </View>
 
           <View style={[styles.inputWrapper, { zIndex: 80 }]}>
             <Text style={styles.inputLabel}>Specialization</Text>
             <TouchableOpacity
-              style={[styles.dropdownButton, formData.specialization && styles.dropdownButtonFilled]}
+              style={[styles.dropdownButton, formData.specialization && styles.dropdownButtonFilled, fieldErrors.specialization && styles.inputError]}
               onPress={() => {
                 setShowSpecializationDropdown((prev) => !prev);
                 setShowGenderDropdown(false);
@@ -590,6 +662,7 @@ export default function DoctorRegisterScreen() {
               </View>
               <ChevronDown size={20} color={theme.textSecondary} />
             </TouchableOpacity>
+            {fieldErrors.specialization ? <Text style={styles.errorText}>{fieldErrors.specialization}</Text> : null}
 
             {showSpecializationDropdown && (
               <View style={styles.dropdownList}>
@@ -601,6 +674,7 @@ export default function DoctorRegisterScreen() {
                       onPress={() => {
                         setFormData((prev) => ({ ...prev, specialization }));
                         setShowSpecializationDropdown(false);
+                        clearFieldError('specialization');
                       }}
                     >
                       <Text style={styles.dropdownItemText}>{specialization}</Text>
@@ -615,7 +689,7 @@ export default function DoctorRegisterScreen() {
           <View style={styles.row}>
             <View style={[styles.inputWrapper, styles.rowInput]}>
               <Text style={styles.inputLabel}>Experience</Text>
-              <View style={[styles.inputContainer, formData.experience.trim() && styles.inputContainerFilled]}>
+              <View style={[styles.inputContainer, formData.experience.trim() && styles.inputContainerFilled, fieldErrors.experience && styles.inputError]}>
                 <Clock size={18} color={theme.textSecondary} />
                 <TextInput
                   style={styles.input}
@@ -623,15 +697,17 @@ export default function DoctorRegisterScreen() {
                   placeholderTextColor={theme.textSecondary}
                   keyboardType="number-pad"
                   value={formData.experience}
-                  onChangeText={(value) =>
-                    setFormData((prev) => ({ ...prev, experience: value.replace(/[^\d]/g, '') }))
-                  }
+                  onChangeText={(value) => {
+                    setFormData((prev) => ({ ...prev, experience: value.replace(/[^\d]/g, '') }));
+                    clearFieldError('experience');
+                  }}
                 />
               </View>
+              {fieldErrors.experience ? <Text style={styles.errorText}>{fieldErrors.experience}</Text> : null}
             </View>
             <View style={[styles.inputWrapper, styles.rowInputNoSpacing]}>
               <Text style={styles.inputLabel}>Consultation Fee</Text>
-              <View style={[styles.inputContainer, formData.fee.trim() && styles.inputContainerFilled]}>
+              <View style={[styles.inputContainer, formData.fee.trim() && styles.inputContainerFilled, fieldErrors.fee && styles.inputError]}>
                 <DollarSign size={18} color={theme.textSecondary} />
                 <TextInput
                   style={styles.input}
@@ -639,11 +715,13 @@ export default function DoctorRegisterScreen() {
                   placeholderTextColor={theme.textSecondary}
                   keyboardType="number-pad"
                   value={formData.fee}
-                  onChangeText={(value) =>
-                    setFormData((prev) => ({ ...prev, fee: value.replace(/[^\d]/g, '') }))
-                  }
+                  onChangeText={(value) => {
+                    setFormData((prev) => ({ ...prev, fee: value.replace(/[^\d]/g, '') }));
+                    clearFieldError('fee');
+                  }}
                 />
               </View>
+              {fieldErrors.fee ? <Text style={styles.errorText}>{fieldErrors.fee}</Text> : null}
             </View>
           </View>
 
@@ -658,10 +736,11 @@ export default function DoctorRegisterScreen() {
                 </Text>
               </View>
             ))}
-            <TouchableOpacity style={styles.uploadButton} onPress={() => pickImage('kyc')} activeOpacity={0.8}>
+            <TouchableOpacity style={[styles.uploadButton, fieldErrors.kycDocs && styles.inputError]} onPress={() => pickImage('kyc')} activeOpacity={0.8}>
               <Upload size={20} color={theme.textSecondary} />
               <Text style={styles.uploadBtnText}>Upload Document</Text>
             </TouchableOpacity>
+            {fieldErrors.kycDocs ? <Text style={styles.errorText}>{fieldErrors.kycDocs}</Text> : null}
           </View>
 
           <View style={styles.inputWrapper}>
@@ -875,6 +954,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     inputContainerFilled: {
       borderColor: `${theme.tint}66`,
       backgroundColor: isDark ? '#13221C' : '#F1FCF6',
+    },
+    inputError: {
+      borderColor: '#EF4444',
+      borderWidth: 1.5,
+    },
+    errorText: {
+      marginTop: 4,
+      marginLeft: 4,
+      color: '#EF4444',
+      fontSize: 12,
+      fontWeight: '500',
     },
     input: {
       flex: 1,

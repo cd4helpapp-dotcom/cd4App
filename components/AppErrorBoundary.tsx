@@ -1,5 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Appearance, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Colors from '../constants/Colors';
 
 interface State {
   hasError: boolean;
@@ -33,14 +35,15 @@ export class AppErrorBoundary extends React.Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      const theme = Colors[Appearance.getColorScheme() ?? 'light'];
       return (
-        <View style={styles.container}>
-          <Text style={styles.title}>Something went wrong</Text>
-          <Text style={styles.message}>{this.state.message}</Text>
-          <TouchableOpacity style={styles.button} onPress={this.reset}>
+        <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
+          <Text style={[styles.title, { color: theme.text }]}>Something went wrong</Text>
+          <Text style={[styles.message, { color: theme.textSecondary }]}>{this.state.message}</Text>
+          <TouchableOpacity style={[styles.button, { backgroundColor: theme.buttonPrimary }]} onPress={this.reset}>
             <Text style={styles.buttonText}>Try Again</Text>
           </TouchableOpacity>
-        </View>
+        </SafeAreaView>
       );
     }
     return this.props.children;
@@ -53,22 +56,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: '#fff',
   },
   title: {
     fontSize: 20,
     fontWeight: '600',
     marginBottom: 12,
-    color: '#111',
   },
   message: {
     fontSize: 14,
-    color: '#555',
     textAlign: 'center',
     marginBottom: 24,
   },
   button: {
-    backgroundColor: '#2563EB',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,

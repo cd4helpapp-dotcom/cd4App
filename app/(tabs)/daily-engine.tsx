@@ -1,21 +1,54 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Bot, Volume2, Play } from 'lucide-react-native';
 import Colors from '../../constants/Colors';
 import TimelineItem from '../../ui/TimelineItem';
 import { useTabSwipeNavigation } from '../../hooks/useTabSwipeNavigation';
+import { useAuthContext } from '../../context/AuthContext';
+
+const formatTimer = (seconds: number) => {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+};
 
 export default function DailyEngineScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const tabSwipeHandlers = useTabSwipeNavigation('daily-engine');
+  const { user } = useAuthContext();
+  const [secondsRemaining, setSecondsRemaining] = React.useState(15 * 60);
+  const [isTimerRunning, setIsTimerRunning] = React.useState(false);
+  const [isWalkCompleted, setIsWalkCompleted] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isTimerRunning) return;
+    const timer = setInterval(() => {
+      setSecondsRemaining((previous) => {
+        if (previous <= 1) {
+          setIsTimerRunning(false);
+          setIsWalkCompleted(true);
+          return 0;
+        }
+        return previous - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isTimerRunning]);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
+  const firstName = user?.firstName?.trim() || 'there';
+  const startTimer = () => {
+    if (secondsRemaining === 0) setSecondsRemaining(15 * 60);
+    setIsWalkCompleted(false);
+    setIsTimerRunning(true);
+  };
 
   return (
-    <SafeAreaView {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
+    <View {...tabSwipeHandlers} style={[styles.container, { backgroundColor: theme.background }]}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Text style={[styles.greeting, { color: theme.text }]}>Good Afternoon, Nitesh</Text>
+          <Text style={[styles.greeting, { color: theme.text }]}>{greeting}, {firstName}</Text>
           <Text style={[styles.subGreeting, { color: theme.textSecondary }]}>Let's keep your sugar stable today.</Text>
         </View>
 
@@ -46,12 +79,22 @@ export default function DailyEngineScreen() {
             <Text style={[styles.actionTime, { color: theme.text }]}>2:00 PM: Post-meal Walk</Text>
             <Text style={[styles.actionDesc, { color: theme.textSecondary }]}>Walking immediately after a meal moves glucose into your muscles instead of storing it as fat.</Text>
             <View style={styles.buttonRow}>
-              <TouchableOpacity style={[styles.primaryButton, { backgroundColor: theme.buttonPrimary }]}>
+              <TouchableOpacity
+                style={[styles.primaryButton, { backgroundColor: theme.buttonPrimary }, isWalkCompleted && { opacity: 0.7 }]}
+                onPress={startTimer}
+                disabled={isWalkCompleted || isTimerRunning}
+              >
                 <Play size={12} color={theme.buttonText} style={{ marginRight: 5 }} />
-                <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>Start 15m Timer</Text>
+                <Text style={[styles.primaryButtonText, { color: theme.buttonText }]}>
+                  {isWalkCompleted ? 'Walk complete' : isTimerRunning ? formatTimer(secondsRemaining) : 'Start 15m Timer'}
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.secondaryButton, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
-                <Text style={[styles.secondaryButtonText, { color: theme.textSecondary }]}>I already did this</Text>
+              <TouchableOpacity
+                style={[styles.secondaryButton, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}
+                onPress={() => { setIsTimerRunning(false); setIsWalkCompleted(true); }}
+                disabled={isWalkCompleted}
+              >
+                <Text style={[styles.secondaryButtonText, { color: theme.textSecondary }]}>{isWalkCompleted ? 'Completed' : 'I already did this'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -100,7 +143,7 @@ export default function DailyEngineScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 

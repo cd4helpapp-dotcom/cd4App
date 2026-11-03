@@ -58,6 +58,10 @@ const LoginScreen: React.FC = () => {
         setErrors({ form: toFriendlyAuthError(error.message) });
         return;
       }
+      if (!data?.user?.id) {
+        setErrors({ form: 'Unable to sign in right now. Please try again.' });
+        return;
+      }
       await routeAfterSuccessfulAuth(data.user.id);
     } catch (err: any) {
       setErrors({ form: toFriendlyAuthError(err?.message) });

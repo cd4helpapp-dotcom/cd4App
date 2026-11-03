@@ -38,7 +38,7 @@ export default function ChatsSettings() {
         } catch {
             setReadReceipts(previous.readReceipts);
             setMediaAutoDownload(previous.mediaAutoDownload);
-            Toast.show({ type: 'error', text1: t('notifications.updateFailedTitle'), text2: t('notifications.updateFailedBody') });
+            Toast.show({ type: 'error', text1: 'Could not update chat settings', text2: 'Please try again.' });
         }
     };
 
@@ -49,7 +49,7 @@ export default function ChatsSettings() {
             <Text style={[styles.sectionHeader, { color: theme.textSecondary }]}>{t('chats.privacyData')}</Text>
             <View style={[styles.section, { backgroundColor: theme.cardBackground }]}>
                 <View style={styles.row}>
-                    <View>
+                    <View style={styles.labelColumn}>
                         <Text style={[styles.label, { color: theme.text }]}>{t('chats.readReceipts')}</Text>
                         <Text style={[styles.subtext, { color: theme.textSecondary }]}>{t('chats.readReceiptsDesc')}</Text>
                     </View>
@@ -65,7 +65,9 @@ export default function ChatsSettings() {
                 </View>
                 <View style={[styles.divider, { backgroundColor: theme.borderColor }]} />
                 <View style={styles.row}>
-                    <Text style={[styles.label, { color: theme.text }]}>{t('chats.mediaAutoDownload')}</Text>
+                    <View style={styles.labelColumn}>
+                        <Text style={[styles.label, { color: theme.text }]}>{t('chats.mediaAutoDownload')}</Text>
+                    </View>
                     <Switch
                         value={mediaAutoDownload}
                         onValueChange={(nextValue) => {
@@ -89,6 +91,7 @@ const styles = StyleSheet.create({
     sectionHeader: { fontSize: 14, textTransform: 'uppercase', marginBottom: 8, marginLeft: 4 },
     section: { borderRadius: 12, overflow: 'hidden', marginBottom: 24 },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
+    labelColumn: { flex: 1, paddingRight: 8 },
     label: { fontSize: 16 },
     subtext: { fontSize: 12, marginTop: 4, maxWidth: '85%' },
     divider: { height: 1, marginLeft: 16 }

@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, useColorScheme, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, useColorScheme, Image, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import Colors from '../../constants/Colors';
 import { getImageUrl } from '../../constants/Config';
@@ -16,7 +16,7 @@ export default function DoctorChats() {
     const colorScheme = useColorScheme();
     const theme = Colors[colorScheme ?? 'light'];
 
-    const { data: rooms = [], isFetching } = useChatRooms();
+    const { data: rooms = [], isFetching, refetch } = useChatRooms();
     const queryClient = useQueryClient();
     const { user } = useAuthContext();
 
@@ -53,7 +53,9 @@ export default function DoctorChats() {
         if (!dateString) return '';
         const date = new Date(dateString);
         const now = new Date();
-        const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const dateStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+        const diffDays = Math.round((todayStart - dateStart) / (1000 * 60 * 60 * 24));
 
         if (diffDays === 0) {
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -70,7 +72,7 @@ export default function DoctorChats() {
         const unreadCount = item.unread_count_doctor || 0;
         const firstName = item.other_party?.firstName || '';
         const lastName = item.other_party?.lastName || '';
-        const fullName = `${firstName} ${lastName}`.trim() || 'Unknown';
+        const fullName = `${firstName} ${lastName}`.trim() || 'Patient';
         const isRoomEnabled = item.chat_enabled !== false;
         // The stored reason talks to the patient ("book a future slot"), which means nothing to a doctor.
         const previewText = isRoomEnabled ? (item.last_message_text || 'No messages yet') : 'Chat closed until the next appointment';
@@ -100,7 +102,7 @@ export default function DoctorChats() {
                             />
                         ) : (
                             <Text style={{ fontSize: 20, fontWeight: '700', color: theme.tint }}>
-                                {firstName.charAt(0).toUpperCase()}
+                                {fullName.charAt(0).toUpperCase()}
                             </Text>
                         )}
                     </View>
@@ -167,6 +169,7 @@ export default function DoctorChats() {
                     data={filteredRooms}
                     keyExtractor={(item) => item.id}
                     renderItem={renderChat}
+                    refreshControl={<RefreshControl refreshing={isFetching} onRefresh={() => { void refetch(); }} tintColor={theme.tint} />}
                     contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
                     showsVerticalScrollIndicator={false}
                 />

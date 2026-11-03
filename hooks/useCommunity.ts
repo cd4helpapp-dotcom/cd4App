@@ -908,6 +908,13 @@ const removePostFromFeedCache = (queryClient: ReturnType<typeof useQueryClient>,
       queryClient.setQueryData(queryKey, { ...cache, pages: nextPages });
     }
   });
+
+  queryClient.getQueriesData<CommunityPost[]>({ queryKey: ['community', 'author-posts'] }).forEach(([queryKey, cache]) => {
+    if (Array.isArray(cache)) queryClient.setQueryData(queryKey, cache.filter((post) => post.id !== postId));
+  });
+  queryClient.getQueriesData<CommunityPost>({ queryKey: ['community', 'post'] }).forEach(([queryKey, cache]) => {
+    if (cache?.id === postId) queryClient.removeQueries({ queryKey, exact: true });
+  });
 };
 
 const bumpFeedCommentCountCache = (queryClient: ReturnType<typeof useQueryClient>, postId: string, delta: number) => {
@@ -987,17 +994,22 @@ const fetchCommunityAuthorPosts = async (authorId: string, userId: string | null
 
   const postRows = rows || [];
   const postIds = postRows.map((row: any) => String(row.id));
-  const [authorMap, likeResult] = await Promise.all([
+  const [authorMap, likeResult, followResult] = await Promise.all([
     loadAuthorMap(postRows.length ? [authorId] : []),
     userId && postIds.length
       ? supabase.from('community_post_likes').select('post_id').eq('user_id', userId).in('post_id', postIds)
       : Promise.resolve({ data: [], error: null }),
+    userId
+      ? supabase.from('community_follows').select('following_id').eq('follower_id', userId).eq('following_id', authorId)
+      : Promise.resolve({ data: [], error: null }),
     primeCommunitySignedUrls(postRows.flatMap(getCommunityMediaValues)),
   ]);
   if (likeResult.error) throw likeResult.error;
+  if ((followResult as any).error) throw (followResult as any).error;
 
   const likedSet = new Set<string>((likeResult.data || []).map((row: any) => String(row?.post_id || '')));
-  return Promise.all(postRows.map((row: any) => mapCommunityPostRowToModel({ row, authorMap, likedSet })));
+  const followingSet = new Set<string>(((followResult as any).data || []).map((row: any) => String(row?.following_id || '')));
+  return Promise.all(postRows.map((row: any) => mapCommunityPostRowToModel({ row, authorMap, likedSet, followingSet })));
 };
 
 export const useCommunityAuthorPosts = (authorId: string | null, userId: string | null) =>
@@ -1533,6 +1545,15 @@ export const useEditCommunityPost = (userId: string | null) => {
       try {
         if (isUpdatingMedia && payload.assets) {
           for (const asset of payload.assets.slice(0, 10)) {
+            const isLocal =
+              asset.uri.startsWith('file:') ||
+              asset.uri.startsWith('content:') ||
+              asset.uri.startsWith('data:') ||
+              asset.uri.startsWith('blob:');
+            if (!isLocal && (asset.uri.startsWith('http://') || asset.uri.startsWith('https://') || !asset.uri.includes(':'))) {
+              mediaItems.push({ url: asset.uri, type: 'image' });
+              continue;
+            }
             const uploaded = await uploadToCommunityMediaBucket({ userId, asset });
             uploadedPaths.push(uploaded.filePath);
             mediaItems.push({ url: uploaded.filePath, type: 'image' });

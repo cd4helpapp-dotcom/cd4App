@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { supabase } from '../src/lib/supabase';
+import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthContext } from '../context/AuthContext';
-import { addOrUpdateLocalChatMessage, removeLocalChatMessage, useSendMessage } from './useChat';
+import { addOrUpdateLocalChatMessage, markLocalChatMessageFailed, removeLocalChatMessage, useSendMessage } from './useChat';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -171,9 +172,9 @@ export const useFileTransfer = () => {
 
             return signedDisplayUrl || filePath;
         } catch (error) {
-            removeLocalChatMessage(queryClient, roomId, tempId);
             const readable = toReadableUploadError(error);
             console.warn('File upload error:', readable);
+            markLocalChatMessageFailed(queryClient, roomId, tempId, readable);
             throw new Error(readable);
         } finally {
             setIsUploading(false);
@@ -184,9 +185,7 @@ export const useFileTransfer = () => {
         // Request permissions first
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
-            import('react-native').then(({ Alert }) => {
-                Alert.alert('Permission Denied', 'Please allow access to your media library to send photos.');
-            });
+            Alert.alert('Permission Denied', 'Please allow access to your media library to send photos.');
             return;
         }
 

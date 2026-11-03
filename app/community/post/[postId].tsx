@@ -59,7 +59,7 @@ export default function CommunityPostDeepLinkScreen() {
   const viewerName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Community Member';
 
   const postQuery = useCommunityPost(normalizedPostId || null, user?._id || null);
-  const commentsQuery = useCommunityComments(normalizedPostId || null, Boolean(normalizedPostId));
+  const commentsQuery = useCommunityComments(normalizedPostId || null, Boolean(normalizedPostId), user?.id || user?._id || null);
   const likeMutation = useToggleCommunityLike(user?._id || null);
   const shareMutation = useTrackCommunityShare(user?._id || null);
 

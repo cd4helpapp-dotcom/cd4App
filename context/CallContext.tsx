@@ -39,6 +39,7 @@ type CallContextValue = {
     toggleAudio: () => void;
     toggleVideo: () => void;
     toggleSpeaker: () => void;
+    flipCamera: () => void;
 };
 
 const CallContext = createContext<CallContextValue | undefined>(undefined);
@@ -308,6 +309,17 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (Platform.OS !== 'web') Vibration.cancel();
         const activeSound = callTonePlayerRef.current;
         callTonePlayerRef.current = null;
+        if (Platform.OS !== 'web') {
+            void setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
+                interruptionMode: 'mixWithOthers',
+                shouldRouteThroughEarpiece: false,
+                shouldPlayInBackground: false,
+            }).catch((err) => {
+                if (__DEV__) console.warn('[CallContext] Failed to reset audio mode:', err);
+            });
+        }
         if (!activeSound) return;
 
         try {
@@ -439,10 +451,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         setConnectedAt(connectedAtRef.current);
                     }
                 },
-                onUserOffline: (_connection: any, uid: number) => {
-                    if (__DEV__) console.log('[Agora] Remote user offline:', uid);
+                onUserOffline: (_connection: any, uid: number, reason?: number) => {
+                    if (__DEV__) console.log('[Agora] Remote user offline:', uid, reason);
                     setRemoteUid(0);
                     setIsRemoteVideoMuted(false);
+                    // Agora reason 0 means the peer intentionally left; waiting for the
+                    // network-drop grace timer would leave a blank call screen visible.
+                    if (reason === 0) {
+                        void endCallRef.current?.();
+                    }
                 },
                 onUserMuteVideo: (_connection: any, uid: number, muted: boolean) => {
                     if (__DEV__) console.log('[Agora] Remote user mute video:', uid, muted);
@@ -976,6 +993,15 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsSpeakerOn((prev) => !prev);
     }, [isJoined, isSpeakerOn]);
 
+    const flipCamera = useCallback(() => {
+        if (!engineRef.current) return;
+        try {
+            engineRef.current.switchCamera();
+        } catch (e) {
+            console.warn('[CallContext] Failed to switch camera:', e);
+        }
+    }, []);
+
     useEffect(() => {
         if (!user?.id) {
             clearStatusResetTimer();
@@ -1287,10 +1313,20 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (isCaller) {
                 ringingTimeoutRef.current = setTimeout(async () => {
                     const sessionId = activeSessionIdRef.current;
-                    await supabase.from('call_sessions')
-                        .update({ status: 'missed' })
-                        .eq('room_id', currentRoomId)
-                        .eq('status', 'ringing');
+                    activeSessionIdRef.current = null;
+                    callStatusRef.current = 'missed';
+                    setCallStatus('missed');
+                    void cleanupEngine();
+                    scheduleResetToIdle(2500);
+
+                    try {
+                        await supabase.from('call_sessions')
+                            .update({ status: 'missed' })
+                            .eq('room_id', currentRoomId)
+                            .eq('status', 'ringing');
+                    } catch (e) {
+                        if (__DEV__) console.warn('[CallContext] Failed to mark call missed in DB:', e);
+                    }
                     if (sessionId) void notifyMissedCall(sessionId, currentRoomId, callType);
                 }, RING_TIMEOUT_MS);
             }
@@ -1442,6 +1478,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleAudio,
         toggleVideo,
         toggleSpeaker,
+        flipCamera,
     }), [
         activeCallRoomId,
         acceptCall,
@@ -1453,6 +1490,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         connectedAt,
         declineCall,
         endCall,
+        flipCamera,
         hasOngoingCall,
         isAudioMuted,
         isCaller,

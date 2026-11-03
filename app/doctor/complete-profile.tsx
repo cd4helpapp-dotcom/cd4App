@@ -24,6 +24,7 @@ import { useUpdateProfile, useUploadProfilePicture } from '../../hooks/useAuth';
 import { needsDoctorProfileSetup } from '../../utils/profileSetup';
 import { getImageUrl } from '../../constants/Config';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
+import { syncPendingDoctorRegistration } from '../../services/doctorRegistrationSync';
 
 type DoctorMandatoryProfileForm = {
     fullName: string;
@@ -94,6 +95,7 @@ export default function DoctorCompleteProfileScreen() {
 
     const [saving, setSaving] = useState(false);
     const [profilePictureUrl, setProfilePictureUrl] = useState('');
+    const [formErrors, setFormErrors] = useState<Record<string, string>>({});
     const [showConsultationModePicker, setShowConsultationModePicker] = useState(false);
     const consultationModes = ['Audio', 'Video', 'Audio + Video'];
     const [form, setForm] = useState<DoctorMandatoryProfileForm>({
@@ -122,6 +124,11 @@ export default function DoctorCompleteProfileScreen() {
         if (typeof roleValue === 'string') return roleValue.trim().toLowerCase();
         return String((roleValue as any)?.name || '').trim().toLowerCase();
     }, [user?.role]);
+
+    useEffect(() => {
+        if (!user?.id) return;
+        void syncPendingDoctorRegistration(user.id, user.email).catch(() => {});
+    }, [user?.id, user?.email]);
 
     useEffect(() => {
         if (isLoading) return;
@@ -168,8 +175,18 @@ export default function DoctorCompleteProfileScreen() {
         }
     }, [user, roleSlug, doctorProfileLoading, doctorProfileResponse?.data, router]);
 
+    const clearFormError = (field: string) => {
+        setFormErrors((prev) => {
+            if (!prev[field]) return prev;
+            const next = { ...prev };
+            delete next[field];
+            return next;
+        });
+    };
+
     const handleUpdateField = (field: keyof DoctorMandatoryProfileForm, value: string) => {
         setForm((previous) => ({ ...previous, [field]: value }));
+        clearFormError(field);
     };
 
     const handlePickProfilePhoto = async () => {
@@ -244,88 +261,43 @@ export default function DoctorCompleteProfileScreen() {
         const sanitizedMobile = form.mobileNumber.trim();
         const currentYearUpperBound = new Date().getFullYear() + 1;
 
-        if (!profilePictureUrl.trim()) {
-            Toast.show({
-                type: 'error',
-                text1: 'Profile photo required',
-                text2: 'Please upload a profile photo to continue.',
-            });
-            return;
-        }
-        if (!form.fullName.trim()) {
-            Toast.show({ type: 'error', text1: 'Full name required', text2: 'Please enter your full name.' });
-            return;
-        }
-        if (sanitizedMobile.replace(/\D/g, '').length < 10) {
-            Toast.show({ type: 'error', text1: 'Mobile number required', text2: 'Please enter a valid phone number.' });
-            return;
-        }
-        if (!form.city.trim()) {
-            Toast.show({ type: 'error', text1: 'City required', text2: 'Please enter your city/location.' });
-            return;
-        }
-        if (!form.degree.trim()) {
-            Toast.show({ type: 'error', text1: 'Degree required', text2: 'Please enter your degree (MBBS/MD/MS/BAMS).' });
-            return;
-        }
-        if (!form.specialization.trim()) {
-            Toast.show({ type: 'error', text1: 'Specialization required', text2: 'Please enter your specialization.' });
-            return;
-        }
-        if (!form.university.trim()) {
-            Toast.show({ type: 'error', text1: 'University required', text2: 'Please enter your university/college.' });
-            return;
-        }
+        const newErrors: Record<string, string> = {};
+        if (!profilePictureUrl.trim()) newErrors.profilePicture = 'Please upload a profile photo.';
+        if (!form.fullName.trim()) newErrors.fullName = 'Full name is required.';
+        if (sanitizedMobile.replace(/\D/g, '').length < 10) newErrors.mobileNumber = 'Valid 10-digit phone number is required.';
+        if (!form.city.trim()) newErrors.city = 'City/location is required.';
+        if (!form.degree.trim()) newErrors.degree = 'Degree is required.';
+        if (!form.specialization.trim()) newErrors.specialization = 'Specialization is required.';
+        if (!form.university.trim()) newErrors.university = 'University/college is required.';
         if (!Number.isInteger(completionYear) || completionYear < 1950 || completionYear > currentYearUpperBound) {
-            Toast.show({
-                type: 'error',
-                text1: 'Invalid completion year',
-                text2: `Enter a 4-digit year between 1950 and ${currentYearUpperBound}.`,
-            });
-            return;
+            newErrors.yearOfCompletion = `Enter a 4-digit year between 1950 and ${currentYearUpperBound}.`;
         }
-        if (!form.registrationNumber.trim()) {
-            Toast.show({ type: 'error', text1: 'Registration number required', text2: 'Please enter your medical registration number.' });
-            return;
-        }
-        if (!form.registrationCouncil.trim()) {
-            Toast.show({ type: 'error', text1: 'Registration council required', text2: 'Please enter your registration council.' });
-            return;
-        }
-        if (!experienceYears) {
-            Toast.show({ type: 'error', text1: 'Experience required', text2: 'Please enter your years of experience.' });
-            return;
-        }
-        if (!form.currentHospitalClinic.trim()) {
-            Toast.show({ type: 'error', text1: 'Hospital/clinic required', text2: 'Please enter your current hospital or clinic.' });
-            return;
-        }
-        if (!form.previousWorkDetails.trim()) {
-            Toast.show({ type: 'error', text1: 'Previous work required', text2: 'Please enter previous work details.' });
-            return;
-        }
-        if (areas.length === 0) {
-            Toast.show({ type: 'error', text1: 'Areas of expertise required', text2: 'Please add at least one expertise area.' });
-            return;
-        }
-        if (languages.length === 0) {
-            Toast.show({ type: 'error', text1: 'Languages required', text2: 'Please add at least one language.' });
-            return;
-        }
-        if (!consultationFee) {
-            Toast.show({ type: 'error', text1: 'Consultation fee required', text2: 'Please enter a valid consultation fee.' });
-            return;
-        }
-        if (!form.treatmentApproach.trim()) {
-            Toast.show({ type: 'error', text1: 'Consultation mode required', text2: 'Select audio, video, or both.' });
-            return;
-        }
+        if (!form.registrationNumber.trim()) newErrors.registrationNumber = 'Registration number is required.';
+        if (!form.registrationCouncil.trim()) newErrors.registrationCouncil = 'Registration council is required.';
+        if (!experienceYears) newErrors.experienceYears = 'Years of experience is required.';
+        if (!form.currentHospitalClinic.trim()) newErrors.currentHospitalClinic = 'Hospital or clinic is required.';
+        if (!form.previousWorkDetails.trim()) newErrors.previousWorkDetails = 'Previous work details are required.';
+        if (areas.length === 0) newErrors.areasOfExpertise = 'Add at least one expertise area.';
+        if (languages.length === 0) newErrors.languagesSpoken = 'Add at least one language.';
+        if (!consultationFee) newErrors.consultationFee = 'Valid consultation fee is required.';
+        if (!form.treatmentApproach.trim()) newErrors.treatmentApproach = 'Consultation mode is required.';
 
         const { firstName, lastName } = splitName(form.fullName);
-        if (!firstName) {
-            Toast.show({ type: 'error', text1: 'Full name required', text2: 'Please enter your full name correctly.' });
+        if (!firstName && !newErrors.fullName) {
+            newErrors.fullName = 'Please enter your full name correctly.';
+        }
+
+        if (Object.keys(newErrors).length > 0) {
+            setFormErrors(newErrors);
+            const firstErrorMessage = Object.values(newErrors)[0];
+            Toast.show({
+                type: 'error',
+                text1: 'Required Information',
+                text2: firstErrorMessage,
+            });
             return;
         }
+        setFormErrors({});
 
         try {
             setSaving(true);
@@ -401,7 +373,14 @@ export default function DoctorCompleteProfileScreen() {
 
                     <View style={styles.photoSection}>
                         <TouchableOpacity
-                            style={[styles.photoButton, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}
+                            style={[
+                                styles.photoButton,
+                                {
+                                    borderColor: formErrors.profilePicture ? (theme.danger || '#EF4444') : theme.borderColor,
+                                    backgroundColor: theme.cardBackground,
+                                    borderWidth: formErrors.profilePicture ? 2 : 1,
+                                },
+                            ]}
                             onPress={handlePickProfilePhoto}
                             activeOpacity={0.85}
                         >
@@ -416,6 +395,9 @@ export default function DoctorCompleteProfileScreen() {
                                 </View>
                             )}
                         </TouchableOpacity>
+                        {formErrors.profilePicture ? (
+                            <Text style={[styles.errorText, { textAlign: 'center', marginTop: 8 }]}>{formErrors.profilePicture}</Text>
+                        ) : null}
                     </View>
 
                     <View style={[styles.section, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
@@ -424,6 +406,7 @@ export default function DoctorCompleteProfileScreen() {
                             label="Full Name *"
                             value={form.fullName}
                             onChangeText={(value) => handleUpdateField('fullName', value)}
+                            error={formErrors.fullName}
                             theme={theme}
                         />
                         <InputField
@@ -431,6 +414,7 @@ export default function DoctorCompleteProfileScreen() {
                             value={form.mobileNumber}
                             onChangeText={(value) => handleUpdateField('mobileNumber', value)}
                             keyboardType="phone-pad"
+                            error={formErrors.mobileNumber}
                             theme={theme}
                         />
                         <InputField
@@ -443,6 +427,7 @@ export default function DoctorCompleteProfileScreen() {
                             label="City / Location *"
                             value={form.city}
                             onChangeText={(value) => handleUpdateField('city', value)}
+                            error={formErrors.city}
                             theme={theme}
                         />
                     </View>
@@ -453,18 +438,21 @@ export default function DoctorCompleteProfileScreen() {
                             label="Degree (MBBS / MD / MS / BAMS) *"
                             value={form.degree}
                             onChangeText={(value) => handleUpdateField('degree', value)}
+                            error={formErrors.degree}
                             theme={theme}
                         />
                         <InputField
                             label="Specialization *"
                             value={form.specialization}
                             onChangeText={(value) => handleUpdateField('specialization', value)}
+                            error={formErrors.specialization}
                             theme={theme}
                         />
                         <InputField
                             label="University / College *"
                             value={form.university}
                             onChangeText={(value) => handleUpdateField('university', value)}
+                            error={formErrors.university}
                             theme={theme}
                         />
                         <InputField
@@ -472,18 +460,21 @@ export default function DoctorCompleteProfileScreen() {
                             value={form.yearOfCompletion}
                             onChangeText={(value) => handleUpdateField('yearOfCompletion', sanitizeNumberInput(value))}
                             keyboardType="number-pad"
+                            error={formErrors.yearOfCompletion}
                             theme={theme}
                         />
                         <InputField
                             label="Medical Registration Number *"
                             value={form.registrationNumber}
                             onChangeText={(value) => handleUpdateField('registrationNumber', value)}
+                            error={formErrors.registrationNumber}
                             theme={theme}
                         />
                         <InputField
                             label="Registration Council (State / NMC) *"
                             value={form.registrationCouncil}
                             onChangeText={(value) => handleUpdateField('registrationCouncil', value)}
+                            error={formErrors.registrationCouncil}
                             theme={theme}
                         />
                     </View>
@@ -495,12 +486,14 @@ export default function DoctorCompleteProfileScreen() {
                             value={form.experienceYears}
                             onChangeText={(value) => handleUpdateField('experienceYears', sanitizeNumberInput(value))}
                             keyboardType="number-pad"
+                            error={formErrors.experienceYears}
                             theme={theme}
                         />
                         <InputField
                             label="Current Hospital / Clinic *"
                             value={form.currentHospitalClinic}
                             onChangeText={(value) => handleUpdateField('currentHospitalClinic', value)}
+                            error={formErrors.currentHospitalClinic}
                             theme={theme}
                         />
                         <InputField
@@ -508,18 +501,21 @@ export default function DoctorCompleteProfileScreen() {
                             value={form.previousWorkDetails}
                             onChangeText={(value) => handleUpdateField('previousWorkDetails', value)}
                             multiline
+                            error={formErrors.previousWorkDetails}
                             theme={theme}
                         />
                         <InputField
                             label="Areas of Expertise * (comma separated)"
                             value={form.areasOfExpertise}
                             onChangeText={(value) => handleUpdateField('areasOfExpertise', value)}
+                            error={formErrors.areasOfExpertise}
                             theme={theme}
                         />
                         <InputField
                             label="Languages Spoken * (comma separated)"
                             value={form.languagesSpoken}
                             onChangeText={(value) => handleUpdateField('languagesSpoken', value)}
+                            error={formErrors.languagesSpoken}
                             theme={theme}
                         />
                         <InputField
@@ -527,6 +523,7 @@ export default function DoctorCompleteProfileScreen() {
                             value={form.consultationFee}
                             onChangeText={(value) => handleUpdateField('consultationFee', sanitizeNumberInput(value))}
                             keyboardType="number-pad"
+                            error={formErrors.consultationFee}
                             theme={theme}
                         />
                         <InputField
@@ -535,6 +532,7 @@ export default function DoctorCompleteProfileScreen() {
                             onPress={() => setShowConsultationModePicker((prev) => !prev)}
                             theme={theme}
                             isDropdown
+                            error={formErrors.treatmentApproach}
                         />
                         {showConsultationModePicker && (
                             <View style={[styles.dropdownCard, { borderColor: theme.borderColor, backgroundColor: theme.cardBackground }]}>
@@ -587,6 +585,7 @@ type InputFieldProps = {
     editable?: boolean;
     multiline?: boolean;
     isDropdown?: boolean;
+    error?: string;
     theme: typeof Colors.light;
 };
 
@@ -599,6 +598,7 @@ const InputField = ({
     editable = true,
     multiline = false,
     isDropdown = false,
+    error,
     theme,
 }: InputFieldProps) => {
     return (
@@ -614,7 +614,8 @@ const InputField = ({
                             flexDirection: 'row',
                             alignItems: 'center',
                             justifyContent: 'space-between',
-                            borderColor: theme.borderColor,
+                            borderColor: error ? (theme.danger || '#EF4444') : theme.borderColor,
+                            borderWidth: error ? 1.5 : 1,
                             backgroundColor: theme.background,
                         },
                     ]}
@@ -633,13 +634,15 @@ const InputField = ({
                         multiline && styles.multilineInput,
                         {
                             color: theme.text,
-                            borderColor: theme.borderColor,
+                            borderColor: error ? (theme.danger || '#EF4444') : theme.borderColor,
+                            borderWidth: error ? 1.5 : 1,
                             backgroundColor: editable ? theme.background : theme.borderColor + '33',
                         },
                     ]}
                     placeholderTextColor={theme.textSecondary}
                 />
             )}
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
     );
 };
@@ -767,5 +770,12 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '800',
+    },
+    errorText: {
+        marginTop: 4,
+        marginLeft: 2,
+        color: '#EF4444',
+        fontSize: 12,
+        fontWeight: '500',
     },
 });

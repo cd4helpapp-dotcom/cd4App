@@ -72,6 +72,9 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
       const asset = result.assets[0];
       const name = asset.fileName || `report_${Date.now()}.jpg`;
       finish({ uri: asset.uri, name, mimeType: guessMimeType(name, asset.mimeType), size: asset.fileSize });
+    } catch (error) {
+      console.warn('Could not open camera for report upload:', error);
+      Toast.show({ type: 'error', text1: 'Upload unavailable', text2: 'Could not open the camera. Please try again.' });
     } finally {
       setIsPicking(false);
     }
@@ -80,11 +83,19 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
   const fromGallery = async () => {
     setIsPicking(true);
     try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Toast.show({ type: 'info', text1: 'Photo permission needed', text2: 'Allow photo library access in Settings to choose a report.' });
+        return;
+      }
       const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, allowsMultipleSelection: false });
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
       const name = asset.fileName || `report_${Date.now()}.jpg`;
       finish({ uri: asset.uri, name, mimeType: guessMimeType(name, asset.mimeType), size: asset.fileSize });
+    } catch (error) {
+      console.warn('Could not open gallery for report upload:', error);
+      Toast.show({ type: 'error', text1: 'Upload unavailable', text2: 'Could not open the photo library. Please try again.' });
     } finally {
       setIsPicking(false);
     }
@@ -97,6 +108,9 @@ export default function UploadSheet({ visible, initialCategory, isUploading, quo
       if (result.canceled || !result.assets?.length) return;
       const asset = result.assets[0];
       finish({ uri: asset.uri, name: asset.name, mimeType: guessMimeType(asset.name, asset.mimeType), size: asset.size });
+    } catch (error) {
+      console.warn('Could not open file picker for report upload:', error);
+      Toast.show({ type: 'error', text1: 'Upload unavailable', text2: 'Could not open the file picker. Please try again.' });
     } finally {
       setIsPicking(false);
     }

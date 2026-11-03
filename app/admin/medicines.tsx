@@ -122,7 +122,7 @@ const styles = StyleSheet.create({
     filters: { flexDirection: 'row', gap: 7, paddingVertical: 14 },
     filterChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
     filterText: { fontSize: 11, fontWeight: '800' },
-    listContent: { gap: 10, paddingBottom: 24 },
+    listContent: { gap: 10, paddingBottom: 100 },
     card: { borderWidth: 1, borderRadius: 14, padding: 13, gap: 7 },
     cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
     medicineName: { fontSize: 15, fontWeight: '800' },

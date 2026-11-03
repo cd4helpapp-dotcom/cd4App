@@ -1,8 +1,8 @@
 import React from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View, useColorScheme } from 'react-native';
-import { ArrowLeft, CheckCircle2, Clock3, Receipt } from 'lucide-react-native';
+import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { AlertCircle, ArrowLeft, CheckCircle2, Clock3, Receipt } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import Colors from '../../constants/Colors';
+import { useAppTheme } from '../../hooks/useAppTheme';
 import DoctorSafeScreen from '../../ui/doctor/DoctorSafeScreen';
 import { useDoctorEarnings, useDoctorTransactions, type DoctorTransaction } from '../../hooks/useDoctor';
 
@@ -16,9 +16,9 @@ const dateLabel = (value: string | null) => {
 
 export default function DoctorTransactionsScreen() {
     const router = useRouter();
-    const theme = Colors[useColorScheme() ?? 'light'];
-    const { data: earnings } = useDoctorEarnings();
-    const { data: transactions = [], isLoading, isRefetching, refetch } = useDoctorTransactions();
+    const { theme } = useAppTheme();
+    const { data: earnings, refetch: refetchEarnings } = useDoctorEarnings();
+    const { data: transactions = [], isLoading, isRefetching, isError, error, refetch } = useDoctorTransactions();
 
     const renderItem = ({ item }: { item: DoctorTransaction }) => {
         const settled = item.payoutStatus === 'paid';
@@ -51,13 +51,13 @@ export default function DoctorTransactionsScreen() {
     };
 
     return (
-        <DoctorSafeScreen backgroundColor={theme.background} edges={['bottom']}>
+        <DoctorSafeScreen backgroundColor={theme.background} edges={['top', 'bottom']}>
             <FlatList
                 data={transactions}
                 keyExtractor={(item) => item.id}
                 renderItem={renderItem}
                 contentContainerStyle={styles.content}
-                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={theme.tint} />}
+                refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); void refetchEarnings(); }} tintColor={theme.tint} />}
                 ListHeaderComponent={
                     <View>
                         <View style={styles.header}>
@@ -76,7 +76,27 @@ export default function DoctorTransactionsScreen() {
                         <Text style={[styles.sectionTitle, { color: theme.text }]}>Payment history</Text>
                     </View>
                 }
-                ListEmptyComponent={isLoading ? <ActivityIndicator color={theme.tint} style={{ marginTop: 30 }} /> : <Text style={[styles.empty, { color: theme.textSecondary }]}>No paid transactions yet.</Text>}
+                ListEmptyComponent={
+                    isLoading ? (
+                        <ActivityIndicator color={theme.tint} style={{ marginTop: 30 }} />
+                    ) : isError ? (
+                        <View style={[styles.errorContainer, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                            <AlertCircle size={28} color={theme.danger || '#EF4444'} />
+                            <Text style={[styles.errorTitle, { color: theme.text }]}>Could not load transactions</Text>
+                            <Text style={[styles.errorSubtitle, { color: theme.textSecondary }]}>
+                                {error?.message || 'Something went wrong while fetching your transactions.'}
+                            </Text>
+                            <TouchableOpacity
+                                style={[styles.retryButton, { backgroundColor: theme.tint }]}
+                                onPress={() => { void refetch(); void refetchEarnings(); }}
+                            >
+                                <Text style={styles.retryButtonText}>Retry</Text>
+                            </TouchableOpacity>
+                        </View>
+                    ) : (
+                        <Text style={[styles.empty, { color: theme.textSecondary }]}>No paid transactions yet.</Text>
+                    )
+                }
             />
         </DoctorSafeScreen>
     );
@@ -111,4 +131,33 @@ const styles = StyleSheet.create({
     statusText: { marginLeft: 5, fontSize: 11, fontWeight: '700' },
     paymentId: { flex: 1, marginLeft: 10, fontSize: 10, textAlign: 'right' },
     empty: { textAlign: 'center', marginTop: 30, fontSize: 13 },
+    errorContainer: {
+        borderWidth: 1,
+        borderRadius: 14,
+        padding: 24,
+        alignItems: 'center',
+        marginTop: 20,
+    },
+    errorTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        marginTop: 10,
+    },
+    errorSubtitle: {
+        fontSize: 13,
+        textAlign: 'center',
+        marginTop: 4,
+        lineHeight: 18,
+    },
+    retryButton: {
+        marginTop: 14,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 10,
+    },
+    retryButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
+    },
 });

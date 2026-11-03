@@ -1,8 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../src/lib/supabase';
-import { Slot, Appointment, User } from '../src/types';
+import { Slot, Appointment, User, Doctor } from '../src/types';
 import { useAuthContext } from '../context/AuthContext';
 import { sanitizeNamePart } from '../src/utils/nameSanitizer';
+import { slotMoment } from '../src/utils/slotTime';
+import { mapDoctorRow } from './useDoctor';
 
 export const APPOINTMENT_QUERY_KEYS = {
     myAppointments: (userId: string) => ['appointments', 'my', userId] as const,
@@ -14,6 +16,31 @@ export const APPOINTMENT_QUERY_KEYS = {
 const BOOKING_COOLDOWN_DAYS = 30;
 const BOOKING_COOLDOWN_WINDOW_MS = BOOKING_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 const BOOKING_COOLDOWN_STATUSES: Appointment['status'][] = ['pending', 'confirmed', 'completed'];
+
+export const assertBookingCooldown = async (patientId: string, doctorId: string) => {
+    const cooldownStartIso = new Date(Date.now() - BOOKING_COOLDOWN_WINDOW_MS).toISOString();
+    const { data: recentAppointment, error: recentAppointmentError } = await supabase
+        .from('appointments')
+        .select('id, created_at')
+        .eq('patient_id', patientId)
+        .eq('doctor_id', doctorId)
+        .in('status', BOOKING_COOLDOWN_STATUSES)
+        .gte('created_at', cooldownStartIso)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    if (recentAppointmentError) throw recentAppointmentError;
+    if (!recentAppointment?.created_at) return;
+
+    const nextBookingMs = new Date(recentAppointment.created_at).getTime() + BOOKING_COOLDOWN_WINDOW_MS;
+    const nextBookingLabel = Number.isFinite(nextBookingMs)
+        ? new Date(nextBookingMs).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+        : `after ${BOOKING_COOLDOWN_DAYS} days`;
+    throw new Error(
+        `You can book the same doctor only once in ${BOOKING_COOLDOWN_DAYS} days. Next booking available on ${nextBookingLabel}.`
+    );
+};
 const APPOINTMENT_NOTIFICATION_HISTORY_LIMIT = 60;
 const APPOINTMENT_NOTIFICATION_HISTORY_CHAR_LIMIT = 1500;
 type AppointmentNotificationHistoryItem = {
@@ -168,26 +195,29 @@ export const useMyAppointments = () => {
 
             if (error) throw error;
 
-            return data.map((apt: any) => ({
-                id: apt.id,
-                _id: apt.id,
-                patient: apt.patient_id, // Simplified for now
-                doctor: apt.doctor_id,
-                slot: {
-                    id: apt.slot?.id,
-                    _id: apt.slot?.id,
-                    doctor: apt.doctor_id,
-                    date: apt.slot?.date,
-                    startTime: apt.slot?.start_time,
-                    endTime: apt.slot?.end_time,
-                    isBooked: apt.slot?.is_booked,
-                },
-                status: apt.status,
-                appointmentType: apt.appointment_type === 'second_opinion' ? 'second_opinion' : 'consultation',
-                notes: apt.notes,
-                meetLink: apt.meet_link,
-                createdAt: apt.created_at,
-            })) as unknown as Appointment[];
+            return data.map((apt: any) => {
+                const joinedDoctor = Array.isArray(apt.doctor) ? apt.doctor[0] : apt.doctor;
+                return {
+                    id: apt.id,
+                    _id: apt.id,
+                    patient: apt.patient_id, // Simplified for now
+                    doctor: joinedDoctor ? mapDoctorRow(joinedDoctor) : apt.doctor_id,
+                    slot: {
+                        id: apt.slot?.id,
+                        _id: apt.slot?.id,
+                        doctor: apt.doctor_id,
+                        date: apt.slot?.date,
+                        startTime: apt.slot?.start_time,
+                        endTime: apt.slot?.end_time,
+                        isBooked: apt.slot?.is_booked,
+                    },
+                    status: apt.status,
+                    appointmentType: apt.appointment_type === 'second_opinion' ? 'second_opinion' : 'consultation',
+                    notes: apt.notes,
+                    meetLink: apt.meet_link,
+                    createdAt: apt.created_at,
+                };
+            }) as unknown as Appointment[];
         },
         enabled: !!session?.user?.id,
     });
@@ -220,9 +250,8 @@ export const useAvailableSlots = (doctorId: string) => {
             const bookableFrom = Date.now() + 10 * 60 * 1000;
             return data
                 .filter((s: any) => {
-                    const [y, m, d] = String(s.date || '').split('-').map(Number);
-                    const [hh = 0, mm = 0] = String(s.start_time || '00:00').split(':').map(Number);
-                    return !y || new Date(y, m - 1, d, hh, mm).getTime() >= bookableFrom;
+                    const startsAt = slotMoment(String(s.date || ''), String(s.start_time || ''));
+                    return startsAt > 0 && startsAt >= bookableFrom;
                 })
                 .map((s: any) => ({
                     id: s.id,
@@ -266,34 +295,7 @@ export const useBookAppointment = () => {
         }) => {
             if (!session?.user?.id) throw new Error('Not authenticated');
 
-            const cooldownStartIso = new Date(Date.now() - BOOKING_COOLDOWN_WINDOW_MS).toISOString();
-            const { data: recentAppointment, error: recentAppointmentError } = await supabase
-                .from('appointments')
-                .select('id, created_at')
-                .eq('patient_id', session.user.id)
-                .eq('doctor_id', doctorId)
-                .in('status', BOOKING_COOLDOWN_STATUSES)
-                .gte('created_at', cooldownStartIso)
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
-
-            if (recentAppointmentError) throw recentAppointmentError;
-
-            if (recentAppointment?.created_at) {
-                const nextBookingMs = new Date(recentAppointment.created_at).getTime() + BOOKING_COOLDOWN_WINDOW_MS;
-                const nextBookingLabel = Number.isFinite(nextBookingMs)
-                    ? new Date(nextBookingMs).toLocaleDateString('en-IN', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                    })
-                    : `after ${BOOKING_COOLDOWN_DAYS} days`;
-
-                throw new Error(
-                    `You can book the same doctor only once in ${BOOKING_COOLDOWN_DAYS} days. Next booking available on ${nextBookingLabel}.`
-                );
-            }
+            await assertBookingCooldown(session.user.id, doctorId);
 
             if (!session?.access_token) {
                 throw new Error('Authentication session missing. Please login again and retry booking.');
@@ -393,8 +395,22 @@ export const useBookAppointment = () => {
 
 // --- Doctor Hooks ---
 
-const changeAppointment = async (body: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke('manage-appointment-payment', { body });
+const changeAppointment = async (body: Record<string, unknown>, accessToken?: string) => {
+    let token = accessToken;
+    if (!token) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        token = sessionData?.session?.access_token;
+    }
+    if (!token) {
+        throw new Error('Not authenticated');
+    }
+    supabase.functions.setAuth(token);
+    const { data, error } = await supabase.functions.invoke('manage-appointment-payment', {
+        body,
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
     if (error || data?.success === false) {
         const failure: Error & { code?: string } = new Error(data?.message || error?.message || 'Could not change this appointment.');
         failure.code = data?.code;
@@ -408,7 +424,7 @@ export const useCancelAppointment = () => {
     const { session } = useAuthContext();
     return useMutation({
         mutationFn: ({ appointmentId }: { appointmentId: string; doctorId: string }) =>
-            changeAppointment({ action: 'cancel_appointment', appointmentId }),
+            changeAppointment({ action: 'cancel_appointment', appointmentId }, session?.access_token),
         onSettled: (_data, _error, variables) => {
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.myAppointments(session?.user?.id || '') });
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.availableSlots(variables.doctorId) });
@@ -424,10 +440,12 @@ export const useRescheduleAppointment = () => {
     const { session } = useAuthContext();
     return useMutation({
         mutationFn: ({ appointmentId, slotId }: { appointmentId: string; slotId: string; doctorId: string }) =>
-            changeAppointment({ action: 'reschedule_appointment', appointmentId, slotId }),
+            changeAppointment({ action: 'reschedule_appointment', appointmentId, slotId }, session?.access_token),
         onSettled: (_data, _error, variables) => {
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.myAppointments(session?.user?.id || '') });
             queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.availableSlots(variables.doctorId) });
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorAppointments(variables.doctorId) });
+            queryClient.invalidateQueries({ queryKey: APPOINTMENT_QUERY_KEYS.doctorSlots(variables.doctorId) });
         },
     });
 };

@@ -20,8 +20,10 @@ import Toast from 'react-native-toast-message';
 import Colors from '../../constants/Colors';
 import { useAuthContext } from '../../context/AuthContext';
 import { useUploadProfilePicture } from '../../hooks/useAuth';
-import { getImageUrl } from '../../constants/Config';
+import { getImageUrl, SUPABASE_PROFILE_MEDIA_BUCKET } from '../../constants/Config';
+import { resolveStorageSignedUrl } from '../../src/utils/storageSignedUrl';
 import { useDoctorProfile } from '../../hooks/useDoctor';
+import { normalizeIndianMobile } from '../../src/utils/validation';
 
 const displayOrPlaceholder = (value: string | number | undefined | null, fallback = 'Not added') => {
   if (value === undefined || value === null) return fallback;
@@ -66,6 +68,35 @@ export default function ProfileDetailsScreen() {
   const { user, isLoading, refreshAuth } = useAuthContext();
   const uploadMutation = useUploadProfilePicture();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [resolvedImageUrl, setResolvedImageUrl] = useState<string>('');
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const raw = user?.profilePicture;
+    if (!raw) {
+      setResolvedImageUrl('');
+      return;
+    }
+
+    if (/^(https?:)?\/\//i.test(raw) || /^data:/i.test(raw) || /^blob:/i.test(raw)) {
+      setResolvedImageUrl(raw);
+      return;
+    }
+
+    void resolveStorageSignedUrl({
+      bucket: SUPABASE_PROFILE_MEDIA_BUCKET,
+      value: raw,
+      ttlSeconds: 60 * 60 * 24 * 7,
+    }).then((url) => {
+      if (isMounted) {
+        setResolvedImageUrl(url || getImageUrl(raw));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.profilePicture]);
 
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'N/A';
@@ -153,6 +184,10 @@ export default function ProfileDetailsScreen() {
   };
 
   const openEditProfile = () => {
+    if (user?.role === 'Doctor') {
+      router.push('/doctor/complete-profile');
+      return;
+    }
     router.push({ pathname: '/profile-setup', params: { mode: 'edit' } });
   };
 
@@ -167,7 +202,7 @@ export default function ProfileDetailsScreen() {
   const roleValue = user.role as any;
   const roleName = (typeof roleValue === 'string' ? roleValue : roleValue?.name || '').toLowerCase();
   const isDoctor = roleName === 'doctor';
-  const profileImageUrl = getImageUrl(user.profilePicture);
+  const profileImageUrl = resolvedImageUrl || getImageUrl(user.profilePicture);
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -239,7 +274,9 @@ export default function ProfileDetailsScreen() {
             </View>
             <View style={styles.infoContent}>
               <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>Phone Number</Text>
-              <Text style={[styles.infoValue, { color: theme.text }]}>+91 {user.phoneNumber}</Text>
+              <Text style={[styles.infoValue, { color: theme.text }]}>
+                {normalizeIndianMobile(user.phoneNumber || '') ? `+91 ${normalizeIndianMobile(user.phoneNumber || '')}` : 'Not added'}
+              </Text>
             </View>
           </View>
           <View style={[styles.divider, { backgroundColor: theme.borderColor }]} />

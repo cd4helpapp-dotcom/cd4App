@@ -79,7 +79,7 @@ const normalizeDoctorFee = (value: unknown): string => {
     return '';
 };
 
-const mapDoctorRow = (row: any): Doctor => ({
+export const mapDoctorRow = (row: any): Doctor => ({
     id: row.id,
     _id: row.id,
     firstName: row.profiles?.first_name || row.first_name || '',

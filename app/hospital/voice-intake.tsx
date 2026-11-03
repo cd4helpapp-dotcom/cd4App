@@ -342,7 +342,7 @@ function Chip({ label, selected, onPress, theme }: { label: string; selected: bo
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    content: { paddingHorizontal: 18, paddingBottom: 34 },
+    content: { paddingHorizontal: 18, paddingBottom: 100 },
     kicker: { fontSize: 12, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 7 },
     title: { fontSize: 27, fontWeight: '900', lineHeight: 33 },
     subtitle: { marginTop: 8, fontSize: 14, lineHeight: 21, fontWeight: '600' },

@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo } from 'react';
 import { useAuthContext } from '../context/AuthContext';
 import { useMedicalReports } from './useMedicalReports';
@@ -49,7 +49,6 @@ export const formatBytes = (bytes: number): string => {
 };
 
 export const useStorageInsights = () => {
-  const queryClient = useQueryClient();
   const { user } = useAuthContext();
   const notifications = useNotificationsSystem();
   const reportsQuery = useMedicalReports();
@@ -58,7 +57,6 @@ export const useStorageInsights = () => {
     queryKey: STORAGE_INSIGHTS_QUERY_KEY,
     queryFn: loadLocalStorageStats,
     staleTime: 10_000,
-    refetchInterval: STORAGE_POLL_INTERVAL_MS,
   });
 
   useEffect(() => {
@@ -96,12 +94,13 @@ export const useStorageInsights = () => {
       await AsyncStorage.multiRemove(removable);
     }
 
-    queryClient.clear();
+    // Only disposable on-device storage is removed. Clearing the global query
+    // cache here would evict active auth, appointment and report state.
     await refreshAll();
     return {
       removedKeys: removable.length,
     };
-  }, [queryClient, refreshAll]);
+  }, [refreshAll]);
 
   return {
     isLoading: localStorageQuery.isLoading || reportsQuery.isLoading || notifications.isLoading,

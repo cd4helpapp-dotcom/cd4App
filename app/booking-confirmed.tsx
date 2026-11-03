@@ -7,6 +7,7 @@ import Colors from '../constants/Colors';
 import { supabase } from '../src/lib/supabase';
 import { useAuthContext } from '../context/AuthContext';
 import { useAppLanguage } from '../context/AppLanguageContext';
+import { shareAppointmentOnWhatsApp } from '../src/utils/whatsapp';
 
 export default function BookingConfirmedScreen() {
   const router = useRouter();
@@ -24,6 +25,7 @@ export default function BookingConfirmedScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const [isValidating, setIsValidating] = React.useState(true);
   const [isValid, setIsValid] = React.useState(false);
+  const autoSentRef = React.useRef(false);
 
   React.useEffect(() => {
     let active = true;
@@ -63,6 +65,25 @@ export default function BookingConfirmedScreen() {
       active = false;
     };
   }, [params.appointmentId, params.paymentId, router, user?.id]);
+
+  // Automatically trigger WhatsApp slip delivery on confirmation without requiring user to hunt for a button
+  React.useEffect(() => {
+    if (isValid && !autoSentRef.current) {
+      autoSentRef.current = true;
+      const timer = setTimeout(() => {
+        void shareAppointmentOnWhatsApp({
+          doctorName: params.doctorName,
+          date: params.date,
+          time: params.time,
+          amount: params.amount,
+          appointmentId: params.appointmentId,
+          paymentId: params.paymentId,
+          targetPhone: user?.phoneNumber,
+        });
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isValid, params.doctorName, params.date, params.time, params.amount, params.appointmentId, params.paymentId, user?.phoneNumber]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>

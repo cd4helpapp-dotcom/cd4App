@@ -2,6 +2,8 @@
  * Web mock for useCall hook.
  * Audio/video calling is not supported in this project on web.
  */
+export type { CallStatus } from '../context/CallContext';
+
 export const useCall = (_roomId: string) => {
     return {
         startCall: async (_type: 'audio' | 'video' = 'video') => {

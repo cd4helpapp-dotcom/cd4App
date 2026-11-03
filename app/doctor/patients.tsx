@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CalendarClock, FileText, MessageCircle, Users } from 'lucide-react-native';
+import { AlertCircle, CalendarClock, FileText, MessageCircle, Users } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import Toast from 'react-native-toast-message';
 import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
@@ -33,8 +33,19 @@ export default function DoctorPatientsScreen() {
     const [searchQuery, setSearchQuery] = useState('');
     const tabSwipeHandlers = useTabSwipeNavigation('doctor-patients');
 
-    const { data: appointments = [], isLoading } = useDoctorAppointments();
-    const { data: chatRooms = [], isFetching } = useChatRooms();
+    const {
+        data: appointments = [],
+        isLoading,
+        isError: isAppointmentsError,
+        error: appointmentsError,
+        refetch: refetchAppointments,
+    } = useDoctorAppointments();
+    const {
+        data: chatRooms = [],
+        isFetching,
+        isError: isChatRoomsError,
+        refetch: refetchRooms,
+    } = useChatRooms();
 
     const insights = useMemo(() => buildDoctorInsights({ appointments, chatRooms }), [appointments, chatRooms]);
 
@@ -142,6 +153,24 @@ export default function DoctorPatientsScreen() {
                     <View style={styles.empty}>
                         {isSyncing ? (
                             <Text style={[Typography.body, { color: theme.textSecondary }]}>Loading patients…</Text>
+                        ) : (isAppointmentsError || isChatRoomsError) && insights.patients.length === 0 ? (
+                            <View style={[styles.errorCard, { backgroundColor: theme.cardBackground, borderColor: theme.borderColor }]}>
+                                <AlertCircle size={36} color={theme.danger} />
+                                <Text style={[Typography.subheading, { color: theme.text }]}>Could not load patients</Text>
+                                <Text style={[Typography.body, styles.emptyText, { color: theme.textSecondary }]}>
+                                    {appointmentsError?.message || 'Something went wrong while fetching your patients.'}
+                                </Text>
+                                <Pressable
+                                    onPress={() => {
+                                        void refetchAppointments();
+                                        void refetchRooms();
+                                    }}
+                                    accessibilityRole="button"
+                                    style={[styles.retryCta, { backgroundColor: theme.buttonPrimary }]}
+                                >
+                                    <Text style={styles.retryCtaText}>Retry</Text>
+                                </Pressable>
+                            </View>
                         ) : (
                             <>
                                 <Users size={40} color={theme.textTertiary} />
@@ -160,7 +189,7 @@ export default function DoctorPatientsScreen() {
     );
 }
 
-const styles = StyleSheet.create({
+const styles: any = StyleSheet.create({
     flex: { flex: 1, minWidth: 0 },
     list: { paddingHorizontal: Layout.screenGutter, paddingBottom: Spacing.xxxl, gap: Spacing.md, width: '100%', maxWidth: Layout.contentMaxWidth, alignSelf: 'center' },
     header: { paddingTop: Spacing.lg, gap: Spacing.md },
@@ -173,4 +202,23 @@ const styles = StyleSheet.create({
     secondary: { flex: 1, height: 44, borderRadius: Radius.md, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
     empty: { alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.huge },
     emptyText: { textAlign: 'center' },
+    errorCard: {
+        width: '100%',
+        alignItems: 'center',
+        padding: Spacing.xl,
+        borderRadius: Radius.lg,
+        borderWidth: 1,
+        gap: Spacing.sm,
+    },
+    retryCta: {
+        marginTop: Spacing.sm,
+        paddingHorizontal: Spacing.xl,
+        paddingVertical: Spacing.md,
+        borderRadius: Radius.md,
+    },
+    retryCtaText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
+    },
 });

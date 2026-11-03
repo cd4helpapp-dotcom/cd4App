@@ -1,10 +1,12 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { CalendarCheck, CalendarClock, CalendarX, Clock, MessageCircle, RotateCcw, Stethoscope } from 'lucide-react-native';
+import { CalendarCheck, CalendarClock, CalendarX, Clock, MessageCircle, RotateCcw, Share2, Stethoscope } from 'lucide-react-native';
 import { elevation, Layout, Radius, Spacing, Typography } from '../../constants/Design';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAppLanguage } from '../../context/AppLanguageContext';
 import DoctorAvatar from '../common/DoctorAvatar';
+import { formatClock, toMinutes } from '../../src/utils/slotTime';
+import { shareAppointmentOnWhatsApp } from '../../src/utils/whatsapp';
 
 export type AppointmentListItem = {
   id: string;
@@ -35,16 +37,16 @@ type Props = {
 
 const toDate = (date?: string, time?: string): Date | null => {
   if (!date) return null;
-  const [y, m, d] = date.split('-').map(Number);
+  const [y, m, d] = String(date).slice(0, 10).split('-').map(Number);
   if (!y || !m || !d) return null;
-  const [hh = 0, mm = 0] = (time || '00:00').split(':').map(Number);
-  return new Date(y, m - 1, d, hh, mm, 0, 0);
+  const total = time ? toMinutes(time) : 0;
+  const parsed = new Date(y, m - 1, d, Math.floor(total / 60), total % 60, 0, 0);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 const formatTime = (time?: string): string => {
-  const parsed = toDate('2000-01-01', time);
-  if (!parsed) return '';
-  return parsed.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
+  if (!time) return '';
+  return formatClock(time);
 };
 
 const CHANGE_CUTOFF_MS = 2 * 60 * 60 * 1000;
@@ -70,7 +72,11 @@ export default function MyAppointmentsList({ items, isLoading, isRefreshing, onR
 
   const { upcoming, past } = React.useMemo(() => {
     const now = Date.now();
-    const withTime = items.map((item) => ({ item, start: toDate(item.date, item.startTime), end: toDate(item.date, item.endTime || item.startTime) }));
+    const withTime = items.map((item) => ({
+      item,
+      start: toDate(item.date, item.startTime),
+      end: toDate(item.date, item.endTime || item.startTime || (item.date ? '23:59' : undefined)),
+    }));
     const isUpcoming = ({ item, end }: (typeof withTime)[number]) =>
       (item.status === 'pending' || item.status === 'confirmed') && (!end || end.getTime() >= now);
     const up = withTime.filter(isUpcoming).sort((a, b) => (a.start?.getTime() ?? 0) - (b.start?.getTime() ?? 0));
@@ -80,7 +86,12 @@ export default function MyAppointmentsList({ items, isLoading, isRefreshing, onR
 
   // Open on "Past" only when there is nothing upcoming but there is history.
   React.useEffect(() => {
-    if (!isLoading && upcoming.length === 0 && past.length > 0) setSegment('past');
+    if (isLoading) return;
+    setSegment((current) => {
+      if (upcoming.length === 0 && past.length > 0) return 'past';
+      if (current === 'past' && upcoming.length > 0) return 'upcoming';
+      return current;
+    });
   }, [isLoading, past.length, upcoming.length]);
 
   const list = segment === 'upcoming' ? upcoming : past;
@@ -191,6 +202,29 @@ export default function MyAppointmentsList({ items, isLoading, isRefreshing, onR
                   <Pressable onPress={() => onMessageDoctor(item)} accessibilityRole="button" style={({ pressed }) => [styles.action, { borderColor: theme.primaryBorder, backgroundColor: pressed ? theme.primaryBorder : theme.primarySoft }]}>
                     <MessageCircle size={15} color={theme.primary} />
                     <Text style={[Typography.label, { color: theme.primary }]}>{t('manage.message')}</Text>
+                  </Pressable>
+                ) : null}
+                {item.status === 'confirmed' || item.status === 'pending' ? (
+                  <Pressable
+                    onPress={() =>
+                      shareAppointmentOnWhatsApp({
+                        doctorName: item.doctorName,
+                        date: item.date,
+                        time: formatTime(item.startTime),
+                        appointmentId: item.id,
+                      })
+                    }
+                    accessibilityRole="button"
+                    style={({ pressed }) => [
+                      styles.action,
+                      {
+                        borderColor: '#25D366',
+                        backgroundColor: pressed ? '#DCF8C6' : theme.surfaceMuted,
+                      },
+                    ]}
+                  >
+                    <Share2 size={15} color="#25D366" />
+                    <Text style={[Typography.label, { color: theme.text }]}>Share Slip</Text>
                   </Pressable>
                 ) : null}
                 {item.status === 'completed' || item.status === 'cancelled' ? (

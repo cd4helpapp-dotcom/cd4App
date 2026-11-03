@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -21,6 +18,8 @@ import Colors from '../../constants/Colors';
 import { useAuthContext } from '../../context/AuthContext';
 import { useUpdateProfile } from '../../hooks/useAuth';
 import { needsPatientProfileSetup } from '../../utils/profileSetup';
+import { normalizeIndianMobile } from '../../src/utils/validation';
+import KeyboardAwareScrollView from '../common/KeyboardAwareScrollView';
 
 type Gender = 'Male' | 'Female' | 'Other';
 
@@ -95,13 +94,14 @@ const ProfileSetupScreen: React.FC = () => {
 
     setFullName([user.firstName, user.lastName].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim());
     setAge(user.age ? String(user.age) : '');
-    setGender(user.gender || '');
+    const normalizedGender = String(user.gender || '').trim().toLowerCase();
+    setGender(normalizedGender === 'male' || normalizedGender === 'female' || normalizedGender === 'other' ? normalizedGender[0].toUpperCase() + normalizedGender.slice(1) as Gender : '');
     setIsGenderDropdownOpen(false);
     setAddress(user.address || '');
     setWeight(user.weight ? String(user.weight) : '');
     setBloodPressure(user.bloodPressure || '');
     setPulse(user.pulse ? String(user.pulse) : '');
-    setPhoneNumber(user.phoneNumber || signupPhoneParam || '');
+    setPhoneNumber(normalizeIndianMobile(user.phoneNumber || signupPhoneParam || ''));
   }, [isAuthenticated, isEditMode, isLoading, isProfileResolved, signupPhoneParam, user]);
 
   if (isLoading || !isProfileResolved || !user) {
@@ -207,11 +207,8 @@ const ProfileSetupScreen: React.FC = () => {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: theme.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
+    <KeyboardAwareScrollView
+      containerStyle={[styles.container, { backgroundColor: theme.background }]}
         contentContainerStyle={[
           styles.scrollContent,
           {
@@ -449,8 +446,7 @@ const ProfileSetupScreen: React.FC = () => {
             </View>
           )}
         </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAwareScrollView>
   );
 };
 

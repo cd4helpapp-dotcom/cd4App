@@ -13,6 +13,7 @@ import {
   useColorScheme,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '../../constants/Colors';
 import { useAdminCommunityAds, useCreateCommunityAd, useToggleCommunityAdActive } from '../../hooks/useAdmin';
 
@@ -25,6 +26,7 @@ const clampInterval = (value: string): number => {
 export default function AdminAdsScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const insets = useSafeAreaInsets();
 
   const adsQuery = useAdminCommunityAds();
   const createAdMutation = useCreateCommunityAd();
@@ -104,7 +106,10 @@ export default function AdminAdsScreen() {
   };
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: theme.background }]} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: theme.background }]}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + 16 }]}
+    >
       <Text style={[styles.title, { color: theme.text }]}>Community Ads</Text>
       <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
         Create sponsored posts and control live campaign visibility.
@@ -223,7 +228,7 @@ export default function AdminAdsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 28 },
+  content: { padding: 16, paddingBottom: 100 },
   title: { fontSize: 26, fontWeight: '800' },
   subtitle: { fontSize: 13, marginTop: 6, marginBottom: 14 },
   card: { borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 14 },

@@ -241,6 +241,19 @@ const isTransientAnalyzeInvokeFailure = (error: any): boolean => {
   );
 };
 
+const uriToBlobWithXhr = (uri: string): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onerror = () => {
+      xhr.abort();
+      reject(new Error('Failed to read file via XHR.'));
+    };
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send(null);
+  });
+
 const uploadToMedicalReportsBucket = async (params: {
   filePath: string;
   fileName: string;
@@ -270,18 +283,29 @@ const uploadToMedicalReportsBucket = async (params: {
     errors.push(`blob:${blobError?.message || 'failed'}`);
   }
 
-  // Strategy 2: FormData URI upload fallback (more compatible on some Android devices)
+  // Strategy 2: XHR blob / FormData URI fallback (more compatible on some Android devices)
   try {
-    const formData = new FormData();
-    formData.append('file', {
-      uri: fileUri,
-      name: fileName,
-      type: mimeType,
-    } as any);
+    let uploadBody: any;
+    try {
+      uploadBody = await uriToBlobWithXhr(fileUri);
+    } catch {
+      const formData = new FormData();
+      // React Native FormData does not implement .has(), which @supabase/storage-js calls.
+      if (typeof (formData as any).has !== 'function') {
+        (formData as any).has = () => false;
+      }
+      formData.append('', {
+        uri: fileUri,
+        name: fileName,
+        type: mimeType,
+      } as any);
+      uploadBody = formData;
+    }
 
     const { error } = await supabase.storage
       .from('medical-reports')
-      .upload(filePath, formData as any, {
+      .upload(filePath, uploadBody, {
+        contentType: mimeType,
         upsert: false,
       });
 
@@ -293,7 +317,7 @@ const uploadToMedicalReportsBucket = async (params: {
       throw error;
     }
 
-    return { byteSize: null };
+    return { byteSize: Number((uploadBody as any)?.size || 0) || null };
   } catch (formError: any) {
     errors.push(`form:${formError?.message || 'failed'}`);
   }
@@ -471,12 +495,17 @@ export const useMedicalReports = () => {
     let cancelled = false;
     const ids = activeKey.split(',');
     const timer = setInterval(async () => {
-      const { data } = await supabase.from('medical_reports').select('id, analysis_status').in('id', ids).is('deleted_at', null);
-      if (cancelled || !data) return;
-      const finished = data.some((row: any) => row.analysis_status === 'completed' || row.analysis_status === 'failed');
-      const removed = data.length < ids.length;
-      if (finished || removed) {
-        await queryClient.invalidateQueries({ queryKey: MEDICAL_REPORT_QUERY_KEYS.reports });
+      try {
+        const { data, error } = await supabase.from('medical_reports').select('id, analysis_status').in('id', ids).is('deleted_at', null);
+        if (error) throw error;
+        if (cancelled || !data) return;
+        const finished = data.some((row: any) => row.analysis_status === 'completed' || row.analysis_status === 'failed');
+        const removed = data.length < ids.length;
+        if (finished || removed) {
+          await queryClient.invalidateQueries({ queryKey: MEDICAL_REPORT_QUERY_KEYS.reports });
+        }
+      } catch (error) {
+        if (__DEV__) console.warn('Medical report status poll failed:', error);
       }
     }, 3000);
     return () => {

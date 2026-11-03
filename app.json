@@ -13,7 +13,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.cd4.app",
       "associatedDomains": [
-        "applinks:cd4.app"
+        "applinks:cd4.co.in",
+        "applinks:www.cd4.co.in"
       ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -36,8 +37,11 @@
           "data": [
             {
               "scheme": "https",
-              "host": "cd4.app",
-              "pathPrefix": "/community/post"
+              "host": "cd4.co.in"
+            },
+            {
+              "scheme": "https",
+              "host": "www.cd4.co.in"
             }
           ],
           "category": [

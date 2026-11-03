@@ -2,6 +2,8 @@ import React from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View, useColorScheme } from 'react-native';
 import { router } from 'expo-router';
 import Toast from 'react-native-toast-message';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useQueryClient } from '@tanstack/react-query';
 import Colors from '../../constants/Colors';
 import SettingsHeader from '../../ui/common/SettingsHeader';
 import { useAuthContext } from '../../context/AuthContext';
@@ -10,6 +12,7 @@ import { supabase } from '../../src/lib/supabase';
 export default function DeleteAccountPage() {
   const theme = Colors[useColorScheme() ?? 'light'];
   const { session, refreshAuth } = useAuthContext();
+  const queryClient = useQueryClient();
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   const deleteAccount = () => {
@@ -33,7 +36,14 @@ export default function DeleteAccountPage() {
                   try {
                     const { data, error } = await supabase.functions.invoke('delete-account', { body: {} });
                     if (error || !data?.success) throw new Error('Account deletion failed');
-                    await supabase.auth.signOut();
+                    await supabase.functions.invoke('register-push-token', { body: { token: null } }).catch(() => {});
+                    queryClient.clear();
+                    await AsyncStorage.multiRemove([
+                      'cd4.profile-snapshot.v1',
+                      'cd4_app_mode_v1',
+                      '@cd4/appointment_calendar_sync',
+                    ]);
+                    await supabase.auth.signOut({ scope: 'local' });
                     await refreshAuth();
                     router.replace('/auth/login');
                   } catch (error) {

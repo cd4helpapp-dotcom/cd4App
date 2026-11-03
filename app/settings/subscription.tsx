@@ -337,8 +337,8 @@ function SubscriptionSettingsScreen() {
             style={[
               styles.cancelButton,
               {
-                borderColor: canCancel ? '#EF4444' : theme.borderColor,
-                backgroundColor: canCancel ? '#FEF2F2' : theme.cardBackground,
+                borderColor: canCancel ? theme.dangerBorder : theme.borderColor,
+                backgroundColor: canCancel ? theme.dangerSoft : theme.cardBackground,
                 opacity: isCancelling ? 0.75 : 1,
               },
             ]}
@@ -347,9 +347,9 @@ function SubscriptionSettingsScreen() {
             disabled={!canCancel || isCancelling}
           >
             {isCancelling ? (
-              <ActivityIndicator size="small" color="#EF4444" />
+              <ActivityIndicator size="small" color={theme.danger} />
             ) : (
-              <Text style={[styles.cancelButtonText, { color: canCancel ? '#DC2626' : theme.textSecondary }]}>
+              <Text style={[styles.cancelButtonText, { color: canCancel ? theme.danger : theme.textSecondary }]}>
                 {t('settings.subscriptionCancelAction')}
               </Text>
             )}

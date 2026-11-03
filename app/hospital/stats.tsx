@@ -87,7 +87,7 @@ export default function HospitalStatsScreen() {
             <View style={styles.statsRow}>
                 <StatCard title="Doctors" value={stats?.doctors ?? 0} icon={Stethoscope} theme={theme} onPress={() => router.push('/hospital/doctors')} />
                 <StatCard title="Patients" value={stats?.patients ?? 0} icon={Users} theme={theme} onPress={() => router.push('/hospital/patients')} />
-                <StatCard title="Voice Sessions" value={stats?.voiceIntakes ?? 0} icon={Mic} theme={theme} onPress={() => router.push('/hospital/dashboard')} />
+                <StatCard title="Voice Sessions" value={stats?.voiceIntakes ?? 0} icon={Mic} theme={theme} onPress={() => router.push('/hospital/voice-intake')} />
             </View>
 
             {/* Voice Intake Summary Analytics */}
@@ -214,7 +214,7 @@ function StatCard({
 const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     container: { flex: 1 },
-    content: { paddingHorizontal: 18, paddingBottom: 34 },
+    content: { paddingHorizontal: 18, paddingBottom: 100 },
     header: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 6 },
     kicker: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 6 },
     title: { fontSize: 28, fontWeight: '900', lineHeight: 34 },

@@ -86,7 +86,7 @@ export default function HospitalPatientProfileScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    content: { paddingHorizontal: 18, paddingBottom: 32 },
+    content: { paddingHorizontal: 18, paddingBottom: 100 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 18 },
     backButton: { width: 40, height: 40, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
     kicker: { fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1 },
