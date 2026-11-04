@@ -109,7 +109,11 @@ const SignupScreen: React.FC = () => {
         return;
       }
 
-      setPendingVerificationEmail(email);
+      // Route directly to the 6-digit OTP verification screen so user never gets stuck on external links
+      router.push({
+        pathname: '/auth/verify-otp',
+        params: { email, type: 'signup' },
+      });
     } catch (err: any) {
       setErrors({ form: err?.message || 'Unable to create your account. Please try again.' });
     } finally {
