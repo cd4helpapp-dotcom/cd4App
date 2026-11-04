@@ -70,6 +70,11 @@ export default function BookingConfirmedScreen() {
   React.useEffect(() => {
     if (isValid && !autoSentRef.current) {
       autoSentRef.current = true;
+      if (params.appointmentId) {
+        void supabase.functions.invoke('send-appointment-notification', {
+          body: { appointmentId: params.appointmentId },
+        });
+      }
       const timer = setTimeout(() => {
         void shareAppointmentOnWhatsApp({
           doctorName: params.doctorName,

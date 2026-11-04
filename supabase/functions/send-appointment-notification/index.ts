@@ -179,6 +179,118 @@ const sendExpoPush = async (message: Record<string, unknown>) => {
   }
 };
 
+const sendAppointmentEmail = async (args: {
+  toEmail: string;
+  patientName: string;
+  doctorName: string;
+  date: string;
+  time: string;
+  appointmentId: string;
+}) => {
+  const resendApiKey = (Deno.env.get("RESEND_API_KEY") || "").trim();
+  const emailFrom = (Deno.env.get("EMAIL_FROM") || "CD4 Health <noreply@cd4.co.in>").trim();
+  if (!resendApiKey || !args.toEmail) return { sent: false, reason: "resend_api_key_or_email_missing" };
+
+  const subject = `Appointment Confirmed — Dr. ${sanitizePdfText(args.doctorName)} | CD4 Health`;
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="utf-8"></head>
+    <body style="margin:0;padding:0;background-color:#F8FBFA;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1E293B;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:40px 16px;">
+        <tr>
+          <td align="center">
+            <table role="presentation" width="100%" style="max-width:540px;background:#FFFFFF;border-radius:16px;border:1px solid #E2E8F0;box-shadow:0 4px 18px rgba(0,0,0,0.05);overflow:hidden;" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="background:linear-gradient(135deg, #0C7A61 0%, #085241 100%);padding:28px 24px;text-align:center;">
+                  <div style="display:inline-block;padding:6px 16px;background:rgba(255,255,255,0.18);border-radius:24px;color:#FFFFFF;font-weight:800;font-size:16px;letter-spacing:1px;margin-bottom:8px;">
+                    ✚ CD4 HEALTH
+                  </div>
+                  <h1 style="margin:4px 0 0;color:#FFFFFF;font-size:22px;font-weight:700;">Appointment Confirmed!</h1>
+                  <p style="margin:6px 0 0;color:#A7F3D0;font-size:13px;">Your consultation has been successfully booked</p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:32px 28px;">
+                  <p style="margin:0 0 16px;font-size:15px;color:#334155;">
+                    Dear <strong>${sanitizePdfText(args.patientName)}</strong>,
+                  </p>
+                  <p style="margin:0 0 20px;font-size:14px;line-height:22px;color:#475569;">
+                    Your teleconsultation has been confirmed. Below are the details of your scheduled session:
+                  </p>
+
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:12px;margin-bottom:24px;">
+                    <tr>
+                      <td style="padding:16px 20px;">
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Doctor:</td>
+                            <td style="padding:6px 0;font-size:14px;font-weight:700;color:#0F172A;text-align:right;">Dr. ${sanitizePdfText(args.doctorName)}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Date:</td>
+                            <td style="padding:6px 0;font-size:13px;font-weight:600;color:#0F172A;text-align:right;">${sanitizePdfText(args.date)}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Time:</td>
+                            <td style="padding:6px 0;font-size:13px;font-weight:600;color:#0F172A;text-align:right;">${sanitizePdfText(args.time)}</td>
+                          </tr>
+                          <tr>
+                            <td style="padding:6px 0;font-size:13px;color:#64748B;">Booking ID:</td>
+                            <td style="padding:6px 0;font-size:12px;font-family:monospace;color:#0C7A61;font-weight:600;text-align:right;">${sanitizePdfText(args.appointmentId)}</td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <div style="text-align:center;margin:28px 0 20px;">
+                    <a href="https://cd4.co.in/appointments" target="_blank" style="display:inline-block;background-color:#0C7A61;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:14px 32px;border-radius:10px;">
+                      Open CD4 App to View Consultation
+                    </a>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td style="background:#F8FAFC;border-top:1px solid #E2E8F0;padding:20px 24px;text-align:center;">
+                  <p style="margin:0 0 6px;font-size:12px;color:#64748B;">
+                    WhatsApp Support: <a href="https://wa.me/917050417766" style="color:#0C7A61;font-weight:600;text-decoration:none;">+91 7050417766</a> &bull; Email: <a href="mailto:support@cd4.co.in" style="color:#0C7A61;text-decoration:none;">support@cd4.co.in</a>
+                  </p>
+                  <p style="margin:0;font-size:11px;color:#94A3B8;">&copy; 2026 CD4 Health. All rights reserved.</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+  `;
+
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: emailFrom,
+        to: [args.toEmail],
+        subject,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      return { sent: false, reason: `resend_${res.status}: ${err.slice(0, 100)}` };
+    }
+    return { sent: true };
+  } catch (err: any) {
+    return { sent: false, reason: err?.message || "email_dispatch_exception" };
+  }
+};
+
 const hasAppointmentInAppNotification = async (
   serviceClient: any,
   args: { userId: string; appointmentId: string },
@@ -2666,6 +2778,24 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Send confirmation email to patient via Resend
+    const patientEmail = (patientSnapshot?.email || (patientAuthUser as any)?.email || "").trim();
+    let emailDelivery: { sent: boolean; reason?: string } = { sent: false, reason: "not_attempted" };
+    if (patientEmail) {
+      try {
+        emailDelivery = await sendAppointmentEmail({
+          toEmail: patientEmail,
+          patientName: patientSnapshot?.name || "Patient",
+          doctorName: doctorSnapshot?.name || "Doctor",
+          date: appointment.appointment_date || "Scheduled Date",
+          time: appointment.start_time || "Scheduled Time",
+          appointmentId: appointment.id,
+        });
+      } catch (err: any) {
+        emailDelivery = { sent: false, reason: err?.message || "email_exception" };
+      }
+    }
+
     if (!pushDelivery.doctor.sent && !pushDelivery.patient.sent) {
       await logSecurityEvent(serviceClient, {
         eventType: "appointment_notification_push_skipped",
@@ -2718,6 +2848,7 @@ Deno.serve(async (req: Request) => {
       skipped: false,
       aiReport: reportMeta,
       pushDelivery,
+      emailDelivery,
       error: reportGenerationErrorMessage ? clipText(reportGenerationErrorMessage, 200) : undefined,
     });
   } catch (error) {
