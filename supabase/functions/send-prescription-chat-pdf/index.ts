@@ -118,12 +118,12 @@ const sendPrescriptionEmail = async (args: {
             <table role="presentation" width="100%" style="max-width:560px;background:#FFFFFF;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);border:1px solid #E2E8F0;" cellpadding="0" cellspacing="0">
               <!-- Header -->
               <tr>
-                <td style="background:linear-gradient(135deg, #0C7A61 0%, #085241 100%);padding:28px 24px;text-align:center;">
-                  <div style="display:inline-block;padding:8px 16px;background:rgba(255,255,255,0.15);border-radius:30px;color:#FFFFFF;font-weight:700;font-size:18px;letter-spacing:1px;margin-bottom:8px;">
-                    ✚ CD4 HEALTH
+                <td style="background:linear-gradient(135deg, #0C7A61 0%, #085241 100%);padding:32px 24px;text-align:center;">
+                  <div style="margin-bottom:12px;">
+                    <img src="https://cd4.co.in/images/cd4-logo.png" alt="CD4 Health" width="130" style="display:inline-block;max-width:130px;height:auto;border-radius:10px;background:#ffffff;padding:8px 16px;box-shadow:0 3px 10px rgba(0,0,0,0.12);" />
                   </div>
-                  <h1 style="margin:4px 0 0;color:#FFFFFF;font-size:22px;font-weight:700;">Digital Prescription</h1>
-                  <p style="margin:6px 0 0;color:#A7F3D0;font-size:13px;">Official Consult Slip & Medical Summary</p>
+                  <h1 style="margin:6px 0 0;color:#FFFFFF;font-size:22px;font-weight:700;letter-spacing:-0.3px;">Digital Prescription</h1>
+                  <p style="margin:6px 0 0;color:#A7F3D0;font-size:14px;font-weight:500;">Official Consult Slip & Medical Summary</p>
                 </td>
               </tr>
               <!-- Body -->

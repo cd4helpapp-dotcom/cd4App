@@ -276,6 +276,21 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ success: false, code: booking.code, message: booking.message }, isLostSlot ? 200 : 400);
       }
 
+      if (booking.appointmentId && !booking.alreadyBooked) {
+        const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").trim();
+        const serviceRoleKey = (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
+        if (supabaseUrl && serviceRoleKey) {
+          fetch(`${supabaseUrl}/functions/v1/send-appointment-notification`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${serviceRoleKey}`,
+            },
+            body: JSON.stringify({ appointmentId: booking.appointmentId }),
+          }).catch((err) => console.warn("[manage-appointment-payment] auto email trigger error:", err));
+        }
+      }
+
       return jsonResponse({
         success: true,
         alreadyBooked: booking.alreadyBooked,
