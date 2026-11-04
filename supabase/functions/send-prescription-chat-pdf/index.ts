@@ -102,7 +102,7 @@ const sendPrescriptionEmail = async (args: {
   if (!args.toEmail) return { sent: false, reason: "patient_email_missing" };
 
   const subject = `Your Medical Prescription - Dr. ${sanitizePdfText(args.doctorName)} | ${APP_BRAND_NAME}`;
-  const deepLink = `https://${APP_EMAIL_DOMAIN}/chat-detail?roomId=${encodeURIComponent(args.consultationId || '')}`;
+  const deepLink = `https://${APP_EMAIL_DOMAIN}/open-app?target=${encodeURIComponent(`chat-detail?roomId=${args.consultationId || ''}`)}`;
   const html = `
     <!DOCTYPE html>
     <html lang="en">
@@ -175,13 +175,7 @@ const sendPrescriptionEmail = async (args: {
               <!-- Footer -->
               <tr>
                 <td style="background:#F8FAFC;border-top:1px solid #E2E8F0;padding:20px 24px;text-align:center;">
-                  <p style="margin:0 0 6px;font-size:12px;font-weight:600;color:#334155;">
-                    Need assistance? We're available 24/7
-                  </p>
-                  <p style="margin:0;font-size:12px;color:#64748B;">
-                    WhatsApp Support: <a href="https://wa.me/917050417766" style="color:#0C7A61;font-weight:600;text-decoration:none;">+91 7050417766</a> &bull; Email: <a href="mailto:support@cd4.co.in" style="color:#0C7A61;text-decoration:none;">support@cd4.co.in</a>
-                  </p>
-                  <p style="margin:12px 0 0;font-size:11px;color:#94A3B8;">
+                  <p style="margin:0;font-size:11px;color:#94A3B8;">
                     &copy; ${new Date().getFullYear()} CD4 Health. All rights reserved.
                   </p>
                 </td>

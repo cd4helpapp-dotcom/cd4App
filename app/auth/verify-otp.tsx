@@ -22,7 +22,7 @@ const OTP_TYPES: OtpType[] = ['email', 'signup', 'recovery', 'magiclink', 'invit
 export default function VerifyOtpScreen() {
   const { theme } = useAppTheme();
   const router = useRouter();
-  const params = useLocalSearchParams<{ email?: string; type?: string }>();
+  const params = useLocalSearchParams<{ email?: string; type?: string; phone?: string }>();
   const email = typeof params.email === 'string' ? params.email.trim() : '';
   const type: OtpType = OTP_TYPES.includes(params.type as OtpType) ? (params.type as OtpType) : 'email';
 
@@ -77,8 +77,22 @@ export default function VerifyOtpScreen() {
         return;
       }
       if (data?.user || data?.session) {
+        const uid = data.user?.id || data.session?.user?.id || '';
+        if (uid) {
+          try {
+            const pendingPhone = (params.phone || '').trim() ||
+              (await AsyncStorage.getItem('cd4_signup_pending_phone')) ||
+              (data.user?.user_metadata?.phone_number || data.user?.user_metadata?.phone || '').trim();
+            if (pendingPhone) {
+              await supabase.from('profiles').update({ phone_number: pendingPhone }).eq('id', uid);
+              await AsyncStorage.removeItem('cd4_signup_pending_phone');
+            }
+          } catch (syncErr) {
+            if (__DEV__) console.warn('Failed to sync phone on verify OTP:', syncErr);
+          }
+        }
         try {
-          await routeAfterSuccessfulAuth(data.user?.id || data.session?.user?.id || '');
+          await routeAfterSuccessfulAuth(uid);
         } catch (routeError: any) {
           if (__DEV__) console.warn('Post-auth routing failed after successful OTP verification:', routeError);
           // Fallback gracefully so the authenticated session is not stranded on OTP screen

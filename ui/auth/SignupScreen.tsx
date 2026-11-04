@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 import type { TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { Lock, Mail, MailCheck } from 'lucide-react-native';
 import { supabase, createRedirectUrl } from '../../src/lib/supabase';
@@ -88,6 +89,7 @@ const SignupScreen: React.FC = () => {
             first_name: form.firstName.trim(),
             last_name: form.lastName.trim(),
             phone_number: phone,
+            phoneNumber: phone,
             phone,
           },
         },
@@ -103,8 +105,16 @@ const SignupScreen: React.FC = () => {
         return;
       }
 
+      // Persist signup phone locally so profile setup can always prefill it
+      try {
+        await AsyncStorage.setItem('cd4_signup_pending_phone', phone);
+      } catch {}
+
       // Email confirmation disabled in Supabase → a session is returned and the user can continue directly.
       if (data.session && data.user) {
+        try {
+          await supabase.from('profiles').update({ phone_number: phone }).eq('id', data.user.id);
+        } catch {}
         await routeAfterSuccessfulAuth(data.user.id);
         return;
       }
@@ -112,7 +122,7 @@ const SignupScreen: React.FC = () => {
       // Route directly to the 6-digit OTP verification screen so user never gets stuck on external links
       router.push({
         pathname: '/auth/verify-otp',
-        params: { email, type: 'signup' },
+        params: { email, type: 'signup', phone },
       });
     } catch (err: any) {
       setErrors({ form: err?.message || 'Unable to create your account. Please try again.' });

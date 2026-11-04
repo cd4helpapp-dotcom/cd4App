@@ -245,17 +245,14 @@ const sendAppointmentEmail = async (args: {
                   </table>
 
                   <div style="text-align:center;margin:28px 0 20px;">
-                    <a href="https://cd4.co.in/appointments" target="_blank" style="display:inline-block;background-color:#0C7A61;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:14px 32px;border-radius:10px;">
-                      Open CD4 App to View Consultation
+                    <a href="https://cd4.co.in/open-app?target=appointments" target="_blank" style="display:inline-block;background-color:#0C7A61;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:700;padding:14px 32px;border-radius:10px;box-shadow:0 3px 10px rgba(12,122,97,0.3);">
+                      Open in CD4 App
                     </a>
                   </div>
                 </td>
               </tr>
               <tr>
                 <td style="background:#F8FAFC;border-top:1px solid #E2E8F0;padding:20px 24px;text-align:center;">
-                  <p style="margin:0 0 6px;font-size:12px;color:#64748B;">
-                    WhatsApp Support: <a href="https://wa.me/917050417766" style="color:#0C7A61;font-weight:600;text-decoration:none;">+91 7050417766</a> &bull; Email: <a href="mailto:support@cd4.co.in" style="color:#0C7A61;text-decoration:none;">support@cd4.co.in</a>
-                  </p>
                   <p style="margin:0;font-size:11px;color:#94A3B8;">&copy; 2026 CD4 Health. All rights reserved.</p>
                 </td>
               </tr>

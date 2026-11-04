@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import { ArrowLeft, ArrowRight, ChevronDown, Info, User as UserIcon } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,7 +102,15 @@ const ProfileSetupScreen: React.FC = () => {
     setWeight(user.weight ? String(user.weight) : '');
     setBloodPressure(user.bloodPressure || '');
     setPulse(user.pulse ? String(user.pulse) : '');
-    setPhoneNumber(normalizeIndianMobile(user.phoneNumber || signupPhoneParam || ''));
+
+    const resolvedPhone = normalizeIndianMobile(user.phoneNumber || signupPhoneParam || '');
+    if (resolvedPhone) {
+      setPhoneNumber(resolvedPhone);
+    } else {
+      void AsyncStorage.getItem('cd4_signup_pending_phone').then((pending) => {
+        if (pending) setPhoneNumber(normalizeIndianMobile(pending));
+      });
+    }
   }, [isAuthenticated, isEditMode, isLoading, isProfileResolved, signupPhoneParam, user]);
 
   if (isLoading || !isProfileResolved || !user) {
@@ -171,6 +180,8 @@ const ProfileSetupScreen: React.FC = () => {
         phoneNumber: trimmedPhone || undefined,
         profileSetupCompleted: true,
       });
+
+      void AsyncStorage.removeItem('cd4_signup_pending_phone').catch(() => {});
 
       Toast.show({
         type: 'success',

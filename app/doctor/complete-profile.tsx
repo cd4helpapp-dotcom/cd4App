@@ -13,6 +13,7 @@ import {
     useColorScheme,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Camera, CheckCircle2, Save } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import Toast from 'react-native-toast-message';
@@ -145,9 +146,10 @@ export default function DoctorCompleteProfileScreen() {
         if (!user || roleSlug !== 'doctor' || doctorProfileLoading || initializedRef.current) return;
 
         const doctor = doctorProfileResponse?.data;
+        const initialMobile = user.phoneNumber || (user as any)?.phone || '';
         setForm({
             fullName: [user.firstName, user.lastName].filter(Boolean).join(' ').trim(),
-            mobileNumber: user.phoneNumber || '',
+            mobileNumber: initialMobile,
             city: doctor?.city || '',
             degree: doctor?.degree || '',
             specialization: doctor?.specialization || '',
@@ -163,6 +165,11 @@ export default function DoctorCompleteProfileScreen() {
             consultationFee: doctor?.fee ? sanitizeNumberInput(doctor.fee) : '',
             treatmentApproach: doctor?.treatmentApproach || consultationModes[2],
         });
+        if (!initialMobile) {
+            void AsyncStorage.getItem('cd4_signup_pending_phone').then((pending) => {
+                if (pending) setForm((prev) => ({ ...prev, mobileNumber: pending }));
+            });
+        }
         setProfilePictureUrl(getImageUrl(user?.profilePicture || doctor?.image || '') || '');
         initializedRef.current = true;
     }, [user, roleSlug, doctorProfileLoading, doctorProfileResponse?.data]);

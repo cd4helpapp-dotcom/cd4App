@@ -74,7 +74,6 @@ export const shareAppointmentOnWhatsApp = (details: {
   paymentId?: string;
   targetPhone?: string;
 }) => {
-  const supportFormatted = getFormattedSupportPhone(CD4_OFFICIAL_WHATSAPP);
   const text =
     `*CD4 HEALTH — APPOINTMENT CONFIRMED* 🩺\n\n` +
     `👨‍⚕️ *Doctor:* ${details.doctorName || 'Consulting Specialist'}\n` +
@@ -83,8 +82,7 @@ export const shareAppointmentOnWhatsApp = (details: {
     `💳 *Amount Paid:* ₹${details.amount || '500'}\n` +
     `🔖 *Booking ID:* ${details.appointmentId || 'N/A'}\n\n` +
     `Join consultation or view details in the CD4 App:\n` +
-    `https://cd4.co.in\n\n` +
-    `Need help? CD4 WhatsApp Support: ${supportFormatted}`;
+    `https://cd4.co.in`;
 
   const target = (details.targetPhone || '').replace(/\D/g, '');
   return openWhatsApp(target, text);
@@ -100,15 +98,13 @@ export const sharePrescriptionOnWhatsApp = (details: {
   prescriptionUrl?: string;
   targetPhone?: string;
 }) => {
-  const supportFormatted = getFormattedSupportPhone(CD4_OFFICIAL_WHATSAPP);
   const text =
     `*CD4 HEALTH — MEDICAL PRESCRIPTION* 📄\n\n` +
     `👤 *Patient:* ${details.patientName || 'Patient'}\n` +
     `👨‍⚕️ *Doctor:* ${details.doctorName || 'Doctor'}\n` +
     `📅 *Date:* ${details.date || new Date().toLocaleDateString('en-IN')}\n\n` +
     `View/Download official digital prescription:\n` +
-    `${details.prescriptionUrl || 'https://cd4.co.in'}\n\n` +
-    `Official CD4 Helpline: ${supportFormatted}`;
+    `${details.prescriptionUrl || 'https://cd4.co.in'}`;
 
   const target = (details.targetPhone || '').replace(/\D/g, '');
   return openWhatsApp(target, text);

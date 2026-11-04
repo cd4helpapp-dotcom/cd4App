@@ -7,6 +7,13 @@ declare const Deno: {
 import { createClient } from "npm:@supabase/supabase-js@2";
 // @ts-ignore - resolved by Deno runtime/module resolver.
 import { finalizePaidBooking, notifyAppointmentChange, refundPayment, SLOT_REFUNDED_MESSAGE } from "../_shared/appointmentBooking.ts";
+// @ts-ignore - resolved by Deno runtime/module resolver.
+import {
+  sendPaymentSuccessEmail,
+  sendRefundEmail,
+  sendAppointmentCancelledEmail,
+  sendAppointmentRescheduledEmail,
+} from "../_shared/emailService.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -289,6 +296,27 @@ Deno.serve(async (req: Request) => {
             body: JSON.stringify({ appointmentId: booking.appointmentId }),
           }).catch((err) => console.warn("[manage-appointment-payment] auto email trigger error:", err));
         }
+
+        // Send payment success receipt email
+        void (async () => {
+          try {
+            const { data: pUser } = await serviceClient.from("profiles").select("email, full_name, name").eq("id", patientId).maybeSingle();
+            const { data: dUser } = await serviceClient.from("profiles").select("full_name, name").eq("id", boundDoctorId).maybeSingle();
+            const email = (pUser?.email || "").trim();
+            if (email) {
+              await sendPaymentSuccessEmail({
+                toEmail: email,
+                patientName: pUser?.full_name || pUser?.name || "Patient",
+                amount: Number(paymentRow.amount || 50000) / 100,
+                paymentId,
+                orderId,
+                doctorName: dUser?.full_name || dUser?.name || "Doctor",
+              });
+            }
+          } catch (e) {
+            console.warn("[manage-appointment-payment] payment success email error:", e);
+          }
+        })();
       }
 
       return jsonResponse({
@@ -318,6 +346,43 @@ Deno.serve(async (req: Request) => {
           ? [notifyAppointmentChange({ serviceClient, userId: result.doctor_id, title: "Appointment cancelled", body: `The patient cancelled the consultation on ${when}. The slot is open again.`, data: appointmentData })]
           : [notifyAppointmentChange({ serviceClient, userId: result.patient_id, title: "Appointment cancelled", body: `Your doctor cancelled the consultation on ${when}. You will get a full refund. Please book another slot.`, data: appointmentData })]
       );
+
+      // Send cancellation and refund email to patient
+      void (async () => {
+        try {
+          const { data: pUser } = await serviceClient.from("profiles").select("email, full_name, name").eq("id", result.patient_id).maybeSingle();
+          const { data: dUser } = await serviceClient.from("profiles").select("full_name, name").eq("id", result.doctor_id).maybeSingle();
+          const email = (pUser?.email || "").trim();
+          if (email) {
+            const refundMsg = refund === "started"
+              ? "A full refund of ₹" + (result.amount ? Number(result.amount) / 100 : 500) + " has been initiated to your source account (takes 5-7 business days)."
+              : "Consultation slot has been cancelled.";
+            await sendAppointmentCancelledEmail({
+              toEmail: email,
+              recipientName: pUser?.full_name || pUser?.name || "Patient",
+              doctorName: dUser?.full_name || dUser?.name || "Doctor",
+              slotDate: result.date || "Scheduled Date",
+              slotTime: result.start_time || "Scheduled Time",
+              cancelledBy: result.cancelled_by || "system",
+              refundStatus: refundMsg,
+              appointmentId: body?.appointmentId,
+            });
+
+            if (refund === "started") {
+              await sendRefundEmail({
+                toEmail: email,
+                patientName: pUser?.full_name || pUser?.name || "Patient",
+                amount: result.amount ? Number(result.amount) / 100 : 500,
+                paymentId: result.razorpay_payment_id,
+                reason: `Appointment cancelled by ${result.cancelled_by || "doctor/patient"}`,
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("[manage-appointment-payment] cancel email error:", e);
+        }
+      })();
+
       return jsonResponse({ success: true, refund });
     }
 
@@ -337,6 +402,28 @@ Deno.serve(async (req: Request) => {
         body: `A patient moved their consultation to ${formatSlotForMessage(result.date, result.start_time)}.`,
         data: { appointmentId: body?.appointmentId },
       });
+
+      // Send rescheduled email to patient
+      void (async () => {
+        try {
+          const { data: pUser } = await serviceClient.from("profiles").select("email, full_name, name").eq("id", result.patient_id).maybeSingle();
+          const { data: dUser } = await serviceClient.from("profiles").select("full_name, name").eq("id", result.doctor_id).maybeSingle();
+          const email = (pUser?.email || "").trim();
+          if (email) {
+            await sendAppointmentRescheduledEmail({
+              toEmail: email,
+              patientName: pUser?.full_name || pUser?.name || "Patient",
+              doctorName: dUser?.full_name || dUser?.name || "Doctor",
+              newDate: result.date || "Updated Date",
+              newTime: result.start_time || "Updated Time",
+              appointmentId: body?.appointmentId,
+            });
+          }
+        } catch (e) {
+          console.warn("[manage-appointment-payment] reschedule email error:", e);
+        }
+      })();
+
       return jsonResponse({ success: true });
     }
 

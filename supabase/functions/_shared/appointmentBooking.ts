@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { sendRefundEmail } from "./emailService.ts";
 // The one path from "Razorpay has the money" to "the patient has a booking", used by both the app's verify call and
 // the webhook, whichever arrives first. A slot lost to another patient is refunded here, so nobody pays without a slot.
 
@@ -60,7 +61,7 @@ const requestRazorpayRefund = async (razorpayPaymentId, reason) => {
 // Returns true once the patient's money is on its way back (or no real money moved).
 export const refundPayment = async (serviceClient, paymentRowId, razorpayPaymentId, reason = "slot_unavailable") => {
   const readRow = async () =>
-    (await serviceClient.from("appointment_payments").select("status, metadata, payout_status").eq("id", paymentRowId).maybeSingle()).data;
+    (await serviceClient.from("appointment_payments").select("status, metadata, payout_status, patient_id, amount").eq("id", paymentRowId).maybeSingle()).data;
 
   const row = await readRow();
   if (row?.status === "refunded") return true;
@@ -78,6 +79,26 @@ export const refundPayment = async (serviceClient, paymentRowId, razorpayPayment
       // A doctor already paid out for this consultation has to be recovered by hand.
       metadata: { ...metadata, refund_id: refund.id, refund_status: refund.status, refund_reason: reason, needs_manual_refund: false, refund_after_payout: row?.payout_status === "paid" },
     });
+    if (row?.patient_id && reason !== "appointment_cancelled") {
+      void (async () => {
+        try {
+          const { data: pUser } = await serviceClient.from("profiles").select("email, full_name, name").eq("id", row.patient_id).maybeSingle();
+          const email = (pUser?.email || "").trim();
+          if (email) {
+            await sendRefundEmail({
+              toEmail: email,
+              patientName: pUser?.full_name || pUser?.name || "Patient",
+              amount: row.amount ? Number(row.amount) / 100 : 500,
+              refundId: refund.id,
+              paymentId: razorpayPaymentId,
+              reason: reason === "slot_unavailable" ? "Selected consultation slot became unavailable" : reason,
+            });
+          }
+        } catch (e) {
+          console.warn("[appointmentBooking] refund email error:", e);
+        }
+      })();
+    }
     return true;
   }
 

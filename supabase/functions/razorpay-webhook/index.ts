@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { finalizePaidBooking, sendDoctorBrief } from "../_shared/appointmentBooking.ts";
+import { sendPaymentFailedEmail, sendRefundEmail } from "../_shared/emailService.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -140,6 +141,27 @@ Deno.serve(async (req: Request) => {
           })
           .eq("id", appointmentPayment.id)
           .eq("status", "created");
+
+        // Send payment failed email to patient
+        if (appointmentPayment.patient_id) {
+          void (async () => {
+            try {
+              const { data: pUser } = await serviceClient.from("profiles").select("email, full_name, name").eq("id", appointmentPayment.patient_id).maybeSingle();
+              const email = (pUser?.email || "").trim();
+              if (email) {
+                await sendPaymentFailedEmail({
+                  toEmail: email,
+                  patientName: pUser?.full_name || pUser?.name || "Patient",
+                  amount: Number(paymentEntity?.amount || 50000) / 100,
+                  reason: paymentEntity?.error_description || "Transaction failed or authorization declined",
+                  orderId,
+                });
+              }
+            } catch (e) {
+              console.warn("[razorpay-webhook] payment failed email error:", e);
+            }
+          })();
+        }
       }
 
       const subscriptionPaymentUpdate = serviceClient
@@ -175,7 +197,7 @@ Deno.serve(async (req: Request) => {
       if (sourcePaymentId) {
         const { data: refundedPayment } = await serviceClient
           .from("appointment_payments")
-          .select("metadata")
+          .select("metadata, patient_id")
           .eq("payment_id", sourcePaymentId)
           .maybeSingle();
         const refundFailed = eventType === "refund.failed";
@@ -204,6 +226,31 @@ Deno.serve(async (req: Request) => {
             })
             .eq("id", eventRow.id);
           return jsonResponse({ success: false, message: "refund_update_failed" }, 500);
+        }
+
+        // Send refund email to patient
+        if (refundedPayment && !refundFailed) {
+          void (async () => {
+            try {
+              const patientId = refundedPayment.patient_id;
+              if (patientId) {
+                const { data: pUser } = await serviceClient.from("profiles").select("email, full_name, name").eq("id", patientId).maybeSingle();
+                const email = (pUser?.email || "").trim();
+                if (email) {
+                  await sendRefundEmail({
+                    toEmail: email,
+                    patientName: pUser?.full_name || pUser?.name || "Patient",
+                    amount: Number(refundEntity?.amount || 50000) / 100,
+                    refundId: String(refundEntity?.id || ""),
+                    paymentId: sourcePaymentId,
+                    reason: refundEntity?.notes?.reason || "Refund processed to original payment method",
+                  });
+                }
+              }
+            } catch (e) {
+              console.warn("[razorpay-webhook] refund email error:", e);
+            }
+          })();
         }
       }
     }

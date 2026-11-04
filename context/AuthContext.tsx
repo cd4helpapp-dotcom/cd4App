@@ -202,13 +202,38 @@ const fetchUserProfileUncached = async (userId: string, retries = 3): Promise<Us
         };
       }
 
+      let resolvedPhoneNumber = (profile.phone_number || '').trim();
+      if (!resolvedPhoneNumber) {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const authUser = sessionData?.session?.user;
+          if (authUser && authUser.id === userId) {
+            const meta = authUser.user_metadata || {};
+            resolvedPhoneNumber =
+              (typeof meta.phone_number === 'string' ? meta.phone_number.trim() : '') ||
+              (typeof meta.phoneNumber === 'string' ? meta.phoneNumber.trim() : '') ||
+              (typeof meta.phone === 'string' ? meta.phone.trim() : '') ||
+              authUser.phone ||
+              '';
+            if (resolvedPhoneNumber) {
+              void supabase
+                .from('profiles')
+                .update({ phone_number: resolvedPhoneNumber })
+                .eq('id', userId);
+            }
+          }
+        } catch {
+          // ignore session retrieval error
+        }
+      }
+
       const mappedUser: User = {
         id: profile.id,
         _id: profile.id,
         firstName: profile.first_name,
         lastName: profile.last_name,
         email: profile.email,
-        phoneNumber: profile.phone_number,
+        phoneNumber: resolvedPhoneNumber || profile.phone_number,
         age: profile.age,
         gender: profile.gender,
         address: profile.address,
