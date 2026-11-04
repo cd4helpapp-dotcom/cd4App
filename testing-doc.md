@@ -456,11 +456,11 @@ A multi-agent automated and static code QA audit was executed across all fronten
 - **Description:** In dark mode, `theme.tint` is `#34D399`. In `MessageItem`: `<Text style={[styles.messageText, { color: isMe ? '#fff' : theme.text }]}>`. White text (`#fff`) on `#34D399` background has a contrast ratio of only **1.45:1** (WCAG AA requires 4.5:1). Time text has contrast ratio of 1.3:1.
 - **Suggested Fix:** In dark mode, use `theme.buttonPrimary` (`#047857`) for user message bubbles, or render dark text (`#0F172A`) on `#34D399`.
 
-### Bug 4.10: [HIGH] Android Keyboard Double-Padding Bug — FIXED (2026-11-03)
-- **File:** `app/chat-detail.tsx` (L1601–1604, 768–779)
+### Bug 4.10: [HIGH] Android Keyboard Inset & Input Bar Placement — FIXED (2026-11-04)
+- **File:** `app/chat-detail.tsx`
 - **Category:** UI & UX | **Severity:** High
-- **Description:** Android default is `windowSoftInputMode="adjustResize"`. When the keyboard opens, the window shrinks. Adding `paddingBottom: keyboardHeight` adds the height a second time, projecting the input box high up into the middle of the screen with a massive empty gap below.
-- **Suggested Fix:** On Android, set `paddingBottom: 0` when `adjustResize` is active.
+- **Description:** On Android devices, soft keyboard opening requires dynamic `paddingBottom: keyboardHeight + 2` to lift the input box above the keyboard so the input bar is not covered.
+- **Resolution:** Retained verified `paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0` to ensure input bar sits cleanly on top of the keyboard.
 
 ### Bug 4.11: [HIGH] Missing Flip Camera (Switch Camera) Button on Video Calls — FIXED (2026-11-03)
 - **File:** `app/chat-detail.tsx` (L1920–1951)
@@ -556,11 +556,11 @@ A multi-agent automated and static code QA audit was executed across all fronten
 
 # Domain 5: AI Guidance & Medical Reports (26 Bugs)
 
-### Bug 5.1: [CRITICAL] Android Double Keyboard Inset (Floating Chat Input Bar) — FIXED (2026-11-03)
-- **Files:** `app/ai-guidance.tsx` (L5039–5042, 5196–5198), `app/report-assistant.tsx` (L852–859, 996–1000)
+### Bug 5.1: [CRITICAL] Android Keyboard Inset for AI Chat Input Bar — FIXED (2026-11-04)
+- **Files:** `app/ai-guidance.tsx`, `app/report-assistant.tsx`
 - **Category:** UI & UX | **Severity:** Critical
-- **Description:** Soft keyboard `adjustResize` naturally shrinks the window. Adding manual `paddingBottom: keyboardHeight + 2` doubles the offset, pushing input and chat messages far up with a huge blank gap below.
-- **Suggested Fix:** Remove manual `paddingBottom` on Android when `softwareKeyboardLayoutMode` is `"resize"`.
+- **Description:** On Android, without active keyboard height tracking, the prompt input bar stays at screen bottom and gets obscured behind the keyboard.
+- **Resolution:** Retained verified `paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0` to ensure prompt bar cleanly docks above the keyboard.
 
 ### Bug 5.2: [CRITICAL] Paperclip File Attachment Never Uploads Binary to Supabase — FIXED (2026-11-03)
 - **Files:** `app/ai-guidance.tsx` (L2365–2377, 2402–2414, 3066–3078)

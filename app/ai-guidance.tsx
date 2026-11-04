@@ -5266,7 +5266,7 @@ export default function AiGuidanceScreen() {
 
   return (
     <Wrapper
-      style={[styles.screen, { backgroundColor: palette.pageBg, paddingBottom: 0 }]}
+      style={[styles.screen, { backgroundColor: palette.pageBg, paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0 }]}
       {...wrapperProps}
     >
       {/* Header (Matching chat-detail) */}

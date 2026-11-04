@@ -999,7 +999,7 @@ export default function ReportAssistantScreen() {
   const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: insets.top } : {};
 
   return (
-    <Wrapper style={[styles.screen, { backgroundColor: theme.background, paddingBottom: 0 }]} {...wrapperProps}>
+    <Wrapper style={[styles.screen, { backgroundColor: theme.background, paddingBottom: Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight + 2 : 0 }]} {...wrapperProps}>
       <View style={[styles.header, { paddingTop: insets.top + 8, borderBottomColor: theme.divider, backgroundColor: theme.background }]}>
         <Pressable onPress={handleBack} accessibilityRole="button" accessibilityLabel="Go back" hitSlop={8} style={[styles.backBtn, { backgroundColor: theme.surfaceMuted }]}>
           <ArrowLeft size={20} color={theme.text} />

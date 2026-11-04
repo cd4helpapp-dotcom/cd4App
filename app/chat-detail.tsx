@@ -1679,14 +1679,14 @@ export default function ChatDetailScreen() {
         );
     }, [user?.id, theme, otherPartyName, handleLongPress, messages, t, handleMessagePress]);
 
-    // On Android, use a plain View with native windowSoftInputMode handling
+    // On Android, use a plain View with manual keyboard padding
     // On iOS, use KeyboardAvoidingView with padding behavior
     const Wrapper = Platform.OS === 'ios' ? KeyboardAvoidingView : View;
     const wrapperProps = Platform.OS === 'ios' ? { behavior: 'padding' as const, keyboardVerticalOffset: 0 } : {};
 
     return (
         <Wrapper
-            style={[styles.container, { backgroundColor: theme.background }]}
+            style={[styles.container, { backgroundColor: theme.background, paddingBottom: Platform.OS === 'android' ? (keyboardHeight > 0 ? keyboardHeight + 2 : 0) : 0 }]}
             {...wrapperProps}
         >
             {/* Header */}
